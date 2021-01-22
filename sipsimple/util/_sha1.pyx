@@ -7,7 +7,7 @@ from libc.stddef cimport size_t
 from libc.stdint cimport uint8_t, uint32_t, uint64_t
 from libc.string cimport memcpy
 from cpython.buffer cimport PyObject_CheckBuffer, PyObject_GetBuffer, PyBuffer_Release
-from cpython.string cimport PyString_FromStringAndSize, PyString_AS_STRING
+from cpython.bytes cimport PyBytes_FromStringAndSize, PyBytes_AsString
 from cpython.unicode cimport PyUnicode_Check
 
 
@@ -50,7 +50,7 @@ cdef class sha1(object):
 
     def __reduce__(self):
         state_variables = [self.context.state[i] for i in range(sizeof(self.context.state)/4)]
-        block = PyString_FromStringAndSize(<char*>self.context.block, self.context.index)
+        block = PyBytes_FromStringAndSize(<char*>self.context.block, self.context.index)
         return self.__class__, (), (state_variables, self.context.count, block)
 
     def __setstate__(self, state):
@@ -59,7 +59,7 @@ cdef class sha1(object):
             self.context.state[i] = number
         self.context.count = count
         self.context.index = len(block)
-        memcpy(self.context.block, PyString_AS_STRING(block), self.context.index)
+        memcpy(self.context.block, PyBytes_AsString(block), self.context.index)
 
     def copy(self):
         cdef sha1 instance = self.__class__()
@@ -86,7 +86,7 @@ cdef class sha1(object):
 
         context_copy = self.context
         sha1_digest(&context_copy, digest)
-        return PyString_FromStringAndSize(<char*>digest, SHA1_DIGEST_SIZE)
+        return PyBytes_FromStringAndSize(<char*>digest, SHA1_DIGEST_SIZE)
 
     def hexdigest(self):
         return self.digest().encode('hex')
