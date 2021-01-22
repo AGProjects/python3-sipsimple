@@ -11,7 +11,6 @@ from threading import Lock
 
 from application.notification import IObserver, NotificationCenter, NotificationData
 from application.python import Null
-from application.python.decorator import execute_once
 from application.python.descriptor import classproperty
 from application.python.types import Singleton
 from application.system import host as Host
@@ -36,7 +35,7 @@ from sipsimple.payloads.rlsnotify import RLSNotify
 from sipsimple.payloads.watcherinfo import WatcherInfoDocument
 from sipsimple.threading import call_in_thread
 from sipsimple.threading.green import call_in_green_thread, run_in_green_thread
-from sipsimple.util import user_info
+from sipsimple.util import user_info, execute_once
 
 
 
@@ -141,9 +140,9 @@ class Account(SettingsObject):
     tls = TLSSettings
 
     def __new__(cls, id):
-        with AccountManager.load.lock:
-            if not AccountManager.load.called:
-                raise RuntimeError("cannot instantiate %s before calling AccountManager.load" % cls.__name__)
+        #with AccountManager.load.lock:
+        #    if not AccountManager.load.called:
+        #        raise RuntimeError("cannot instantiate %s before calling AccountManager.load" % cls.__name__)
         return SettingsObject.__new__(cls, id)
 
     def __init__(self, id):
@@ -561,9 +560,9 @@ class BonjourAccount(SettingsObject):
     tls = TLSSettings
 
     def __new__(cls):
-        with AccountManager.load.lock:
-            if not AccountManager.load.called:
-                raise RuntimeError("cannot instantiate %s before calling AccountManager.load" % cls.__name__)
+#        with AccountManager.load.lock:
+#            if not AccountManager.load.called:
+#                raise RuntimeError("cannot instantiate %s before calling AccountManager.load" % cls.__name__)
         return SettingsObject.__new__(cls)
 
     def __init__(self):

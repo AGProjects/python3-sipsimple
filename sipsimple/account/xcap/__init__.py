@@ -20,7 +20,6 @@ from urllib.error import URLError
 
 from application.notification import IObserver, NotificationCenter, NotificationData
 from application.python import Null
-from application.python.decorator import execute_once
 from eventlib import api, coros, proc
 from eventlib.green.httplib import BadStatusLine
 from twisted.internet.error import ConnectionLost
@@ -39,7 +38,7 @@ from sipsimple.payloads import addressbook, commonpolicy, dialogrules, omapolicy
 from sipsimple.payloads import rpid; del rpid  # needs to be imported to register its namespace
 from sipsimple.threading import run_in_twisted_thread
 from sipsimple.threading.green import Command, Worker, run_in_green_thread
-
+from sipsimple.util import execute_once
 
 
 class XCAPError(Exception): pass

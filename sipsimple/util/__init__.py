@@ -3,7 +3,7 @@
 
 
 
-__all__ = ["All", "Any", "ExponentialTimer", "ISOTimestamp", "MultilingualText", "user_info", "sha1"]
+__all__ = ["All", "Any", "ExponentialTimer", "ISOTimestamp", "MultilingualText", "user_info", "sha1", "execute_once"]
 
 import os
 import platform
@@ -142,5 +142,14 @@ class UserInfo(object, metaclass=Singleton):
 
 user_info = UserInfo()
 del UserInfo
+
+
+def execute_once(func):
+    def wrapper(*args, **kwargs):
+        if not wrapper.has_run:
+            wrapper.has_run = True
+            return func(*args, **kwargs)
+    wrapper.has_run = False
+    return wrapper
 
 

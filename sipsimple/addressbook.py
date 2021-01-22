@@ -14,7 +14,6 @@ from zope.interface import implementer
 
 from application.notification import IObserver, NotificationCenter, NotificationData
 from application.python import Null
-from application.python.decorator import execute_once
 from application.python.types import Singleton, MarkerType
 from application.python.weakref import defaultweakobjectmap
 
@@ -26,6 +25,7 @@ from sipsimple.payloads.addressbook import PolicyValue, ElementAttributes
 from sipsimple.payloads.datatypes import ID
 from sipsimple.payloads.resourcelists import ResourceListsDocument
 from sipsimple.threading import run_in_thread
+from sipsimple.util import execute_once
 
 
 def unique_id(prefix='id'):
@@ -410,9 +410,9 @@ class Group(SettingsState):
     contacts = ContactListDescriptor()
 
     def __new__(cls, id=None):
-        with AddressbookManager.load.lock:
-            if not AddressbookManager.load.called:
-                raise RuntimeError("cannot instantiate %s before calling AddressbookManager.load" % cls.__name__)
+#        with AddressbookManager.load.lock:
+#            if not AddressbookManager.load.was_called:
+#                raise RuntimeError("cannot instantiate %s before calling AddressbookManager.load" % cls.__name__)
         if id is None:
             id = unique_id()
         elif not isinstance(id, str):
@@ -718,9 +718,9 @@ class Contact(SettingsState):
     presence = PresenceSettings
 
     def __new__(cls, id=None):
-        with AddressbookManager.load.lock:
-            if not AddressbookManager.load.called:
-                raise RuntimeError("cannot instantiate %s before calling AddressbookManager.load" % cls.__name__)
+#        with AddressbookManager.load.lock:
+#            if not AddressbookManager.load.was_called:
+#                raise RuntimeError("cannot instantiate %s before calling AddressbookManager.load" % cls.__name__)
         if id is None:
             id = unique_id()
         elif not isinstance(id, str):
@@ -927,9 +927,9 @@ class Policy(SettingsState):
     presence = PresenceSettings
 
     def __new__(cls, id=None):
-        with AddressbookManager.load.lock:
-            if not AddressbookManager.load.called:
-                raise RuntimeError("cannot instantiate %s before calling AddressbookManager.load" % cls.__name__)
+#        with AddressbookManager.load.lock:
+#            if not AddressbookManager.load.was_called:
+#                raise RuntimeError("cannot instantiate %s before calling AddressbookManager.load" % cls.__name__)
         if id is None:
             id = unique_id()
         elif not isinstance(id, str):
