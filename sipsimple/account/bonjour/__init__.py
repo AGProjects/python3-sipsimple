@@ -373,7 +373,7 @@ class BonjourServices(object):
             try:
                 contact = self.account.contact[NoGRUU, file.transport]
                 instance_id = str(uuid.UUID(settings.instance_id))
-                txtdata = dict(txtvers=1, name=self.account.display_name.encode('utf-8'), contact="<%s>" % str(contact), instance_id=instance_id)
+                txtdata = dict(txtvers=1, name=self.account.display_name, contact="<%s>" % str(contact), instance_id=instance_id)
                 state = self.account.presence_state
                 if self.account.presence.enabled and state is not None:
                     txtdata['state'] = state.state
