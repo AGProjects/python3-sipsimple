@@ -23,7 +23,7 @@ else:
 if sys_platform == "darwin":
     min_osx_version = "10.13"
     try:
-        osx_sdk_path = subprocess.check_output(["xcodebuild", "-version", "-sdk", "macosx", "Path"]).strip()
+        osx_sdk_path = subprocess.check_output(["xcodebuild", "-version", "-sdk", "macosx", "Path"]).decode().strip()
     except subprocess.CalledProcessError as e:
         raise RuntimeError("Could not locate SDK path: %s" % str(e))
     # OpenSSL (must be installed with Homebrew)
@@ -105,7 +105,7 @@ class PJSIP_build_ext(build_ext):
             else:
                 raise
         if returncode != 0:
-            raise RuntimeError('Got return value %d while executing "%s", stderr output was:\n%s' % (returncode, " ".join(cmdline), stderr.rstrip("\n")))
+            raise RuntimeError('Got return value %d while executing "%s", stderr output was:\n%s' % (returncode, " ".join(cmdline), stderr))
         return stdout
 
     @staticmethod
@@ -125,7 +125,7 @@ class PJSIP_build_ext(build_ext):
     def get_makefile_variables(cls, makefile):
         """Returns all variables in a makefile as a dict"""
         stdout = cls.distutils_exec_process([cls.get_make_cmd(), "-f", makefile, "-pR", makefile], silent=True)
-        return dict(tup for tup in re.findall("(^[a-zA-Z]\w+)\s*:?=\s*(.*)$", stdout, re.MULTILINE))
+        return dict(tup for tup in re.findall("(^[a-zA-Z]\w+)\s*:?=\s*(.*)$", stdout.decode(), re.MULTILINE))
 
     @classmethod
     def makedirs(cls, path):
@@ -143,9 +143,12 @@ class PJSIP_build_ext(build_ext):
         self.pjsip_dir = os.path.join(os.path.dirname(__file__), "deps", "pjsip")
 
     def configure_pjsip(self):
-        log.info("Configuring PJSIP")
-        with open(os.path.join(self.build_dir, "pjlib", "include", "pj", "config_site.h"), "wb") as f:
-            f.write("\n".join(self.config_site+[""]))
+        path = os.path.join(self.build_dir, "pjlib", "include", "pj", "config_site.h")
+        log.info("Configuring PJSIP in %s" % path)
+        with open(path, "w") as f:
+            s = "\n".join(self.config_site+[""])
+            f.write(s)
+            
         cflags = "-DNDEBUG -g -fPIC -fno-omit-frame-pointer -fno-strict-aliasing -Wno-unused-label"
         if self.debug or hasattr(sys, 'gettotalrefcount'):
             log.info("PJSIP will be built without optimizations")

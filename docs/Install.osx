@@ -36,10 +36,7 @@ under /usr/local folder by default with Homebrew:
 
 brew install darcs gnutls yasm pkg-config x264 libvpx mpfr libmpc
 
-NOTE: Install ffmpeg without SecureTransport support (or you app will be rejected
-      from the Mac App Store:
-
-brew install -s ffmpeg --without-securetransport
+brew install -s ffmpeg
 
 B.  Build and install the Python dependencies
 
