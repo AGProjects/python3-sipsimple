@@ -21,7 +21,7 @@ from .threading import RLock, Thread
 from twisted.internet import reactor
 from uuid import uuid4
 from xcaplib import client as xcap_client
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple.account import AccountManager
 from sipsimple.addressbook import AddressbookManager
@@ -51,8 +51,8 @@ class ApplicationAttribute(object):
         raise AttributeError('cannot delete attribute')
 
 
+@implementer(IObserver)
 class SIPApplication(object, metaclass=Singleton):
-    implements(IObserver)
 
     storage = ApplicationAttribute(value=None)
     engine = ApplicationAttribute(value=None)

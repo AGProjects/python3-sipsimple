@@ -14,7 +14,7 @@ from application.python import Null, limit
 from application.python.types import MarkerType
 from eventlib import coros, proc
 from twisted.internet import reactor
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple.core import FromHeader, Publication, PublicationETagError, RouteHeader, SIPURI, SIPCoreError
 from sipsimple.configuration.settings import SIPSimpleSettings
@@ -60,11 +60,11 @@ class PublisherNickname(dict):
         raise AttributeError('cannot delete attribute')
 
 
+@implementer(IObserver)
 class Publisher(object, metaclass=ABCMeta):
     __nickname__  = PublisherNickname()
     __transports__ = frozenset(['tls', 'tcp', 'udp'])
 
-    implements(IObserver)
 
     def __init__(self, account):
         self.account = account

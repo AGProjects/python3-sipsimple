@@ -6,7 +6,7 @@
 __all__ = ['IVideoProducer', 'VideoDevice', 'VideoError']
 
 from .application.notification import NotificationCenter, NotificationData
-from zope.interface import Attribute, Interface, implements
+from zope.interface import Attribute, Interface, implementer
 
 from sipsimple.core import SIPCoreError, VideoCamera
 
@@ -24,8 +24,8 @@ class VideoError(Exception):
     pass
 
 
+@implementer(IVideoProducer)
 class VideoDevice(object):
-    implements(IVideoProducer)
 
     def __init__(self, device_name, resolution, framerate):
         self._camera = self._open_camera(device_name, resolution, framerate)

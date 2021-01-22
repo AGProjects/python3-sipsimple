@@ -11,7 +11,7 @@ import random
 from collections import deque
 
 from application.system import makedirs, openfile, unlink
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple.configuration.backend import IConfigurationBackend, ConfigurationBackendError
 
@@ -45,13 +45,13 @@ class Line(object):
         return "%s(%r, %r, %r, %r)" % (self.__class__.__name__, self.indentation, self.name, self.separator, self.value)
 
 
+@implementer(IConfigurationBackend)
 class FileBackend(object):
     """
     Implementation of a configuration backend that stores data in a simple
     plain text format.
     """
 
-    implements(IConfigurationBackend)
 
     escape_characters_re = re.compile(r"""[,"'=: #\\\t\x0b\x0c\n\r]""")
 

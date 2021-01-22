@@ -21,7 +21,7 @@ from .application.python.types import Singleton
 from .application.system import host
 from eventlib import api, coros, proc
 from twisted.internet import reactor
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple import log
 from sipsimple.account import AccountManager, BonjourAccount
@@ -151,8 +151,9 @@ class AddParticipantOperation(object):
 class RemoveParticipantOperation(object):
     pass
 
+
+@implementer(IObserver)
 class ReferralHandler(object):
-    implements(IObserver)
 
     def __init__(self, session, participant_uri, operation):
         self.participant_uri = participant_uri
@@ -355,8 +356,8 @@ class ReferralHandler(object):
             self._refresh()
 
 
+@implementer(IObserver)
 class ConferenceHandler(object):
-    implements(IObserver)
 
     def __init__(self, session):
         self.session = session
@@ -627,8 +628,8 @@ class TransferInfo(object):
         self.replaced_dialog_id = replaced_dialog_id
 
 
+@implementer(IObserver)
 class TransferHandler(object):
-    implements(IObserver)
 
     def __init__(self, session):
         self.state = None
@@ -879,8 +880,8 @@ class OptionalTag(str):
         return '{}({})'.format(self.__class__.__name__, super(OptionalTag, self).__repr__())
 
 
+@implementer(IObserver)
 class SessionReplaceHandler(object):
-    implements(IObserver)
 
     def __init__(self, session):
         self.session = session
@@ -911,8 +912,8 @@ class SessionReplaceHandler(object):
     _NH_SIPSessionDidEnd = _NH_SIPSessionDidFail
 
 
+@implementer(IObserver)
 class Session(object):
-    implements(IObserver)
 
     media_stream_timeout = 15
     short_reinvite_timeout = 5
@@ -2672,8 +2673,8 @@ class Session(object):
                     self.end()
 
 
+@implementer(IObserver)
 class SessionManager(object, metaclass=Singleton):
-    implements(IObserver)
 
     def __init__(self):
         self.sessions = []

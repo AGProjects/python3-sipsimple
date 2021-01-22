@@ -11,13 +11,13 @@ from threading import RLock
 
 from application.notification import IObserver, NotificationCenter, NotificationData
 from application.python import Null
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple.core._core import ContactHeader, Header, Request, RouteHeader, SIPCoreError, SIPURI, ToHeader
 
 
+@implementer(IObserver)
 class Registration(object):
-    implements(IObserver)
 
     def __init__(self, from_header, credentials=None, duration=300, extra_headers=None):
         self.from_header = from_header
@@ -141,8 +141,8 @@ class Registration(object):
         self._current_request = request
 
 
+@implementer(IObserver)
 class Message(object):
-    implements(IObserver)
 
     def __init__(self, from_header, to_header, route_header, content_type, body, credentials=None, extra_headers=None):
         self._request = Request("MESSAGE", to_header.uri, from_header, to_header, route_header, credentials=credentials, extra_headers=extra_headers, content_type=content_type, body=body)
@@ -191,8 +191,8 @@ class PublicationError(Exception): pass
 class PublicationETagError(PublicationError): pass
 
 
+@implementer(IObserver)
 class Publication(object):
-    implements(IObserver)
 
     def __init__(self, from_header, event, content_type, credentials=None, duration=300, extra_headers=None):
         self.from_header = from_header

@@ -3,14 +3,14 @@
 
 __all__ = ["MemoryBackend"]
 
-from zope.interface import implements
+from zope.interface import implementer
 from sipsimple.configuration.backend import IConfigurationBackend
 
 
+@implementer(IConfigurationBackend)
 class MemoryBackend(object):
     """Implementation of a configuration backend that stores data in memory."""
 
-    implements(IConfigurationBackend)
 
     def __init__(self):
         self.data = {}

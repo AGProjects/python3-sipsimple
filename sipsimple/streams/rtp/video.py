@@ -2,7 +2,7 @@
 __all__ = ['VideoStream']
 
 from application.notification import NotificationData
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple.configuration.settings import SIPSimpleSettings
 from sipsimple.core import VideoTransport
@@ -13,8 +13,8 @@ from sipsimple.util import ExponentialTimer
 from sipsimple.video import IVideoProducer
 
 
+@implementer(IVideoProducer)
 class VideoStream(RTPStream):
-    implements(IVideoProducer)
 
     type = 'video'
     priority = 1

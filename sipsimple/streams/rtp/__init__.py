@@ -12,7 +12,7 @@ from abc import ABCMeta, abstractmethod
 from application.notification import IObserver, NotificationCenter, NotificationData, ObserverWeakrefProxy
 from application.python import Null
 from threading import RLock
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple.account import BonjourAccount
 from sipsimple.configuration.settings import SIPSimpleSettings
@@ -22,8 +22,8 @@ from sipsimple.streams import IMediaStream, InvalidStreamError, MediaStreamType,
 from sipsimple.threading import run_in_thread
 
 
+@implementer(IObserver)
 class ZRTPStreamOptions(object):
-    implements(IObserver)
 
     def __init__(self, stream):
         self._stream = stream
@@ -144,8 +144,8 @@ class ZRTPStreamOptions(object):
         self.master = None
 
 
+@implementer(IObserver)
 class RTPStreamEncryption(object):
-    implements(IObserver)
 
     def __init__(self, stream):
         self._stream_ref = weakref.ref(stream)  # Keep a weak reference before the stream is initialized to avoid a memory cycle that would delay releasing audio resources
@@ -286,8 +286,8 @@ class RTPStreamType(ABCMeta, MediaStreamType):
     pass
 
 
+@implementer(IMediaStream, IObserver)
 class RTPStream(object, metaclass=RTPStreamType):
-    implements(IMediaStream, IObserver)
 
     type = None
     priority = None

@@ -25,7 +25,7 @@ from msrplib.session import MSRPSession, contains_mime_type
 from otr import OTRSession, OTRTransport, OTRState, SMPStatus
 from otr.cryptography import DSAPrivateKey
 from otr.exceptions import IgnoreMessage, UnencryptedMessage, EncryptedMessageError, OTRError
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple.core import SIPURI, BaseSIPURI
 from sipsimple.payloads import ParserError
@@ -150,8 +150,8 @@ class OTRCache(object, metaclass=Singleton):
                 pickle.dump(self.trusted_peers, trusted_file)
 
 
+@implementer(IObserver)
 class OTREncryption(object):
-    implements(IObserver)
 
     def __init__(self, stream):
         self.stream = stream

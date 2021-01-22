@@ -14,7 +14,7 @@ from application.python import Null
 from eventlib import api, coros, proc
 from eventlib.green import select
 from twisted.internet import reactor
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple import log
 from sipsimple.account.bonjour import _bonjour
@@ -124,8 +124,8 @@ class BonjourNeighbourRecord(object):
         self.presence = BonjourNeighbourPresence(txtrecord.get('state', txtrecord.get('status', None)), txtrecord.get('note', '').decode('utf-8') or None) # status is read for legacy (remove later) -Dan
 
 
+@implementer(IObserver)
 class BonjourServices(object):
-    implements(IObserver)
 
     def __init__(self, account):
         self.account = account

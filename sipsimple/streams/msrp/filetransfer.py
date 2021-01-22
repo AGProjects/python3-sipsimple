@@ -25,7 +25,7 @@ from msrplib.session import MSRPSession
 from msrplib.transport import make_response
 from queue import Queue
 from threading import Event, Lock
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple.configuration.settings import SIPSimpleSettings
 from sipsimple.core import SDPAttribute
@@ -205,8 +205,8 @@ class FileTransfersMetadata(object):
         self.lock.release()
 
 
+@implementer(IObserver)
 class FileTransferHandler(object, metaclass=ABCMeta):
-    implements(IObserver)
 
     threadpool = ThreadPool(name='FileTransfers', min_threads=0, max_threads=100)
     threadpool.start()

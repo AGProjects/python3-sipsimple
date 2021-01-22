@@ -16,7 +16,7 @@ from eventlib.util import tcp_socket, set_reuse_addr
 from msrplib.protocol import FailureReportHeader, SuccessReportHeader, ContentTypeHeader
 from msrplib.transport import make_response, make_report
 from twisted.internet.error import ConnectionDone
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple.core import SDPAttribute
 from sipsimple.streams import InvalidStreamError, UnknownStreamError
@@ -27,8 +27,8 @@ from sipsimple.threading import run_in_twisted_thread
 class VNCConnectionError(Exception): pass
 
 
+@implementer(IObserver)
 class ScreenSharingHandler(object, metaclass=ABCMeta):
-    implements(IObserver)
 
     def __init__(self):
         self.incoming_msrp_queue = None

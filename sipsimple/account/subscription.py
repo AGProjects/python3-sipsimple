@@ -12,7 +12,7 @@ from application.notification import IObserver, NotificationCenter, Notification
 from application.python import Null, limit
 from eventlib import coros, proc
 from twisted.internet import reactor
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple.core import ContactHeader, FromHeader, Header, RouteHeader, SIPURI, Subscription, ToHeader, SIPCoreError, NoGRUU
 from sipsimple.configuration.settings import SIPSimpleSettings
@@ -56,11 +56,11 @@ class SubscriberNickname(dict):
         raise AttributeError('cannot delete attribute')
 
 
+@implementer(IObserver)
 class Subscriber(object, metaclass=ABCMeta):
     __nickname__   = SubscriberNickname()
     __transports__ = frozenset(['tls', 'tcp', 'udp'])
 
-    implements(IObserver)
 
     def __init__(self, account):
         self.account = account

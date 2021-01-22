@@ -2,7 +2,7 @@
 __all__ = ['AudioStream']
 
 from application.notification import NotificationCenter, NotificationData
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple.audio import AudioBridge, AudioDevice, IAudioPort, WaveRecorder
 from sipsimple.configuration.settings import SIPSimpleSettings
@@ -10,8 +10,8 @@ from sipsimple.core import AudioTransport, PJSIPError, SIPCoreError
 from sipsimple.streams.rtp import RTPStream
 
 
+@implementer(IAudioPort)
 class AudioStream(RTPStream):
-    implements(IAudioPort)
 
     type = 'audio'
     priority = 1

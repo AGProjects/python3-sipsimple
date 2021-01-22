@@ -9,15 +9,15 @@ import platform
 import random
 
 from application.system import makedirs, openfile, unlink
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple.account.xcap.storage import IXCAPStorage, XCAPStorageError
 
 
+@implementer(IXCAPStorage)
 class FileStorage(object):
     """Implementation of an XCAP backend that stores data in files."""
 
-    implements(IXCAPStorage)
 
     def __init__(self, directory, account_id):
         """Initialize the storage for the specified directory and account ID"""

@@ -11,7 +11,7 @@ from application.notification import NotificationCenter, NotificationData, IObse
 from application.python import Null
 from application.system import host
 from twisted.internet.error import ConnectionDone
-from zope.interface import implements
+from zope.interface import implementer
 
 from eventlib import api
 from msrplib.connect import DirectConnector, DirectAcceptor, RelayConnection, MSRPRelaySettings
@@ -29,8 +29,8 @@ class MSRPStreamError(StreamError):
     pass
 
 
+@implementer(IMediaStream, IObserver)
 class MSRPStreamBase(object, metaclass=MediaStreamType):
-    implements(IMediaStream, IObserver)
 
     # Attributes that need to be defined by each MSRP stream type
     type = None

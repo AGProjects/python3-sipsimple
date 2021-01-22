@@ -47,7 +47,7 @@ from .application.python.decorator import decorator, preserve_signature
 from .application.python.types import Singleton
 from dns import exception, rdatatype
 from twisted.internet import reactor
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple.core import Route
 from sipsimple.threading import run_in_twisted_thread
@@ -442,8 +442,8 @@ class DNSLookup(object):
         return pointers
 
 
+@implementer(IObserver)
 class DNSManager(object, metaclass=Singleton):
-    implements(IObserver)
 
     def __init__(self):
         default_resolver = InternalResolver()

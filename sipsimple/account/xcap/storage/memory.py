@@ -3,14 +3,14 @@
 
 __all__ = ["MemoryStorage"]
 
-from zope.interface import implements
+from zope.interface import implementer
 from sipsimple.account.xcap.storage import IXCAPStorage, XCAPStorageError
 
 
+@implementer(IXCAPStorage)
 class MemoryStorage(object):
     """Implementation of an XCAP backend that stores data in memory"""
 
-    implements(IXCAPStorage)
 
     def __init__(self, account_id):
         """Initialize the backend for the specified account ID"""

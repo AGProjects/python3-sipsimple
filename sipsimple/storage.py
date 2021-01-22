@@ -6,7 +6,7 @@ __all__ = ['ISIPSimpleStorage', 'ISIPSimpleApplicationDataStorage', 'FileStorage
 import os
 
 from functools import partial
-from zope.interface import Attribute, Interface, implements
+from zope.interface import Attribute, Interface, implementer
 
 from sipsimple.account.xcap.storage.file import FileStorage as XCAPFileStorage
 from sipsimple.account.xcap.storage.memory import MemoryStorage as XCAPMemoryStorage
@@ -27,10 +27,10 @@ class ISIPSimpleApplicationDataStorage(Interface):
     directory = Attribute("The directory used for application data")
 
 
+@implementer(ISIPSimpleStorage, ISIPSimpleApplicationDataStorage)
 class FileStorage(object):
     """Store/read SIP Simple data to/from files"""
 
-    implements(ISIPSimpleStorage, ISIPSimpleApplicationDataStorage)
 
     def __init__(self, directory):
         self.configuration_backend = ConfigurationFileBackend(os.path.join(directory, 'config'))
@@ -38,10 +38,10 @@ class FileStorage(object):
         self.directory = directory
 
 
+@implementer(ISIPSimpleStorage)
 class MemoryStorage(object):
     """Store/read SIP Simple data to/from memory"""
 
-    implements(ISIPSimpleStorage)
 
     def __init__(self):
         self.configuration_backend = ConfigurationMemoryBackend()

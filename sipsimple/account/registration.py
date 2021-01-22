@@ -11,7 +11,7 @@ from application.notification import IObserver, NotificationCenter, Notification
 from application.python import Null, limit
 from eventlib import coros, proc
 from twisted.internet import reactor
-from zope.interface import implements
+from zope.interface import implementer
 
 from sipsimple.core import ContactHeader, FromHeader, Header, Registration, RouteHeader, SIPURI, SIPCoreError, NoGRUU
 from sipsimple.configuration.settings import SIPSimpleSettings
@@ -39,8 +39,8 @@ class RegistrationError(Exception):
         self.refresh_interval = refresh_interval
 
 
+@implementer(IObserver)
 class Registrar(object):
-    implements(IObserver)
 
     def __init__(self, account):
         self.account = account

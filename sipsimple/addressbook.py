@@ -10,7 +10,7 @@ from operator import attrgetter
 from random import randint
 from .threading import Lock
 from time import time
-from zope.interface import implements
+from zope.interface import implementer
 
 from .application.notification import IObserver, NotificationCenter, NotificationData
 from .application.python import Null
@@ -1099,8 +1099,8 @@ class PolicyExtension(object):
         raise TypeError("PolicyExtension subclasses cannot be instantiated")
 
 
+@implementer(IObserver)
 class AddressbookManager(object, metaclass=Singleton):
-    implements(IObserver)
 
     def __init__(self):
         self.contacts = {}
