@@ -41,10 +41,10 @@ dns.query.socket = socket
 dns.query.select = select
 dns.query._set_polling_backend(dns.query._select_for)
 
-from .application.notification import IObserver, NotificationCenter, NotificationData
-from .application.python import Null, limit
-from .application.python.decorator import decorator, preserve_signature
-from .application.python.types import Singleton
+from application.notification import IObserver, NotificationCenter, NotificationData
+from application.python import Null, limit
+from application.python.decorator import decorator, preserve_signature
+from application.python.types import Singleton
 from dns import exception, rdatatype
 from twisted.internet import reactor
 from zope.interface import implementer

@@ -9,10 +9,10 @@ import os
 import weakref
 from functools import partial
 from itertools import combinations
-from .threading import RLock
+from threading import RLock
 
-from .application.notification import IObserver, NotificationCenter, NotificationData, ObserverWeakrefProxy
-from .application.system import makedirs
+from application.notification import IObserver, NotificationCenter, NotificationData, ObserverWeakrefProxy
+from application.system import makedirs
 from eventlib import coros
 from twisted.internet import reactor
 from zope.interface import Attribute, Interface, implementer

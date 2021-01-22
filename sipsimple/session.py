@@ -11,14 +11,14 @@ __all__ = ['Session', 'SessionManager']
 
 import random
 
-from .threading import RLock
+from threading import RLock
 from time import time
 
-from .application.notification import IObserver, Notification, NotificationCenter, NotificationData
-from .application.python import Null, limit
-from .application.python.decorator import decorator, preserve_signature
-from .application.python.types import Singleton
-from .application.system import host
+from application.notification import IObserver, Notification, NotificationCenter, NotificationData
+from application.python import Null, limit
+from application.python.decorator import decorator, preserve_signature
+from application.python.types import Singleton
+from application.system import host
 from eventlib import api, coros, proc
 from twisted.internet import reactor
 from zope.interface import implementer

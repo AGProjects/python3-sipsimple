@@ -5,7 +5,7 @@
 
 __all__ = ['IVideoProducer', 'VideoDevice', 'VideoError']
 
-from .application.notification import NotificationCenter, NotificationData
+from application.notification import NotificationCenter, NotificationData
 from zope.interface import Attribute, Interface, implementer
 
 from sipsimple.core import SIPCoreError, VideoCamera

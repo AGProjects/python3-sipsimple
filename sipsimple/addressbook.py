@@ -12,11 +12,11 @@ from .threading import Lock
 from time import time
 from zope.interface import implementer
 
-from .application.notification import IObserver, NotificationCenter, NotificationData
-from .application.python import Null
-from .application.python.decorator import execute_once
-from .application.python.types import Singleton, MarkerType
-from .application.python.weakref import defaultweakobjectmap
+from application.notification import IObserver, NotificationCenter, NotificationData
+from application.python import Null
+from application.python.decorator import execute_once
+from application.python.types import Singleton, MarkerType
+from application.python.weakref import defaultweakobjectmap
 
 from sipsimple import log
 from sipsimple.account import xcap, AccountManager

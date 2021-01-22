@@ -11,13 +11,13 @@ __all__ = ["SIPApplication"]
 
 import os
 
-from .application.notification import IObserver, NotificationCenter, NotificationData
-from .application.python import Null
-from .application.python.descriptor import classproperty
-from .application.python.types import Singleton
+from application.notification import IObserver, NotificationCenter, NotificationData
+from application.python import Null
+from application.python.descriptor import classproperty
+from application.python.types import Singleton
 from eventlib import proc
 from operator import attrgetter
-from .threading import RLock, Thread
+from threading import RLock, Thread
 from twisted.internet import reactor
 from uuid import uuid4
 from xcaplib import client as xcap_client
