@@ -15,7 +15,7 @@ from libc.string cimport memcpy
 
 from cpython.float cimport PyFloat_AsDouble
 from cpython.ref cimport Py_INCREF, Py_DECREF
-from cpython.string cimport PyString_FromString, PyString_FromStringAndSize, PyString_AsString, PyString_Size
+from cpython.bytes cimport PyBytes_FromString, PyBytes_FromStringAndSize, PyBytes_AsString, PyBytes_Size
 
 cdef extern from "Python.h":
     object PyUnicode_FromString(const char *u)

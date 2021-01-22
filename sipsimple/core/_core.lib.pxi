@@ -529,7 +529,7 @@ cdef void _transport_state_cb(pjsip_transport *tp, pjsip_transport_state state, 
 
     if pj_sockaddr_has_addr(&tp.local_addr):
         pj_sockaddr_print(&tp.local_addr, buf, 512, 0)
-        local_address = '%s:%d' % (PyString_FromString(buf), pj_sockaddr_get_port(&tp.local_addr))
+        local_address = '%s:%d' % (_buf_to_str(buf), pj_sockaddr_get_port(&tp.local_addr))
     else:
         local_address = None
     remote_address = '%s:%d' % (_pj_str_to_str(tp.remote_name.host), tp.remote_name.port)

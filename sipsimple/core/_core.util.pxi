@@ -157,11 +157,35 @@ cdef class frozendict:
 # functions
 
 cdef int _str_to_pj_str(object string, pj_str_t *pj_str) except -1:
-    pj_str.ptr = PyString_AsString(string)
-    pj_str.slen = len(string)
+    # Feed data from Python to PJSIP
+    # TODO: convert to Python3
+    bytes_string = string.encode()
+    pj_str.ptr = PyBytes_AsString(bytes_string)
+    pj_str.slen = len(bytes_string)
+    print("Encoded STR %s to PJS %s" % (string, pj_str.ptr))
 
 cdef object _pj_str_to_str(pj_str_t pj_str):
-    return PyString_FromStringAndSize(pj_str.ptr, pj_str.slen)
+    # Feed data from PJSIP to the Python
+    bytes_string = PyBytes_FromStringAndSize(pj_str.ptr, pj_str.slen)
+    string = bytes_string.decode()
+    print("Decoded PJS %s to STR %s" % (pj_str.ptr, string))
+    return string
+
+cdef object _pj_buf_len_to_str(object buf, int buf_len):
+    # TODO: convert to Python3
+    return PyBytes_FromStringAndSize(buf, buf_len)
+
+cdef object _buf_to_str(object buf):
+    # TODO: convert to Python3
+    return PyBytes_FromString(buf)
+
+cdef object _str_as_str(object string):
+    # TODO: convert to Python3
+    return PyBytes_AsString(string)
+
+cdef object _str_as_size(object string):
+    # TODO: convert to Python3
+    return PyBytes_Size(string)
 
 cdef object _pj_status_to_str(int status):
     cdef char buf[PJ_ERR_MSG_SIZE]
@@ -282,7 +306,7 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
         if status != 0:
             info_dict["body"] = None
         else:
-            info_dict["body"] = PyString_FromStringAndSize(buf, buf_len)
+            info_dict["body"] = _pj_buf_len_to_str(buf, buf_len)
     if msg.type == PJSIP_REQUEST_MSG:
         info_dict["method"] = _pj_str_to_str(msg.line.req.method.name)
         # You need to call pjsip_uri_get_uri on the request URI if the message is for transmitting,

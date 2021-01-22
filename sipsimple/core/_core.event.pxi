@@ -95,7 +95,7 @@ cdef list _get_clear_event_queue():
         pj_mutex_unlock(_event_queue_lock)
     while event != NULL:
         if event.is_log:
-            log_msg = PyString_FromStringAndSize(<char *> event.data, event.len)
+            log_msg = _pj_buf_len_to_str(<char *> event.data, event.len)
             event_params = dict(level=event.level, message=log_msg)
             events.append(("SIPEngineLog", event_params))
         else:

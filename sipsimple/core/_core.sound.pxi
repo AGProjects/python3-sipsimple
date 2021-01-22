@@ -936,7 +936,7 @@ cdef class RecordingWaveFile:
         if status != 0:
             raise PJSIPError("failed to acquire lock", status)
         try:
-            filename = PyString_AsString(self.filename)
+            filename = PyBytes_AsString(self.filename)
             pool_name = b"RecordingWaveFile_%d" % id(self)
             port_address = &self._port
             sample_rate = self.mixer.sample_rate
@@ -1115,7 +1115,7 @@ cdef class WaveFile:
         if status != 0:
             raise PJSIPError("failed to acquire lock", status)
         try:
-            filename = PyString_AsString(self.filename)
+            filename = PyBytes_AsString(self.filename)
             port_address = &self._port
             weakref = <void *> self.weakref
 

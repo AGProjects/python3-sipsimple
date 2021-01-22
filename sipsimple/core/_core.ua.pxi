@@ -1091,7 +1091,7 @@ cdef int _cb_opus_fix_tx(pjsip_tx_data *tdata) with gil:
                         opus_line = attr_value[:pos] + "opus/48000/2"
                         new_value.slen = len(opus_line)
                         new_value.ptr = <char *> pj_pool_alloc(tdata.pool, new_value.slen)
-                        memcpy(new_value.ptr, PyString_AsString(opus_line), new_value.slen)
+                        memcpy(new_value.ptr, PyBytes_AsString(opus_line), new_value.slen)
                         attr.value = new_value
                         break
                 tdata.msg.body = new_body
@@ -1114,7 +1114,7 @@ cdef int _cb_opus_fix_rx(pjsip_rx_data *rdata) with gil:
             body = rdata.msg_info.msg.body
             if body != NULL and _pj_str_to_str(body.content_type.type).lower() == "application" and _pj_str_to_str(body.content_type.subtype).lower() == "sdp":
                 body_ptr = <char*>body.data
-                body_str = PyString_FromStringAndSize(body_ptr, body.len).lower()
+                body_str = _pj_buf_len_to_str(body_ptr, body.len).lower()
                 pos1 = body_str.find("opus/48000")
                 if pos1 != -1:
                     pos2 = body_str.find("opus/48000/2")
@@ -1139,7 +1139,7 @@ cdef int _cb_trace_rx(pjsip_rx_data *rdata) with gil:
                         dict(received=True, source_ip=rdata.pkt_info.src_name, source_port=rdata.pkt_info.src_port,
                              destination_ip=_pj_str_to_str(rdata.tp_info.transport.local_name.host),
                              destination_port=rdata.tp_info.transport.local_name.port,
-                             data=PyString_FromStringAndSize(rdata.pkt_info.packet, rdata.pkt_info.len),
+                             data=_pj_buf_len_to_str(rdata.pkt_info.packet, rdata.pkt_info.len),
                              transport=rdata.tp_info.transport.type_name))
     except:
         ua._handle_exception(0)
@@ -1158,7 +1158,7 @@ cdef int _cb_trace_tx(pjsip_tx_data *tdata) with gil:
                              source_ip=_pj_str_to_str(tdata.tp_info.transport.local_name.host),
                              source_port=tdata.tp_info.transport.local_name.port, destination_ip=tdata.tp_info.dst_name,
                              destination_port=tdata.tp_info.dst_port,
-                             data=PyString_FromStringAndSize(tdata.buf.start, tdata.buf.cur - tdata.buf.start),
+                             data=_pj_buf_len_to_str(tdata.buf.start, tdata.buf.cur - tdata.buf.start),
                              transport=tdata.tp_info.transport.type_name))
     except:
         ua._handle_exception(0)

@@ -724,7 +724,7 @@ cdef class RTPTransport:
                 with nogil:
                     multistr_params = pjmedia_transport_zrtp_getMultiStreamParameters(self._obj, &length)
                 if length > 0:
-                    ret = PyString_FromStringAndSize(multistr_params, length)
+                    ret = _pj_buf_len_to_str(multistr_params, length)
                     free(multistr_params)
                     return ret
                 else:
@@ -758,7 +758,7 @@ cdef class RTPTransport:
                 zrtp_info = <pjmedia_zrtp_info *> pjmedia_transport_info_get_spc_info(&info, PJMEDIA_TRANSPORT_TYPE_ZRTP)
                 if zrtp_info == NULL or not bool(zrtp_info.active):
                     return None
-                return PyString_FromString(zrtp_info.cipher)
+                return _buf_to_str(zrtp_info.cipher)
             finally:
                 with nogil:
                     pj_mutex_unlock(lock)
@@ -861,7 +861,7 @@ cdef class RTPTransport:
                 if status <= 0:
                     return None
                 else:
-                    return PyString_FromStringAndSize(<char*>name, 12)
+                    return _pj_buf_len_to_str(<char*>name, 12)
             finally:
                 with nogil:
                     pj_mutex_unlock(lock)
@@ -2043,11 +2043,11 @@ cdef ICECandidate ICECandidate_create(pj_ice_sess_cand *cand):
         cand_type = 'UNKNOWN'
 
     pj_sockaddr_print(&cand.addr, buf, PJ_INET6_ADDRSTRLEN, 0)
-    address = PyString_FromString(buf)
+    address = _buf_to_str(buf)
     port = pj_sockaddr_get_port(&cand.addr)
     if pj_sockaddr_has_addr(&cand.rel_addr):
         pj_sockaddr_print(&cand.rel_addr, buf, PJ_INET6_ADDRSTRLEN, 0)
-        rel_addr = PyString_FromString(buf)
+        rel_addr = _buf_to_str(buf)
     else:
         rel_addr = ''
 

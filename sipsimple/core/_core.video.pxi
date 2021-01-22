@@ -1017,7 +1017,7 @@ cdef void FrameBufferVideoRenderer_frame_handler(pjmedia_frame_ptr_const frame, 
     if rend is None:
         return
     if rend._frame_handler is not None:
-        data = PyString_FromStringAndSize(<char*>frame.buf, frame.size)
+        data = _pj_buf_len_to_str(<char*>frame.buf, frame.size)
         rend._frame_handler(VideoFrame(data, size.w, size.h))
 
 
