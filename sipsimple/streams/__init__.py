@@ -92,7 +92,8 @@ class MediaStreamRegistry(object):
         if cls.type is not None and cls.priority is not None and cls not in self.__types__:
             self.__types__.append(cls)
             self.__types__.sort(key=attrgetter('priority'), reverse=True)
-            setattr(self.__class__, cls.type.title().translate(None, ' -_') + 'Stream', StreamDescriptor(cls.type))
+            translation_table = dict.fromkeys(map(ord, ' -_'), None)
+            setattr(self.__class__, cls.type.title().translate(translation_table) + 'Stream', StreamDescriptor(cls.type))
 
     def get(self, type):
         try:

@@ -164,7 +164,7 @@ class FileBackend(object):
             if quote_char is not None:
                 raise FileParserError("missing ending quote at line %d" % lineno)
 
-        line = deque(line.rstrip().decode(self.encoding))
+        line = deque(line.rstrip())
         indentation = advance_to_next_token(line)
         if not line:
             return Line(indentation, None, None, None)
