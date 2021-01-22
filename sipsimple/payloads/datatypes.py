@@ -71,7 +71,7 @@ class UnsignedShort(int):
         return instance
 
 
-class Int(long):
+class Int(int):
     def __new__(cls, value):
         instance = int.__new__(cls, value)
         if not (-2147483648 <= instance <= 2147483647):
@@ -79,7 +79,7 @@ class Int(long):
         return instance
 
 
-class UnsignedInt(long):
+class UnsignedInt(int):
     def __new__(cls, value):
         instance = int.__new__(cls, value)
         if not (0 <= instance <= 4294967295):
@@ -87,7 +87,7 @@ class UnsignedInt(long):
         return instance
 
 
-class Long(long):
+class Long(int):
     def __new__(cls, value):
         instance = int.__new__(cls, value)
         if not (-9223372036854775808 <= instance <= 9223372036854775807):
@@ -95,7 +95,7 @@ class Long(long):
         return instance
 
 
-class UnsignedLong(long):
+class UnsignedLong(int):
     def __new__(cls, value):
         instance = int.__new__(cls, value)
         if not (0 <= instance <= 18446744073709551615):
@@ -103,7 +103,7 @@ class UnsignedLong(long):
         return instance
 
 
-class PositiveInteger(long):
+class PositiveInteger(int):
     def __new__(cls, value):
         instance = int.__new__(cls, value)
         if instance <= 0:
@@ -111,7 +111,7 @@ class PositiveInteger(long):
         return instance
 
 
-class NegativeInteger(long):
+class NegativeInteger(int):
     def __new__(cls, value):
         instance = int.__new__(cls, value)
         if instance >= 0:
@@ -119,7 +119,7 @@ class NegativeInteger(long):
         return instance
 
 
-class NonNegativeInteger(long):
+class NonNegativeInteger(int):
     def __new__(cls, value):
         instance = int.__new__(cls, value)
         if instance < 0:
@@ -127,7 +127,7 @@ class NonNegativeInteger(long):
         return instance
 
 
-class NonPositiveInteger(long):
+class NonPositiveInteger(int):
     def __new__(cls, value):
         instance = int.__new__(cls, value)
         if instance > 0:
@@ -147,7 +147,7 @@ class ID(str):
 class AnyURI(str):
     @classmethod
     def __xmlparse__(cls, value):
-        return cls.__new__(cls, urllib.parse.unquote(value).decode('utf-8'))
+        return cls.__new__(cls, urllib.parse.unquote(value))
 
     def __xmlbuild__(self):
         return urllib.parse.quote(self.encode('utf-8'))

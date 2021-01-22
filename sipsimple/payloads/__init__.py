@@ -1122,7 +1122,9 @@ class XMLEmptyElementRegistryType(type):
                 _xml_namespace = cls._xml_namespace
                 _xml_document = cls._xml_document
                 _xml_id = name
-            ElementType.__name__ = typename + name.title().translate(None, '-_')
+
+            translation_table = dict.fromkeys(map(ord, '-_'), None)
+            ElementType.__name__ = typename + name.title().translate(translation_table)
             cls.class_map[name] = ElementType
         cls.classes = tuple(cls.class_map[name] for name in cls.names)
 
