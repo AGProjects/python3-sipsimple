@@ -117,11 +117,12 @@ class BonjourNeighbourPresence(object):
 
 class BonjourNeighbourRecord(object):
     def __init__(self, service_description, host, txtrecord):
-        self.id = txtrecord.get('instance_id', None)
+        self.id = txtrecord.get('instance_id', None).decode()
         self.name = txtrecord.get('name', '').decode('utf-8') or None
         self.host = re.match(r'^(?P<host>.*?)(\.local)?\.?$', host).group('host')
-        self.uri = FrozenSIPURI.parse(txtrecord.get('contact', service_description.name))
-        self.presence = BonjourNeighbourPresence(txtrecord.get('state', txtrecord.get('status', None)), txtrecord.get('note', '').decode('utf-8') or None) # status is read for legacy (remove later) -Dan
+        contact = txtrecord.get('contact', service_description.name).decode()
+        self.uri = FrozenSIPURI.parse(contact)
+        self.presence = BonjourNeighbourPresence(txtrecord.get('state', txtrecord.get('status', None)), txtrecord.get('note', '') or None) # status is read for legacy (remove later) -Dan
 
 
 @implementer(IObserver)
@@ -332,7 +333,7 @@ class BonjourServices(object):
             try:
                 contact = self.account.contact[NoGRUU, transport]
                 instance_id = str(uuid.UUID(settings.instance_id))
-                txtdata = dict(txtvers=1, name=self.account.display_name.encode('utf-8'), contact="<%s>" % str(contact), instance_id=instance_id)
+                txtdata = dict(txtvers=1, name=self.account.display_name.decode(), contact="<%s>" % str(contact), instance_id=instance_id)
                 state = self.account.presence_state
                 if self.account.presence.enabled and state is not None:
                     txtdata['state'] = state.state
