@@ -4,7 +4,7 @@ export DEB_BUILD_HARDENING = 1
 export PYBUILD_NAME = sipsimple
 
 %:
-	dh $@ --with python2 --buildsystem=pybuild
+	dh $@ --with python3 --buildsystem=pybuild
 
 override_dh_clean:
 	dh_clean
