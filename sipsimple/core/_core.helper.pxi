@@ -35,7 +35,7 @@ cdef class Credentials(BaseCredentials):
             return self._username
 
         def __set__(self, str username not None):
-            _str_to_pj_str(username, &self._credentials.username)
+            _str_to_pj_str(username.encode(), &self._credentials.username)
             self._username = username
 
     property realm:
@@ -43,7 +43,7 @@ cdef class Credentials(BaseCredentials):
             return self._realm
 
         def __set__(self, str realm not None):
-            _str_to_pj_str(realm, &self._credentials.realm)
+            _str_to_pj_str(realm.encode(), &self._credentials.realm)
             self._realm = realm
 
     property password:
@@ -51,7 +51,7 @@ cdef class Credentials(BaseCredentials):
             return self._password
 
         def __set__(self, str password not None):
-            _str_to_pj_str(password, &self._credentials.data)
+            _str_to_pj_str(password.encode(), &self._credentials.data)
             self._password = password
 
     property digest:
@@ -74,9 +74,9 @@ cdef class FrozenCredentials(BaseCredentials):
             self.realm = realm
             self.password = password
             self.digest = digest
-            _str_to_pj_str(self.username, &self._credentials.username)
-            _str_to_pj_str(self.realm, &self._credentials.realm)
-            _str_to_pj_str(self.password, &self._credentials.data)
+            _str_to_pj_str(self.username.encode(), &self._credentials.username)
+            _str_to_pj_str(self.realm.encode(), &self._credentials.realm)
+            _str_to_pj_str(self.password.encode(), &self._credentials.data)
             self._credentials.data_type = PJSIP_CRED_DATA_DIGEST if digest else PJSIP_CRED_DATA_PLAIN_PASSWD
             self.initialized = 1
         else:
@@ -130,11 +130,11 @@ cdef class BaseSIPURI:
             else:
                 string = "%s@%s" % (self.user, string)
         if self.parameters:
-            string += ";" + ";".join(["%s%s" % (name, ("" if val is None else "="+urllib.quote(val, safe="()[]-_.!~*'/:&+$")))
-                                      for name, val in self.parameters.iteritems()])
+            string += ";" + ";".join(["%s%s" % (name, ("" if val is None else "="+urllib.parse.quote(val, safe="()[]-_.!~*'/:&+$")))
+                                      for name, val in list(self.parameters.items())])
         if self.headers:
-            string += "?" + "&".join(["%s%s" % (name, ("" if val is None else "="+urllib.quote(val, safe="()[]-_.!~*'/:?+$")))
-                                      for name, val in self.headers.iteritems()])
+            string += "?" + "&".join(["%s%s" % (name, ("" if val is None else "="+urllib.parse.quote(val, safe="()[]-_.!~*'/:?+$")))
+                                      for name, val in self.headers.items()])
         if self.secure:
             string = "sips:" + string
         else:
@@ -169,12 +169,12 @@ cdef class BaseSIPURI:
             return False
         if components['parameters']:
             parameters = dict([(name, value) for name, sep, value in [param.partition('=') for param in components['parameters'].split(';')]])
-            expected_parameters = dict([(name, str(value) if value is not None else None) for name, value in self.parameters.iteritems() if name in parameters])
+            expected_parameters = dict([(name, str(value) if value is not None else None) for name, value in list(self.parameters.items()) if name in parameters])
             if parameters != expected_parameters:
                 return False
         if components['headers']:
             headers = dict([(name, value) for name, sep, value in [header.partition('=') for header in components['headers'].split('&')]])
-            expected_headers = dict([(name, str(value) if value is not None else None) for name, value in self.headers.iteritems() if name in headers])
+            expected_headers = dict([(name, str(value) if value is not None else None) for name, value in self.headers.items() if name in headers])
             if headers != expected_headers:
                 return False
         return True
@@ -200,7 +200,7 @@ cdef class SIPURI(BaseSIPURI):
     def parse(cls, object uri_str):
         if not isinstance(uri_str, basestring):
             raise TypeError('a string or unicode is required')
-        cdef bytes uri_bytes = str(uri_str)
+        cdef bytes uri_bytes = uri_str.encode()
         cdef pjsip_uri *uri = NULL
         cdef pj_pool_t *pool = NULL
         cdef pj_str_t tmp
@@ -261,7 +261,7 @@ cdef class FrozenSIPURI(BaseSIPURI):
     def parse(cls, object uri_str):
         if not isinstance(uri_str, basestring):
             raise TypeError('a string or unicode is required')
-        cdef bytes uri_bytes = str(uri_str)
+        cdef bytes uri_bytes = uri_str.encode()
         cdef pjsip_uri *uri = NULL
         cdef pj_pool_t *pool = NULL
         cdef pj_str_t tmp
@@ -286,14 +286,20 @@ cdef dict _pj_sipuri_to_dict(pjsip_sip_uri *uri):
     cdef object parameters = {}
     cdef object headers = {}
     cdef object kwargs = dict(parameters=parameters, headers=headers)
-    kwargs["host"] = _pj_str_to_str(uri.host)
+
     scheme = _pj_str_to_str(pjsip_uri_get_scheme(<pjsip_uri *>uri)[0])
     if scheme == "sip":
         kwargs["secure"] = False
     elif scheme == "sips":
         kwargs["secure"] = True
     else:
-        raise SIPCoreError("Not a sip(s) URI")
+        raise SIPCoreError("Not a valid SIP URI")
+
+    try:
+        kwargs["host"] = _pj_str_to_str(uri.host)
+    except UnicodeDecodeError:
+        raise SIPCoreError("Not a valid hostname %s" % uri.host.ptr)
+
     if uri.user.slen > 0:
         kwargs["user"] = _pj_str_to_str(uri.user)
     if uri.passwd.slen > 0:
@@ -313,6 +319,7 @@ cdef dict _pj_sipuri_to_dict(pjsip_sip_uri *uri):
     if uri.maddr_param.slen > 0:
         parameters["maddr"] = _pj_str_to_str(uri.maddr_param)
     param = <pjsip_param *> (<pj_list *> &uri.other_param).next
+
     while param != &uri.other_param:
         if param.value.slen == 0:
             parameters[_pj_str_to_str(param.name)] = None
@@ -320,6 +327,7 @@ cdef dict _pj_sipuri_to_dict(pjsip_sip_uri *uri):
             parameters[_pj_str_to_str(param.name)] = _pj_str_to_str(param.value)
         param = <pjsip_param *> (<pj_list *> param).next
     param = <pjsip_param *> (<pj_list *> &uri.header_param).next
+
     while param != &uri.header_param:
         if param.value.slen == 0:
             headers[_pj_str_to_str(param.name)] = None
@@ -328,9 +336,11 @@ cdef dict _pj_sipuri_to_dict(pjsip_sip_uri *uri):
         param = <pjsip_param *> (<pj_list *> param).next
     return kwargs
 
+
 cdef SIPURI SIPURI_create(pjsip_sip_uri *uri):
     cdef dict kwargs = _pj_sipuri_to_dict(uri)
     return SIPURI(**kwargs)
+
 
 cdef FrozenSIPURI FrozenSIPURI_create(pjsip_sip_uri *uri):
     cdef dict kwargs = _pj_sipuri_to_dict(uri)
@@ -342,6 +352,6 @@ cdef FrozenSIPURI FrozenSIPURI_create(pjsip_sip_uri *uri):
 # Globals
 #
 
-cdef PJSTR _Credentials_scheme_digest = PJSTR("digest")
+cdef PJSTR _Credentials_scheme_digest = PJSTR(b"digest")
 
 

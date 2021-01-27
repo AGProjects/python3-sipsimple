@@ -85,8 +85,10 @@ class AudioStream(RTPStream):
                 old_producer_slot = self.producer_slot
                 self.notification_center.remove_observer(self, sender=self._transport)
                 self._transport.stop()
+                available_codecs = self.session.account.rtp.audio_codec_list or settings.rtp.audio_codec_list
+                codecs = list(c.encode() for c in available_codecs)
                 try:
-                    self._transport = AudioTransport(self.mixer, self._rtp_transport, remote_sdp, stream_index, codecs=list(self.session.account.rtp.audio_codec_list or settings.rtp.audio_codec_list))
+                    self._transport = AudioTransport(self.mixer, self._rtp_transport, remote_sdp, stream_index, codecs=codecs)
                 except SIPCoreError as e:
                     self.state = "ENDED"
                     self._failure_reason = e.args[0]
@@ -181,7 +183,8 @@ class AudioStream(RTPStream):
 
     def _create_transport(self, rtp_transport, remote_sdp=None, stream_index=None):
         settings = SIPSimpleSettings()
-        codecs = list(self.session.account.rtp.audio_codec_list or settings.rtp.audio_codec_list)
+        available_codecs = self.session.account.rtp.audio_codec_list or settings.rtp.audio_codec_list
+        codecs = list(c.encode() for c in available_codecs)
         return AudioTransport(self.mixer, rtp_transport, remote_sdp=remote_sdp, sdp_index=stream_index or 0, codecs=codecs)
 
     def _check_hold(self, direction, is_initial):

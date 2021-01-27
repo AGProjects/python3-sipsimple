@@ -1780,6 +1780,7 @@ cdef FrozenReplacesHeader FrozenReplacesHeader_create(pjsip_replaces_hdr *header
 # core.util
 
 cdef int _str_to_pj_str(object string, pj_str_t *pj_str) except -1
+cdef object _pj_str_to_bytes(pj_str_t pj_bytes)
 cdef object _pj_str_to_str(pj_str_t pj_str)
 cdef object _pj_status_to_str(int status)
 cdef object _pj_status_to_def(int status)

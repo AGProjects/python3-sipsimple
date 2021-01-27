@@ -115,7 +115,11 @@ class Registrar(object):
         # Initialize the registration
         if self._registration is None:
             duration = command.refresh_interval or self.account.sip.register_interval
-            self._registration = Registration(FromHeader(self.account.uri, self.account.display_name), credentials=self.account.credentials, duration=duration, extra_headers=[Header('Supported', 'gruu')])
+            self._registration = Registration(FromHeader(self.account.uri, self.account.display_name), 
+                                              credentials=self.account.credentials, 
+                                              duration=duration,
+                                              extra_headers=[Header('Supported', 'gruu')])
+
             notification_center.add_observer(self, sender=self._registration)
             notification_center.post_notification('SIPAccountWillRegister', sender=self.account)
         else:
@@ -147,9 +151,11 @@ class Registrar(object):
                     except KeyError:
                         continue
                     contact_header = ContactHeader(contact_uri)
-                    contact_header.parameters['+sip.instance'] = '"<%s>"' % settings.instance_id
+                    instance_id = '"<%s>"' % settings.instance_id
+                    
+                    contact_header.parameters[b"+sip.instance"] = instance_id.encode()
                     if self.account.nat_traversal.use_ice:
-                        contact_header.parameters['+sip.ice'] = None
+                        contact_header.parameters[b"+sip.ice"] = None
                     route_header = RouteHeader(route.uri)
                     try:
                         self._registration.register(contact_header, route_header, timeout=limit(remaining_time, min=1, max=10))
@@ -177,7 +183,8 @@ class Registrar(object):
                             raise RegistrationError('Interval too short', retry_after=random.uniform(60, 120), refresh_interval=refresh_interval)
                         else:
                             # Otherwise just try the next route
-                            continue
+                            #continue
+                            break
                     else:
                         notification_data = NotificationData(code=notification.data.code, reason=notification.data.reason, registration=self._registration, registrar=route)
                         notification_center.post_notification('SIPAccountRegistrationGotAnswer', sender=self.account, data=notification_data)

@@ -124,7 +124,9 @@ class Registration(object):
         extra_headers = []
         extra_headers.append(Header("Expires", str(int(self.duration) if do_register else 0)))
         extra_headers.extend(self.extra_headers)
-        request = Request("REGISTER", SIPURI(self.from_header.uri.host), self.from_header, ToHeader.new(self.from_header), route_header,
+        uri = SIPURI(self.from_header.uri.host)
+        to_header = ToHeader.new(self.from_header)
+        request = Request("REGISTER", uri, self.from_header, to_header, route_header,
                           credentials=self.credentials, contact_header=contact_header, call_id=call_id,
                           cseq=cseq, extra_headers=extra_headers)
         notification_center.add_observer(self, sender=request)
@@ -145,7 +147,7 @@ class Registration(object):
 class Message(object):
 
     def __init__(self, from_header, to_header, route_header, content_type, body, credentials=None, extra_headers=None):
-        self._request = Request("MESSAGE", to_header.uri, from_header, to_header, route_header, credentials=credentials, extra_headers=extra_headers, content_type=content_type, body=body)
+        self._request = Request("MESSAGE", to_header.uri, from_header, to_header, route_header, credentials=credentials, extra_headers=extra_headers, content_type=content_type, body=body.encode())
         self._lock = RLock()
 
     from_header = property(lambda self: self._request.from_header)

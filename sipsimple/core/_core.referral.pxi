@@ -669,9 +669,9 @@ cdef class IncomingReferral:
         cdef pjsip_tx_data *tdata
         cdef int status
         cdef dict _sipfrag_version = dict(version="2.0")
-        cdef PJSTR _content_type = PJSTR("message")
-        cdef PJSTR _content_subtype = PJSTR("sipfrag")
-        cdef PJSTR reason = PJSTR("noresource")
+        cdef PJSTR _content_type = PJSTR(b"message")
+        cdef PJSTR _content_subtype = PJSTR(b"sipfrag")
+        cdef PJSTR reason = PJSTR(b"noresource")
 
         reason_p = NULL
         if self.state == "pending":
@@ -871,7 +871,7 @@ cdef void _Referral_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event
                 else:
                     referral.peer_address.ip = rdata.pkt_info.src_name
                     referral.peer_address.port = rdata.pkt_info.src_port
-            referral._cb_got_response(ua, rdata, _pj_str_to_str(event.body.tsx_state.tsx.method.name))
+            referral._cb_got_response(ua, rdata, _pj_str_to_bytes(event.body.tsx_state.tsx.method.name))
     except:
         ua._handle_exception(1)
 
@@ -995,9 +995,9 @@ _incoming_refer_subs_cb.on_server_timeout = _IncomingReferral_cb_server_timeout
 _incoming_refer_subs_cb.on_tsx_state = _IncomingReferral_cb_tsx
 
 sipfrag_re = re.compile(r'^SIP/2\.0\s+(?P<code>\d{3})\s+(?P<reason>[ a-zA-Z0-9_-]+)')
-cdef PJSTR _refer_method = PJSTR("REFER")
-cdef PJSTR _refer_event = PJSTR("refer")
-cdef PJSTR _refer_to_hdr_name = PJSTR("Refer-To")
-cdef PJSTR _refer_sub_hdr_name = PJSTR("Refer-Sub")
-cdef PJSTR _subscription_state_hdr_name = PJSTR("Subscription-State")
+cdef PJSTR _refer_method = PJSTR(b"REFER")
+cdef PJSTR _refer_event = PJSTR(b"refer")
+cdef PJSTR _refer_to_hdr_name = PJSTR(b"Refer-To")
+cdef PJSTR _refer_sub_hdr_name = PJSTR(b"Refer-Sub")
+cdef PJSTR _subscription_state_hdr_name = PJSTR(b"Subscription-State")
 

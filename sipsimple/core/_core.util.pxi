@@ -14,7 +14,6 @@ cdef class PJSTR:
     def __str__(self):
         return self.str
 
-
 cdef class SIPStatusMessages:
     cdef object _default_status
 
@@ -141,50 +140,42 @@ cdef class frozendict:
     def has_key(self, key):
         return self.dict.has_key(key)
     def items(self):
-        return self.dict.items()
+        return list(self.dict.items())
     def iteritems(self):
-        return self.dict.iteritems()
+        return list(self.dict.items())
     def iterkeys(self):
-        return self.dict.iterkeys()
+        return list(self.dict.keys())
     def itervalues(self):
-        return self.dict.itervalues()
+        return list(self.dict.values())
     def keys(self):
-        return self.dict.keys()
+        return list(self.dict.keys())
     def values(self):
-        return self.dict.values()
+        return list(self.dict.values())
 
 
 # functions
 
 cdef int _str_to_pj_str(object string, pj_str_t *pj_str) except -1:
-    # Feed data from Python to PJSIP
-    # TODO: convert to Python3
-    bytes_string = string.encode()
-    pj_str.ptr = PyBytes_AsString(bytes_string)
-    pj_str.slen = len(bytes_string)
-    print("Encoded STR %s to PJS %s" % (string, pj_str.ptr))
+    #print('Convert %s (%s)' % (string, type(string)))
+    pj_str.ptr = PyBytes_AsString(string)
+    pj_str.slen = len(string)
+
+cdef object _pj_str_to_bytes(pj_str_t pj_str):
+    return PyBytes_FromStringAndSize(pj_str.ptr, pj_str.slen)
 
 cdef object _pj_str_to_str(pj_str_t pj_str):
-    # Feed data from PJSIP to the Python
-    bytes_string = PyBytes_FromStringAndSize(pj_str.ptr, pj_str.slen)
-    string = bytes_string.decode()
-    print("Decoded PJS %s to STR %s" % (pj_str.ptr, string))
-    return string
+    return PyBytes_FromStringAndSize(pj_str.ptr, pj_str.slen).decode()
 
 cdef object _pj_buf_len_to_str(object buf, int buf_len):
-    # TODO: convert to Python3
     return PyBytes_FromStringAndSize(buf, buf_len)
 
 cdef object _buf_to_str(object buf):
-    # TODO: convert to Python3
     return PyBytes_FromString(buf)
 
 cdef object _str_as_str(object string):
-    # TODO: convert to Python3
     return PyBytes_AsString(string)
 
 cdef object _str_as_size(object string):
-    # TODO: convert to Python3
     return PyBytes_Size(string)
 
 cdef object _pj_status_to_str(int status):
@@ -238,7 +229,9 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
             array_header = <pjsip_generic_array_hdr *> header
             header_data = []
             for i from 0 <= i < array_header.count:
-                header_data.append(_pj_str_to_str(array_header.values[i]))
+                pass
+                # TODO crash here
+                #header_data.append(_pj_str_to_str(array_header.values[i]))
         elif header_name == "Contact":
             multi_header = True
             header_data = FrozenContactHeader_create(<pjsip_contact_hdr *> header)
@@ -248,7 +241,8 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
             header_data = FrozenContentTypeHeader_create(<pjsip_ctype_hdr *> header)
         elif header_name == "CSeq":
             cseq_header = <pjsip_cseq_hdr *> header
-            header_data = (cseq_header.cseq, _pj_str_to_str(cseq_header.method.name))
+            hvalue = _pj_str_to_str(cseq_header.method.name)
+            header_data = (cseq_header.cseq, hvalue)
         elif header_name in ("Expires", "Max-Forwards", "Min-Expires"):
             header_data = (<pjsip_generic_int_hdr *> header).ivalue
         elif header_name == "From":
@@ -289,7 +283,10 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
             header_data = FrozenReplacesHeader_create(<pjsip_replaces_hdr *> header)
         # skip the following headers:
         elif header_name not in ("Authorization", "Proxy-Authenticate", "Proxy-Authorization", "WWW-Authenticate"):
-            header_data = FrozenHeader(header_name, _pj_str_to_str((<pjsip_generic_string_hdr *> header).hvalue))
+            hvalue = (<pjsip_generic_string_hdr *> header).hvalue
+            header_value = _pj_str_to_str(hvalue)
+            header_data = FrozenHeader(header_name, header_value)
+
         if header_data is not None:
             if multi_header:
                 headers.setdefault(header_name, []).append(header_data)
@@ -306,7 +303,7 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
         if status != 0:
             info_dict["body"] = None
         else:
-            info_dict["body"] = _pj_buf_len_to_str(buf, buf_len)
+            info_dict["body"] = _pj_buf_len_to_str(buf, buf_len).decode()
     if msg.type == PJSIP_REQUEST_MSG:
         info_dict["method"] = _pj_str_to_str(msg.line.req.method.name)
         # You need to call pjsip_uri_get_uri on the request URI if the message is for transmitting,
@@ -340,8 +337,10 @@ cdef int _add_headers_to_tdata(pjsip_tx_data *tdata, object headers) except -1:
     cdef pj_str_t name_pj, value_pj
     cdef pjsip_hdr *hdr
     for header in headers:
-        _str_to_pj_str(header.name, &name_pj)
-        _str_to_pj_str(header.body, &value_pj)
+        hb = header.name.encode()
+        bb = header.body.encode()
+        _str_to_pj_str(hb, &name_pj)
+        _str_to_pj_str(bb, &value_pj)
         hdr = <pjsip_hdr *> pjsip_generic_string_hdr_create(tdata.pool, &name_pj, &value_pj)
         pjsip_msg_add_hdr(tdata.msg, hdr)
 
@@ -352,18 +351,41 @@ cdef int _remove_headers_from_tdata(pjsip_tx_data *tdata, object headers) except
         _str_to_pj_str(header, &header_name_pj)
         hdr = <pjsip_hdr *> pjsip_msg_find_remove_hdr_by_name(tdata.msg, &header_name_pj, NULL)
 
+cdef int _BaseRouteHeader_to_pjsip_route_hdr(BaseIdentityHeader header, pjsip_route_hdr *pj_header, pj_pool_t *pool) except -1:
+    cdef pjsip_param *param
+    cdef pjsip_sip_uri *sip_uri
+    pjsip_route_hdr_init(NULL, <void *> pj_header)
+    sip_uri = <pjsip_sip_uri *> pj_pool_alloc(pool, sizeof(pjsip_sip_uri))
+    _BaseSIPURI_to_pjsip_sip_uri(header.uri, sip_uri, pool)
+    
+    pj_header.name_addr.uri = <pjsip_uri *> sip_uri
+    if header.display_name:
+        _str_to_pj_str(header.display_name, &pj_header.name_addr.display)
+    _dict_to_pjsip_param(header.parameters, &pj_header.other_param, pool)
+    return 0
+
 cdef int _BaseSIPURI_to_pjsip_sip_uri(BaseSIPURI uri, pjsip_sip_uri *pj_uri, pj_pool_t *pool) except -1:
     cdef pjsip_param *param
     pjsip_sip_uri_init(pj_uri, uri.secure)
     if uri.user:
-        _str_to_pj_str(uri.user, &pj_uri.user)
+        _str_to_pj_str(uri.user.encode(), &pj_uri.user)
     if uri.password:
-        _str_to_pj_str(uri.password, &pj_uri.passwd)
+        _str_to_pj_str(uri.password.encode(), &pj_uri.passwd)
     if uri.host:
-        _str_to_pj_str(uri.host, &pj_uri.host)
+        _str_to_pj_str(uri.host.encode(), &pj_uri.host)
     if uri.port:
         pj_uri.port = uri.port
+
     for name, value in uri.parameters.iteritems():
+        #print('Parse parameter %s (%s): %s (%s)' % (name, type(name), value, type(value)))
+        if value is not None:
+            try:
+                int(value)
+            except ValueError:
+                value = value.encode()
+
+        name = name.encode()
+
         if name == "lr":
             pj_uri.lr_param = 1
         elif name == "maddr":
@@ -387,17 +409,6 @@ cdef int _BaseSIPURI_to_pjsip_sip_uri(BaseSIPURI uri, pjsip_sip_uri *pj_uri, pj_
     _dict_to_pjsip_param(uri.headers, &pj_uri.header_param, pool)
     return 0
 
-cdef int _BaseRouteHeader_to_pjsip_route_hdr(BaseIdentityHeader header, pjsip_route_hdr *pj_header, pj_pool_t *pool) except -1:
-    cdef pjsip_param *param
-    cdef pjsip_sip_uri *sip_uri
-    pjsip_route_hdr_init(NULL, <void *> pj_header)
-    sip_uri = <pjsip_sip_uri *> pj_pool_alloc(pool, sizeof(pjsip_sip_uri))
-    _BaseSIPURI_to_pjsip_sip_uri(header.uri, sip_uri, pool)
-    pj_header.name_addr.uri = <pjsip_uri *> sip_uri
-    if header.display_name:
-        _str_to_pj_str(header.display_name.encode('utf-8'), &pj_header.name_addr.display)
-    _dict_to_pjsip_param(header.parameters, &pj_header.other_param, pool)
-    return 0
 
 def _get_device_name_encoding():
     if sys.platform == 'win32':

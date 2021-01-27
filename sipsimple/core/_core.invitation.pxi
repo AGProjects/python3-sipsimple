@@ -128,15 +128,15 @@ cdef class Invitation:
                 return 0
 
             self.direction = "incoming"
-            self.transport = rdata.tp_info.transport.type_name.lower()
+            self.transport = rdata.tp_info.transport.type_name.decode().lower()
             self.request_uri = FrozenSIPURI_create(<pjsip_sip_uri *> pjsip_uri_get_uri(rdata.msg_info.msg.line.req.uri))
-            if _is_valid_ip(pj_AF_INET(), self.request_uri.host):
+            if _is_valid_ip(pj_AF_INET(), self.request_uri.host.encode()):
                 self.local_contact_header = FrozenContactHeader(self.request_uri)
             else:
                 self.local_contact_header = FrozenContactHeader(FrozenSIPURI(host=_pj_str_to_str(rdata.tp_info.transport.local_name.host),
                                                                              user=self.request_uri.user, port=rdata.tp_info.transport.local_name.port,
                                                                              parameters=(frozendict(transport=self.transport) if self.transport != "udp" else frozendict())))
-            contact_str = PJSTR(str(self.local_contact_header.body))
+            contact_str = PJSTR(str(self.local_contact_header.body).encode())
             tp_sel.type = PJSIP_TPSELECTOR_TRANSPORT
             tp_sel.u.transport = rdata.tp_info.transport
 
@@ -170,6 +170,7 @@ cdef class Invitation:
             self.peer_address = EndpointAddress(rdata.pkt_info.src_name, rdata.pkt_info.src_port)
             event_dict = dict(obj=self, prev_state=self.state, state="incoming", originator="remote")
             _pjsip_msg_to_dict(rdata.msg_info.msg, event_dict)
+            print(event_dict)
             self.state = "incoming"
             self.remote_user_agent = event_dict['headers']['User-Agent'].body if 'User-Agent' in event_dict['headers'] else None
             try:
@@ -353,8 +354,8 @@ cdef class Invitation:
             self.credentials = FrozenCredentials.new(credentials) if credentials is not None else None
             self.request_uri = FrozenSIPURI.new(request_uri)
             self.route_header = FrozenRouteHeader.new(route_header)
-            self.route_header.uri.parameters.dict["lr"] = None # always send lr parameter in Route header
-            self.route_header.uri.parameters.dict["hide"] = None # always hide Route header
+            self.route_header.uri.parameters.dict[b"lr"] = None # always send lr parameter in Route header
+            self.route_header.uri.parameters.dict[b"hide"] = None # always hide Route header
             self.local_contact_header = FrozenContactHeader.new(contact_header)
             self.sdp.proposed_local = FrozenSDPSession.new(sdp) if sdp is not None else None
 
@@ -1186,9 +1187,9 @@ cdef class Invitation:
         cdef pjsip_tx_data *tdata
         cdef int status
         cdef dict _sipfrag_version = dict(version="2.0")
-        cdef PJSTR _content_type = PJSTR("message")
-        cdef PJSTR _content_subtype = PJSTR("sipfrag")
-        cdef PJSTR noresource = PJSTR("noresource")
+        cdef PJSTR _content_type = PJSTR(b"message")
+        cdef PJSTR _content_subtype = PJSTR(b"sipfrag")
+        cdef PJSTR noresource = PJSTR(b"noresource")
         cdef PJSTR content
 
         if self.transfer_state == "ACTIVE":
@@ -1407,7 +1408,7 @@ cdef void _Invitation_cb_state(pjsip_inv_session *inv, pjsip_event *e) with gil:
             invitation = (<object> inv.mod_data[ua._module.id])()
             if invitation is None:
                 return
-            state = pjsip_inv_state_name(inv.state).lower()
+            state = pjsip_inv_state_name(inv.state).decode().lower()
             sub_state = None
             if state == "calling":
                 state = "outgoing"
@@ -1698,7 +1699,7 @@ cdef void _Invitation_transfer_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, 
                 rdata_dict = dict()
                 _pjsip_msg_to_dict(rdata.msg_info.msg, rdata_dict)
                 try:
-                    timer = TransferResponseCallbackTimer(_pj_str_to_str(event.body.tsx_state.tsx.method.name), rdata_dict)
+                    timer = TransferResponseCallbackTimer(_pj_str_to_bytes(event.body.tsx_state.tsx.method.name), rdata_dict)
                     timer.schedule(0, <timer_callback>invitation._transfer_cb_response, invitation)
                 except:
                     invitation._fail(ua)

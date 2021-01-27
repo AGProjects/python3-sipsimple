@@ -1028,7 +1028,7 @@ class Session(object):
         self.transport = self.route.transport
         self.local_focus = is_focus
         self._invitation = Invitation()
-        self._local_identity = FromHeader(self.account.uri, self.account.display_name)
+        self._local_identity = FromHeader(self.account.uri, self.account.display_name.decode())
         self._remote_identity = to_header
         self.conference = ConferenceHandler(self)
         self.transfer_handler = TransferHandler(self)
@@ -1065,7 +1065,7 @@ class Session(object):
                 if media.connection is None or (media.connection is not None and not media.has_ice_attributes and not media.has_ice_candidates):
                     media.connection = connection
                 local_sdp.media.append(media)
-            from_header = FromHeader(self.account.uri, self.account.display_name)
+            from_header = FromHeader(self.account.uri, self.account.display_name.decode())
             route_header = RouteHeader(self.route.uri)
             contact_header = ContactHeader(contact_uri)
             if is_focus:

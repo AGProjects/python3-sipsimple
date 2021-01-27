@@ -32,7 +32,7 @@ cdef class Subscription:
             raise SIPCoreError("Subscription.__init__() was already called")
         if refresh <= 0:
             raise ValueError("refresh argument needs to be a non-negative integer")
-        if event not in ua._events.iterkeys():
+        if event not in ua._events.keys():
             raise ValueError('Unknown event "%s"' % event)
         self.contact_header = FrozenContactHeader.new(contact_header)
         self.event = event
@@ -45,13 +45,13 @@ cdef class Subscription:
         from_header_parameters = from_header.parameters.copy()
         from_header_parameters.pop("tag", None)
         from_header.parameters = {}
-        from_header_str = PJSTR(from_header.body)
+        from_header_str = PJSTR(from_header.body.encode())
         to_header_parameters = to_header.parameters.copy()
         to_header_parameters.pop("tag", None)
         to_header.parameters = {}
-        to_header_str = PJSTR(to_header.body)
-        contact_str = PJSTR(str(contact_header.body))
-        request_uri_str = PJSTR(str(request_uri))
+        to_header_str = PJSTR(to_header.body.encode())
+        contact_str = PJSTR(str(contact_header.body).encode())
+        request_uri_str = PJSTR(str(request_uri).encode())
         _str_to_pj_str(self.event, &event_pj)
         with nogil:
             status = pjsip_dlg_create_uac(pjsip_ua_instance(), &from_header_str.pj_str, &contact_str.pj_str,
@@ -209,9 +209,9 @@ cdef class Subscription:
             content_type_spl = content_type.split("/")
             if len(content_type_spl) != 2:
                 raise ValueError('Supplied content_type argument does not contain a "/" character')
-            content_type_str = PJSTR(content_type_spl[0])
-            content_subtype_str = PJSTR(content_type_spl[1])
-            _str_to_pj_str(body, &body_pj)
+            content_type_str = PJSTR(content_type_spl[0].encode())
+            content_subtype_str = PJSTR(content_type_spl[1].encode())
+            _str_to_pj_str(body.encode(), &body_pj)
         with nogil:
             status = pjsip_evsub_initiate(self._obj, NULL, expires, &tdata)
         if status != 0:
@@ -423,13 +423,13 @@ cdef class IncomingSubscription:
         _pjsip_msg_to_dict(rdata.msg_info.msg, event_dict)
         transport = rdata.tp_info.transport.type_name.lower()
         request_uri = event_dict["request_uri"]
-        if _is_valid_ip(pj_AF_INET(), request_uri.host):
+        if _is_valid_ip(pj_AF_INET(), request_uri.host.encode()):
             contact_header = FrozenContactHeader(request_uri)
         else:
             contact_header = FrozenContactHeader(FrozenSIPURI(host=_pj_str_to_str(rdata.tp_info.transport.local_name.host),
                                                             user=request_uri.user, port=rdata.tp_info.transport.local_name.port,
                                                             parameters=(frozendict(transport=transport) if transport != "udp" else frozendict())))
-        contact_str = PJSTR(str(contact_header.body))
+        contact_str = PJSTR(str(contact_header.body).encode())
 
         with nogil:
             status = pjsip_dlg_create_uas_and_inc_lock(pjsip_ua_instance(), rdata, &contact_str.pj_str, &self._dlg)
@@ -522,9 +522,9 @@ cdef class IncomingSubscription:
                 content_type_match = _re_content_type.match(content_type)
                 if content_type_match is None:
                     raise ValueError("content_type parameter is not properly formatted")
-                self._content_type = PJSTR(content_type_match.group(1))
-                self._content_subtype = PJSTR(content_type_match.group(2))
-                self._content = PJSTR(content)
+                self._content_type = PJSTR(content_type_match.group(1).encode())
+                self._content_subtype = PJSTR(content_type_match.group(2).encode())
+                self._content = PJSTR(content.encode())
             if self.state == "incoming":
                 self._send_initial_response(200)
             self._set_state("active")
@@ -551,9 +551,9 @@ cdef class IncomingSubscription:
             content_type_match = _re_content_type.match(content_type)
             if content_type_match is None:
                 raise ValueError("content_type parameter is not properly formatted")
-            self._content_type = PJSTR(content_type_match.group(1))
-            self._content_subtype = PJSTR(content_type_match.group(2))
-            self._content = PJSTR(content)
+            self._content_type = PJSTR(content_type_match.group(1).encode())
+            self._content_subtype = PJSTR(content_type_match.group(2).encode())
+            self._content = PJSTR(content.encode())
             self._send_notify()
         finally:
             with nogil:
@@ -638,7 +638,7 @@ cdef class IncomingSubscription:
         else:
             state = PJSIP_EVSUB_STATE_TERMINATED
             if reason is not None:
-                _str_to_pj_str(reason, &reason_pj)
+                _str_to_pj_str(reason.encode(), &reason_pj)
                 reason_p = &reason_pj
         with nogil:
             status = pjsip_evsub_notify(self._obj, state, NULL, reason_p, &tdata)
