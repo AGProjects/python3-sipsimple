@@ -967,6 +967,12 @@ cdef SDPSession SDPSession_create(pjmedia_sdp_session_ptr_const pj_session):
     cdef int i
     if pj_session.conn != NULL:
         connection = SDPConnection_create(pj_session.conn)
+    print('pj_session.origin.user %s' % pj_session.origin.user )
+    print('pj_session.origin.user %s' % _pj_str_to_str(pj_session.origin.user))
+    print('pj_session.origin.addr_type %s' % pj_session.origin.addr_type)
+    print('pj_session.origin.addr_type %s' % _pj_str_to_bytes(pj_session.origin.addr_type))
+    print('pj_session.origin.net_type %s' % pj_session.origin.net_type )
+    print('pj_session.origin.name %s' % pj_session.name )
     return SDPSession(_pj_str_to_str(pj_session.origin.addr),
                        pj_session.origin.id,
                        pj_session.origin.version,

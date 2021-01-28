@@ -842,8 +842,9 @@ cdef class Invitation:
 
         contact_str = str(contact_header.uri)
         if contact_header.display_name:
-            contact_str = "%s <%s>" % (contact_header.display_name.encode('utf-8'), contact_str)
-        pj_strdup2_with_null(self._dialog.pool, &contact_str_pj, contact_str)
+            contact_str = "%s <%s>" % (contact_header.display_name, contact_str)
+        print('Built contact_str %s' % contact_str)
+        pj_strdup2_with_null(self._dialog.pool, &contact_str_pj, contact_str.encode())
         contact = pjsip_parse_uri(self._dialog.pool, contact_str_pj.ptr, contact_str_pj.slen, PJSIP_PARSE_URI_AS_NAMEADDR)
         if contact == NULL:
             raise SIPCoreError("Not a valid Contact header: %s" % contact_str)

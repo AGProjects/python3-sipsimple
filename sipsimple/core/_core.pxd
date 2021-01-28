@@ -1784,6 +1784,11 @@ cdef object _pj_str_to_bytes(pj_str_t pj_bytes)
 cdef object _pj_str_to_str(pj_str_t pj_str)
 cdef object _pj_status_to_str(int status)
 cdef object _pj_status_to_def(int status)
+cdef object _buf_to_str(object buf)
+cdef object _str_as_str(object string)
+cdef object _str_as_size(object string)
+
+
 cdef dict _pjsip_param_to_dict(pjsip_param *param_list)
 cdef int _dict_to_pjsip_param(object params, pjsip_param *param_list, pj_pool_t *pool)
 cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1

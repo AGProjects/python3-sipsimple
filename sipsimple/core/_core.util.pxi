@@ -170,7 +170,7 @@ cdef object _pj_buf_len_to_str(object buf, int buf_len):
     return PyBytes_FromStringAndSize(buf, buf_len)
 
 cdef object _buf_to_str(object buf):
-    return PyBytes_FromString(buf)
+    return PyBytes_FromString(buf).decode()
 
 cdef object _str_as_str(object string):
     return PyBytes_AsString(string)
