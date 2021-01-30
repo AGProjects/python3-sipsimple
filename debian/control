@@ -1,8 +1,8 @@
 Source: python-sipsimple
 Section: python
 Priority: optional
-Maintainer: Dan Pascu <dan@ag-projects.com>
-Uploaders: Adrian Georgescu <ag@ag-projects.com>
+Maintainer: Adrian Georgescu <ag@ag-projects.com>
+Uploaders: Tijmne de Mes <tijmen@ag-projects.com>
 Build-Depends: debhelper, python3,
                dh-python,
                python3-all-dev (>= 2.7),
@@ -34,7 +34,7 @@ Depends: ${python3:Depends}, ${shlibs:Depends}, ${misc:Depends},
          python3-lxml,
          python3-msrplib,
          python3-otr
-         python-twisted,
+         python3-twisted,
          python3-xcaplib
 Suggests: libavahi-compat-libdnssd1
 Provides: ${python3:Provides}

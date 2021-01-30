@@ -1,3 +1,9 @@
+python-sipsimple (4.0.0) unstable; urgency=medium
+
+  * Migrated to python 3
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Sat, 30 Jan 2021 13:01:29 +0100
+
 python-sipsimple (3.5.1) unstable; urgency=medium
 
   * Do not run account delete inside green thread
