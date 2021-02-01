@@ -408,7 +408,7 @@ class ChatStream(MSRPStreamBase):
             return
         else:
             data = ''.join(self.incoming_queue.pop(chunk.message_id, [])) + chunk.data
-
+            
         if content_type == 'message/cpim':
             try:
                 payload = CPIMPayload.decode(data)
@@ -431,7 +431,7 @@ class ChatStream(MSRPStreamBase):
             private = False
 
         try:
-            message.content = self.encryption.otr_session.handle_input(message.content, message.content_type)
+            message.content = self.encryption.otr_session.handle_input(message.content.encode(), message.content_type)
         except IgnoreMessage:
             self.msrp_session.send_report(chunk, 200, 'OK')
             return
@@ -635,6 +635,8 @@ class ChatIdentity(object):
     _format_re = re.compile(r'^(?:"?(?P<display_name>[^<]*[^"\s])"?)?\s*<(?P<uri>sips?:.+)>$')
 
     def __init__(self, uri, display_name=None):
+        print('ChatIdentity %s %s %s %s' % (uri, type(uri), display_name, type(display_name)))
+    
         self.uri = uri
         self.display_name = display_name
 
@@ -660,9 +662,6 @@ class ChatIdentity(object):
         return '{0.__class__.__name__}(uri={0.uri!r}, display_name={0.display_name!r})'.format(self)
 
     def __str__(self):
-        return self.__unicode__().encode('utf-8')
-
-    def __unicode__(self):
         if self.display_name:
             return '{0.display_name} <{0.uri}>'.format(self)
         else:
@@ -737,8 +736,6 @@ class CPIMPayload(object):
     namespace_re = re.compile(r'^(?:(\S+) ?)?<(.*)>$')
 
     def __init__(self, content, content_type, charset=None, sender=None, recipients=None, courtesy_recipients=None, subject=None, timestamp=None, required=None, additional_headers=None):
-        if not isinstance(content, bytes):
-            raise TypeError("content should be an instance of bytes")
         self.content = content
         self.content_type = content_type
         self.charset = charset
@@ -755,6 +752,7 @@ class CPIMPayload(object):
         header_list = []
 
         if self.sender is not None:
+            print('Sender type %s' % type(self.sender))
             header_list.append('From: {}'.format(self.sender))
         header_list.extend('To: {}'.format(recipient) for recipient in self.recipients)
         header_list.extend('cc: {}'.format(recipient) for recipient in self.courtesy_recipients)
@@ -778,7 +776,7 @@ class CPIMPayload(object):
             else:
                 header_list.append('{0.name}: {0.value}'.format(header))
 
-        headers = '\r\n'.join(header.encode('cpim-header') for header in header_list)
+        headers = '\r\n'.join(header_list)
 
         mime_message = EmailMessage()
         mime_message.set_payload(self.content)
@@ -790,8 +788,6 @@ class CPIMPayload(object):
 
     @classmethod
     def decode(cls, message):
-        if not isinstance(message, bytes):
-            raise TypeError("message should be an instance of bytes")
 
         headers, separator, body = message.partition('\r\n\r\n')
         if not separator:
@@ -810,12 +806,14 @@ class CPIMPayload(object):
 
         for prefix, name, value in cls.headers_re.findall(headers):
             namespace = namespaces.get(prefix)
+            print('--------------')  
+            print(prefix, name, value)
 
             if namespace is None or '.' in name:
                 continue
 
             try:
-                value = value.decode('cpim-header')
+                #value = value.decode('cpim-header')
                 if namespace == cls.standard_namespace:
                     if name == 'From':
                         sender = ChatIdentity.parse(value)
