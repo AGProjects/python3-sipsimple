@@ -1057,8 +1057,8 @@ class Session(object):
                     stream.end()
                 self._fail(originator='local', code=480, reason=sip_status_messages[480], error=str(e))
                 return
-            connection = SDPConnection(local_ip)
-            local_sdp = SDPSession(local_ip, name=settings.user_agent)
+            connection = SDPConnection(local_ip.encode())
+            local_sdp = SDPSession(local_ip.encode(), name=settings.user_agent.encode())
             for index, stream in enumerate(self.proposed_streams):
                 stream.index = index
                 media = stream.get_local_media(remote_sdp=None, index=index)
@@ -1325,29 +1325,36 @@ class Session(object):
                     stream.end()
                 self._fail(originator='local', code=500, reason=sip_status_messages[500], error='could not get local IP address')
                 return
-            connection = SDPConnection(local_ip)
-            local_sdp = SDPSession(local_ip, name=settings.user_agent)
+            connection = SDPConnection(local_ip.encode())
+            local_sdp = SDPSession(local_ip.encode(), name=settings.user_agent.encode())
             if remote_sdp:
                 stream_map = dict((stream.index, stream) for stream in self.proposed_streams)
                 for index, media in enumerate(remote_sdp.media):
                     stream = stream_map.get(index, None)
                     if stream is not None:
+                        print('session.py: we will get local media')
+                        # TODO: broken for RTP streams here
                         media = stream.get_local_media(remote_sdp=remote_sdp, index=index)
+                        print('session.py: we got local media %s' % media)
                         if not media.has_ice_attributes and not media.has_ice_candidates:
                             media.connection = connection
                     else:
-                        media = SDPMediaStream.new(media)
+                        media = SDPMediaStream.new(media.encode())
                         media.connection = connection
                         media.port = 0
                         media.attributes = []
                         media.bandwidth_info = []
+                    print('Added media to SDP: %s' % media)
                     local_sdp.media.append(media)
             else:
                 for index, stream in enumerate(self.proposed_streams):
                     stream.index = index
+                    print('session.py: we will get local media 2')
                     media = stream.get_local_media(remote_sdp=None, index=index)
+                    print('session.py: we got local media 2 %s' % media)
                     if media.connection is None or (media.connection is not None and not media.has_ice_attributes and not media.has_ice_candidates):
                         media.connection = connection
+                    print('Added media to SDP: %s' % media)
                     local_sdp.media.append(media)
             contact_header = ContactHeader.new(self._invitation.local_contact_header)
             try:

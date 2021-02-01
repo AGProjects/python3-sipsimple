@@ -481,6 +481,7 @@ class RTPStream(object, metaclass=RTPStreamType):
                     new_direction = ("inactive" if (self._hold_request == 'hold' or (self._hold_request is None and self.on_hold_by_local)) else "recvonly")
             else:
                 new_direction = None
+            print('RTP stream init will get_local_media %s %s' % (index, new_direction)) 
             return self._transport.get_local_media(remote_sdp, index, new_direction)
 
     # Notifications

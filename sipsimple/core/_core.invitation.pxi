@@ -471,6 +471,7 @@ cdef class Invitation:
         cdef PJSIPUA ua
 
         ua = _get_ua()
+        print('invitation send_response')
 
         with nogil:
             status = pj_mutex_lock(lock)
@@ -498,6 +499,7 @@ cdef class Invitation:
                 raise SIPCoreError("Local SDP cannot be specified for a negative response")
             self.sdp.proposed_local = FrozenSDPSession.new(sdp) if sdp is not None else None
             local_sdp = self.sdp.proposed_local.get_sdp_session() if sdp is not None else NULL
+            print('pjmedia_sdp_neg_modify_local_offer is next')
             if sdp is not None and self.sdp.proposed_remote is None:
                 # There was no remote proposal, this is a reply with an offer
                 with nogil:
@@ -507,11 +509,13 @@ cdef class Invitation:
                 # Retrieve the "fixed" offer from negotiator
                 pjmedia_sdp_neg_get_neg_local(invite_session.neg, &lsdp)
                 local_sdp = <pjmedia_sdp_session *>lsdp
+            print('pjsip_inv_answer is next')
             with nogil:
                 status = pjsip_inv_answer(invite_session, code, &reason_str if reason is not None else NULL, local_sdp, &tdata)
             if status != 0:
                 raise PJSIPError("Could not create %d reply to INVITE" % code, status)
             _add_headers_to_tdata(tdata, extra_headers)
+            print('pjsip_inv_send_msg is next')
             with nogil:
                 status = pjsip_inv_send_msg(invite_session, tdata)
             if status != 0:

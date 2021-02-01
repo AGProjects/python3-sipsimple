@@ -157,6 +157,9 @@ cdef class frozendict:
 
 cdef int _str_to_pj_str(object string, pj_str_t *pj_str) except -1:
     #print('Convert %s (%s)' % (string, type(string)))
+    if isinstance(string, str):
+        string = string.encode()
+    
     pj_str.ptr = PyBytes_AsString(string)
     pj_str.slen = len(string)
 

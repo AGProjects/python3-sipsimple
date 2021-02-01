@@ -116,8 +116,9 @@ class Engine(Thread, metaclass=Singleton):
         while not self._thread_stopping:
             try:
                 failed = self._ua.poll()
-            except:
+            except Exception as e:
                 log.exception('Exception occurred while running the Engine')
+                traceback.print_exc()
                 exc_type, exc_val, exc_tb = sys.exc_info()
                 self.notification_center.post_notification('SIPEngineGotException', sender=self, data=NotificationData(type=exc_type, value=exc_val, traceback="".join(traceback.format_exception(exc_type, exc_val, exc_tb))))
                 failed = True

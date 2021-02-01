@@ -867,6 +867,7 @@ cdef class RTPTransport:
                     pj_mutex_unlock(lock)
 
     def update_local_sdp(self, SDPSession local_sdp, BaseSDPSession remote_sdp=None, int sdp_index=0):
+        print('Cython mediatransport update_local_sdp')
         cdef int status
         cdef pj_pool_t *pool
         cdef pjmedia_sdp_session *pj_local_sdp
@@ -886,13 +887,18 @@ cdef class RTPTransport:
         if sdp_index >= pj_local_sdp.media_count:
             raise ValueError("sdp_index argument out of range")
         # Remove ICE and SRTP/ZRTP related attributes from SDP, they will be added by pjmedia_transport_encode_sdp
+        print('Cython mediatransport update_local_sdp 1')
         local_media = local_sdp.media[sdp_index]
         local_media.attributes = [<object> attr for attr in local_media.attributes if attr.name not in ('crypto', 'zrtp-hash', 'ice-ufrag', 'ice-pwd', 'ice-mismatch', 'candidate', 'remote-candidates')]
+        print('Cython mediatransport update_local_sdp 2')
         pj_local_sdp = local_sdp.get_sdp_session()
+        print('Cython mediatransport update_local_sdp 3')
+
         with nogil:
             status = pjmedia_transport_encode_sdp(transport, pool, pj_local_sdp, pj_remote_sdp, sdp_index)
         if status != 0:
             raise PJSIPError("Could not update SDP for media transport", status)
+        print('Cython mediatransport update_local_sdp 4')
         local_sdp._update()
         return 0
 

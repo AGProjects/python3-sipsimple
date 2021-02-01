@@ -316,6 +316,7 @@ class ChatStream(MSRPStreamBase):
             raise InvalidStreamError("wrong format list specified")
         stream = cls()
         stream.remote_role = remote_stream.attributes.getfirst('setup', 'active')
+        
         if remote_stream.direction != 'sendrecv':
             raise InvalidStreamError("Unsupported direction for chat stream: %s" % remote_stream.direction)
         remote_accept_types = remote_stream.attributes.getfirst('accept-types')

@@ -2269,16 +2269,16 @@ cdef class BaseSDPConnection(object):
 
 cdef class SDPConnection(BaseSDPConnection):
     # attributes
-    cdef str _address
-    cdef str _net_type
-    cdef str _address_type
+    cdef object _address
+    cdef object _net_type
+    cdef object _address_type
 
 cdef class FrozenSDPConnection(BaseSDPConnection):
     # attributes
     cdef int initialized
-    cdef readonly str address
-    cdef readonly str net_type
-    cdef readonly str address_type
+    cdef readonly object address
+    cdef readonly object net_type
+    cdef readonly object address_type
 
 cdef class SDPAttributeList(list):
     pass
@@ -2301,12 +2301,12 @@ cdef class BaseSDPSession(object):
 
 cdef class SDPSession(BaseSDPSession):
     # attributes
-    cdef str _address
-    cdef str _user
-    cdef str _net_type
-    cdef str _address_type
-    cdef str _name
-    cdef str _info
+    cdef object _address
+    cdef object _user
+    cdef object _net_type
+    cdef object _address_type
+    cdef object _name
+    cdef object _info
     cdef SDPConnection _connection
     cdef list _attributes
     cdef list _bandwidth_info
@@ -2318,14 +2318,14 @@ cdef class SDPSession(BaseSDPSession):
 cdef class FrozenSDPSession(BaseSDPSession):
     # attributes
     cdef int initialized
-    cdef readonly str address
+    cdef readonly object address
     cdef readonly unsigned int id
     cdef readonly unsigned int version
-    cdef readonly str user
-    cdef readonly str net_type
-    cdef readonly str address_type
-    cdef readonly str name
-    cdef readonly str info
+    cdef readonly object user
+    cdef readonly object net_type
+    cdef readonly object address_type
+    cdef readonly object name
+    cdef readonly object info
     cdef readonly FrozenSDPConnection connection
     cdef readonly int start_time
     cdef readonly int stop_time
@@ -2342,11 +2342,11 @@ cdef class BaseSDPMediaStream(object):
 
 cdef class SDPMediaStream(BaseSDPMediaStream):
     # attributes
-    cdef str _media
-    cdef str _transport
+    cdef object _media
+    cdef object _transport
     cdef list _formats
     cdef list _codec_list
-    cdef str _info
+    cdef object _info
     cdef SDPConnection _connection
     cdef SDPAttributeList _attributes
     cdef SDPBandwidthInfoList _bandwidth_info
@@ -2357,13 +2357,13 @@ cdef class SDPMediaStream(BaseSDPMediaStream):
 cdef class FrozenSDPMediaStream(BaseSDPMediaStream):
     # attributes
     cdef int initialized
-    cdef readonly str media
+    cdef readonly object media
     cdef readonly int port
-    cdef readonly str transport
+    cdef readonly object transport
     cdef readonly int port_count
     cdef readonly frozenlist formats
     cdef readonly frozenlist codec_list
-    cdef readonly str info
+    cdef readonly object info
     cdef readonly FrozenSDPConnection connection
     cdef readonly FrozenSDPAttributeList attributes
     cdef readonly FrozenSDPBandwidthInfoList bandwidth_info
@@ -2377,8 +2377,8 @@ cdef class BaseSDPAttribute(object):
 
 cdef class SDPAttribute(BaseSDPAttribute):
     # attributes
-    cdef str _name
-    cdef str _value
+    cdef object _name
+    cdef object _value
 
 cdef class FrozenSDPAttribute(BaseSDPAttribute):
     # attributes
@@ -2395,8 +2395,8 @@ cdef class BaseSDPBandwidthInfo(object):
 
 cdef class SDPBandwidthInfo(BaseSDPBandwidthInfo):
     # attributes
-    cdef str _modifier
-    cdef int _value
+    cdef object _modifier
+    cdef object _value
 
 cdef class FrozenSDPBandwidthInfo(BaseSDPBandwidthInfo):
     # attributes
@@ -2554,7 +2554,7 @@ cdef class RTPTransport(object):
     cdef pjmedia_transport *_obj
     cdef pjmedia_transport *_wrapped_transport
     cdef ICECheck _rtp_valid_pair
-    cdef str _encryption
+    cdef object _encryption
     cdef readonly object ice_stun_address
     cdef readonly object ice_stun_port
     cdef readonly object state

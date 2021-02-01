@@ -82,15 +82,15 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
         transport = "TCP/TLS/MSRP" if uri_path[-1].use_tls else "TCP/MSRP"
         attributes = [SDPAttribute("path", " ".join(str(uri) for uri in uri_path))]
         if self.direction not in [None, 'sendrecv']:
-            attributes.append(SDPAttribute(self.direction, ''))
+            attributes.append(SDPAttribute(self.direction.encode(), b''))
         if self.accept_types is not None:
             attributes.append(SDPAttribute("accept-types", " ".join(self.accept_types)))
         if self.accept_wrapped_types is not None:
             attributes.append(SDPAttribute("accept-wrapped-types", " ".join(self.accept_wrapped_types)))
         attributes.append(SDPAttribute("setup", self.local_role))
         local_ip = uri_path[-1].host
-        connection = SDPConnection(local_ip)
-        return SDPMediaStream(self.media_type, uri_path[-1].port or 2855, transport, connection=connection, formats=["*"], attributes=attributes)
+        connection = SDPConnection(local_ip.encode())
+        return SDPMediaStream(self.media_type.encode(), uri_path[-1].port or 2855, transport.encode(), connection=connection, formats=["*"], attributes=attributes)
 
     # The public API (the IMediaStream interface)
 
@@ -158,6 +158,7 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
             full_local_path = self.msrp_connector.prepare(local_uri=URI(host=host.default_ip, port=0, use_tls=self.transport=='tls', credentials=self.session.account.tls_credentials))
             self.local_media = self._create_local_media(full_local_path)
         except Exception as e:
+            traceback.print_exc()
             notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason=str(e)))
         else:
             notification_center.post_notification('MediaStreamDidInitialize', sender=self)
