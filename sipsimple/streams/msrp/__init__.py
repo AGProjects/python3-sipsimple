@@ -80,17 +80,22 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
 
     def _create_local_media(self, uri_path):
         transport = "TCP/TLS/MSRP" if uri_path[-1].use_tls else "TCP/MSRP"
-        attributes = [SDPAttribute("path", " ".join(str(uri) for uri in uri_path))]
+        attributes = []
+        path = " ".join(str(uri) for uri in uri_path)
+
+        attributes.append(SDPAttribute(b"path", path.encode()))
         if self.direction not in [None, 'sendrecv']:
             attributes.append(SDPAttribute(self.direction.encode(), b''))
         if self.accept_types is not None:
-            attributes.append(SDPAttribute("accept-types", " ".join(self.accept_types)))
+            a_types = " ".join(self.accept_types)
+            attributes.append(SDPAttribute(b"accept-types", a_types.encode()))
         if self.accept_wrapped_types is not None:
-            attributes.append(SDPAttribute("accept-wrapped-types", " ".join(self.accept_wrapped_types)))
-        attributes.append(SDPAttribute("setup", self.local_role))
+            a_w_types = " ".join(self.accept_wrapped_types)
+            attributes.append(SDPAttribute(b"accept-wrapped-types", a_w_types.encode()))
+        attributes.append(SDPAttribute(b"setup", self.local_role.encode() if self.local_role else None))
         local_ip = uri_path[-1].host
         connection = SDPConnection(local_ip.encode())
-        return SDPMediaStream(self.media_type.encode(), uri_path[-1].port or 2855, transport.encode(), connection=connection, formats=["*"], attributes=attributes)
+        return SDPMediaStream(self.media_type.encode(), uri_path[-1].port or 2855, transport.encode(), connection=connection, formats=[b"*"], attributes=attributes)
 
     # The public API (the IMediaStream interface)
 

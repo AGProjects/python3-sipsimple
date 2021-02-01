@@ -2383,8 +2383,8 @@ cdef class SDPAttribute(BaseSDPAttribute):
 cdef class FrozenSDPAttribute(BaseSDPAttribute):
     # attributes
     cdef int initialized
-    cdef readonly str name
-    cdef readonly str value
+    cdef readonly object name
+    cdef readonly object value
 
 cdef class BaseSDPBandwidthInfo(object):
     # attributes
@@ -2401,7 +2401,7 @@ cdef class SDPBandwidthInfo(BaseSDPBandwidthInfo):
 cdef class FrozenSDPBandwidthInfo(BaseSDPBandwidthInfo):
     # attributes
     cdef int initialized
-    cdef readonly str modifier
+    cdef readonly object modifier
     cdef readonly int value
 
 cdef SDPSession SDPSession_create(pjmedia_sdp_session_ptr_const pj_session)
