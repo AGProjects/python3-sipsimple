@@ -371,16 +371,15 @@ cdef int _BaseSIPURI_to_pjsip_sip_uri(BaseSIPURI uri, pjsip_sip_uri *pj_uri, pj_
     cdef pjsip_param *param
     pjsip_sip_uri_init(pj_uri, uri.secure)
     if uri.user:
-        _str_to_pj_str(uri.user.encode(), &pj_uri.user)
+        _str_to_pj_str(uri.user, &pj_uri.user)
     if uri.password:
-        _str_to_pj_str(uri.password.encode(), &pj_uri.passwd)
+        _str_to_pj_str(uri.password, &pj_uri.passwd)
     if uri.host:
-        _str_to_pj_str(uri.host.encode(), &pj_uri.host)
+        _str_to_pj_str(uri.host, &pj_uri.host)
     if uri.port:
         pj_uri.port = uri.port
 
     for name, value in uri.parameters.iteritems():
-        #print('Parse parameter %s (%s): %s (%s)' % (name, type(name), value, type(value)))
         if value is not None:
             try:
                 int(value)

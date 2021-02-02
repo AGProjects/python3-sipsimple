@@ -198,26 +198,26 @@ class DNSLookup(object):
 
         try:
             # If the host part of the URI is an IP address, we will not do any lookup
-            if re.match("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", uri.host):
-                return [(uri.host, uri.port or service_port)]
+            if re.match("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", uri.host.decode()):
+                return [(uri.host.decode(), uri.port or service_port)]
 
             resolver = DNSResolver()
             resolver.cache = self.cache
             resolver.timeout = timeout
             resolver.lifetime = lifetime
 
-            record_name = '%s.%s' % (service_prefix, uri.host)
+            record_name = '%s.%s' % (service_prefix, uri.host.decode())
             services = self._lookup_srv_records(resolver, [record_name], log_context=log_context)
             if services[record_name]:
                 return [(result.address, result.port) for result in services[record_name]]
             elif service_fallback:
-                addresses = self._lookup_a_records(resolver, [uri.host], log_context=log_context)
-                if addresses[uri.host]:
-                    return [(addr, service_port) for addr in addresses[uri.host]]
+                addresses = self._lookup_a_records(resolver, [uri.host.decode()], log_context=log_context)
+                if addresses[uri.host.decode()]:
+                    return [(addr, service_port) for addr in addresses[uri.host.decode()]]
         except dns.resolver.Timeout:
-            raise DNSLookupError('Timeout in lookup for %s servers for domain %s' % (service, uri.host))
+            raise DNSLookupError('Timeout in lookup for %s servers for domain %s' % (service, uri.host.decode()))
         else:
-            raise DNSLookupError('No %s servers found for domain %s' % (service, uri.host))
+            raise DNSLookupError('No %s servers found for domain %s' % (service, uri.host.decode()))
 
 
     @run_in_waitable_green_thread
@@ -253,12 +253,12 @@ class DNSLookup(object):
 
         try:
             # If the host part of the URI is an IP address, we will not do any lookup
-            if re.match("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", uri.host):
-                transport = 'tls' if uri.secure else uri.transport.lower()
+            if re.match("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", uri.host.decode()):
+                transport = 'tls' if uri.secure else uri.transport.decode().lower()
                 if transport not in supported_transports:
                     raise DNSLookupError("Transport %s dictated by URI is not supported" % transport)
                 port = uri.port or (5061 if transport=='tls' else 5060)
-                return [Route(address=uri.host, port=port, transport=transport)]
+                return [Route(address=uri.host.decode(), port=port, transport=transport)]
 
             resolver = DNSResolver()
             resolver.cache = self.cache
@@ -270,9 +270,9 @@ class DNSLookup(object):
                 transport = 'tls' if uri.secure else uri.transport.lower()
                 if transport not in supported_transports:
                     raise DNSLookupError("Transport %s dictated by URI is not supported" % transport)
-                addresses = self._lookup_a_records(resolver, [uri.host], log_context=log_context)
-                if addresses[uri.host]:
-                    return [Route(address=addr, port=uri.port, transport=transport) for addr in addresses[uri.host]]
+                addresses = self._lookup_a_records(resolver, [uri.host.decode()], log_context=log_context)
+                if addresses[uri.host.decode()]:
+                    return [Route(address=addr, port=uri.port, transport=transport) for addr in addresses[uri.host.decode()]]
 
             # If the transport was already set as a parameter on the SIP URI, only do SRV lookups
             elif 'transport' in uri.parameters:
@@ -281,16 +281,16 @@ class DNSLookup(object):
                     raise DNSLookupError("Requested lookup for URI with %s transport, but it is not supported" % transport)
                 if uri.secure and transport != 'tls':
                     raise DNSLookupError("Requested lookup for SIPS URI, but with %s transport parameter" % transport)
-                record_name = '%s.%s' % (transport_service_map[transport], uri.host)
+                record_name = '%s.%s' % (transport_service_map[transport], uri.host.decode())
                 services = self._lookup_srv_records(resolver, [record_name], log_context=log_context)
                 if services[record_name]:
                     return [Route(address=result.address, port=result.port, transport=transport) for result in services[record_name]]
                 else:
                     # If SRV lookup fails, try A lookup
-                    addresses = self._lookup_a_records(resolver, [uri.host], log_context=log_context)
+                    addresses = self._lookup_a_records(resolver, [uri.host.decode()], log_context=log_context)
                     port = 5061 if transport=='tls' else 5060
-                    if addresses[uri.host]:
-                        return [Route(address=addr, port=port, transport=transport) for addr in addresses[uri.host]]
+                    if addresses[uri.host.decode()]:
+                        return [Route(address=addr, port=port, transport=transport) for addr in addresses[uri.host.decode()]]
 
             # Otherwise, it means we don't have a numeric IP address, a port isn't specified and neither is a transport. So we have to do a full NAPTR lookup
             else:
@@ -302,7 +302,7 @@ class DNSLookup(object):
                 # First try NAPTR lookup
                 naptr_services = [service for service, transport in list(naptr_service_transport_map.items()) if transport in supported_transports]
                 try:
-                    pointers = self._lookup_naptr_record(resolver, uri.host, naptr_services, log_context=log_context)
+                    pointers = self._lookup_naptr_record(resolver, uri.host.decode(), naptr_services, log_context=log_context)
                 except dns.resolver.Timeout:
                     pointers = []
                 if pointers:
@@ -311,7 +311,7 @@ class DNSLookup(object):
                     # If that fails, try SRV lookup
                     routes = []
                     for transport in supported_transports:
-                        record_name = '%s.%s' % (transport_service_map[transport], uri.host)
+                        record_name = '%s.%s' % (transport_service_map[transport], uri.host.decode())
                         try:
                             services = self._lookup_srv_records(resolver, [record_name], log_context=log_context)
                         except dns.resolver.Timeout:
@@ -324,10 +324,10 @@ class DNSLookup(object):
                         # If SRV lookup fails, try A lookup
                         transport = 'tls' if uri.secure else 'udp'
                         if transport in supported_transports:
-                            addresses = self._lookup_a_records(resolver, [uri.host], log_context=log_context)
+                            addresses = self._lookup_a_records(resolver, [uri.host.decode()], log_context=log_context)
                             port = 5061 if transport=='tls' else 5060
-                            if addresses[uri.host]:
-                                return [Route(address=addr, port=port, transport=transport) for addr in addresses[uri.host]]
+                            if addresses[uri.host.decode()]:
+                                return [Route(address=addr, port=port, transport=transport) for addr in addresses[uri.host.decode()]]
         except dns.resolver.Timeout:
             raise DNSLookupError("Timeout in lookup for routes for SIP URI %s" % uri)
         else:
@@ -345,7 +345,7 @@ class DNSLookup(object):
 
         try:
             # If the host part of the URI is an IP address, we cannot not do any lookup
-            if re.match("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", uri.host):
+            if re.match("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", uri.host.decode()):
                 raise DNSLookupError("Cannot perform DNS query because the host is an IP address")
 
             resolver = DNSResolver()
@@ -353,7 +353,7 @@ class DNSLookup(object):
             resolver.timeout = timeout
             resolver.lifetime = lifetime
 
-            record_name = 'xcap.%s' % uri.host
+            record_name = 'xcap.%s' % uri.host.decode()
             results = []
             try:
                 answer = resolver.query(record_name, rdatatype.TXT)
@@ -369,10 +369,10 @@ class DNSLookup(object):
                     if parsed_uri.scheme in ('http', 'https') and parsed_uri.netloc:
                         results.append(result_uri)
             if not results:
-                raise DNSLookupError('No XCAP servers found for domain %s' % uri.host)
+                raise DNSLookupError('No XCAP servers found for domain %s' % uri.host.decode())
             return results
         except dns.resolver.Timeout:
-            raise DNSLookupError('Timeout in lookup for XCAP servers for domain %s' % uri.host)
+            raise DNSLookupError('Timeout in lookup for XCAP servers for domain %s' % uri.host.decode())
 
 
     def _lookup_a_records(self, resolver, hostnames, additional_records=[], log_context={}):

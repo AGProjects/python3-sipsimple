@@ -1028,7 +1028,7 @@ class Session(object):
         self.transport = self.route.transport
         self.local_focus = is_focus
         self._invitation = Invitation()
-        self._local_identity = FromHeader(self.account.uri, self.account.display_name.decode())
+        self._local_identity = FromHeader(self.account.uri, self.account.display_name)
         self._remote_identity = to_header
         self.conference = ConferenceHandler(self)
         self.transfer_handler = TransferHandler(self)
