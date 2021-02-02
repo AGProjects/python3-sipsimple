@@ -698,6 +698,7 @@ cdef class BaseSDPConnection:
 
 cdef class SDPConnection(BaseSDPConnection):
     def __init__(self, object address not None, object net_type not None=b"IN", object address_type not None=b"IP4"):
+        print('SDPConnection %s %s %s %s' % (address, type(address), net_type, type()))
         self.address = address
         self.net_type = net_type
         self.address_type = address_type
@@ -967,13 +968,13 @@ cdef SDPSession SDPSession_create(pjmedia_sdp_session_ptr_const pj_session):
     cdef int i
     if pj_session.conn != NULL:
         connection = SDPConnection_create(pj_session.conn)
-    return SDPSession(_pj_str_to_str(pj_session.origin.addr),
+    return SDPSession(_pj_str_to_bytes(pj_session.origin.addr),
                        pj_session.origin.id,
                        pj_session.origin.version,
-                       _pj_str_to_str(pj_session.origin.user),
-                       _pj_str_to_str(pj_session.origin.net_type),
-                       _pj_str_to_str(pj_session.origin.addr_type),
-                       _pj_str_to_str(pj_session.name),
+                       _pj_str_to_bytes(pj_session.origin.user),
+                       _pj_str_to_bytes(pj_session.origin.net_type),
+                       _pj_str_to_bytes(pj_session.origin.addr_type),
+                       _pj_str_to_bytes(pj_session.name),
                        connection,
                        pj_session.time.start,
                        pj_session.time.stop,
@@ -986,13 +987,13 @@ cdef FrozenSDPSession FrozenSDPSession_create(pjmedia_sdp_session_ptr_const pj_s
     cdef int i
     if pj_session.conn != NULL:
         connection = FrozenSDPConnection_create(pj_session.conn)
-    return FrozenSDPSession(_pj_str_to_str(pj_session.origin.addr),
+    return FrozenSDPSession(_pj_str_to_bytes(pj_session.origin.addr),
                             pj_session.origin.id,
                             pj_session.origin.version,
-                            _pj_str_to_str(pj_session.origin.user),
-                            _pj_str_to_str(pj_session.origin.net_type),
-                            _pj_str_to_str(pj_session.origin.addr_type),
-                            _pj_str_to_str(pj_session.name),
+                            _pj_str_to_bytes(pj_session.origin.user),
+                            _pj_str_to_bytes(pj_session.origin.net_type),
+                            _pj_str_to_bytes(pj_session.origin.addr_type),
+                            _pj_str_to_bytes(pj_session.name),
                             connection,
                             pj_session.time.start,
                             pj_session.time.stop,
@@ -1005,11 +1006,11 @@ cdef SDPMediaStream SDPMediaStream_create(pjmedia_sdp_media *pj_media):
     cdef int i
     if pj_media.conn != NULL:
         connection = SDPConnection_create(pj_media.conn)
-    return SDPMediaStream(_pj_str_to_str(pj_media.desc.media),
+    return SDPMediaStream(_pj_str_to_bytes(pj_media.desc.media),
                           pj_media.desc.port,
-                          _pj_str_to_str(pj_media.desc.transport),
+                          _pj_str_to_bytes(pj_media.desc.transport),
                           pj_media.desc.port_count,
-                          [_pj_str_to_str(pj_media.desc.fmt[i]) for i in range(pj_media.desc.fmt_count)],
+                          [_pj_str_to_bytes(pj_media.desc.fmt[i]) for i in range(pj_media.desc.fmt_count)],
                           connection,
                           [SDPAttribute_create(pj_media.attr[i]) for i in range(pj_media.attr_count)],
                           [SDPBandwidthInfo_create(pj_media.bandw[i]) for i in range(pj_media.bandw_count)])
@@ -1019,34 +1020,34 @@ cdef FrozenSDPMediaStream FrozenSDPMediaStream_create(pjmedia_sdp_media *pj_medi
     cdef int i
     if pj_media.conn != NULL:
         connection = FrozenSDPConnection_create(pj_media.conn)
-    return FrozenSDPMediaStream(_pj_str_to_str(pj_media.desc.media),
+    return FrozenSDPMediaStream(_pj_str_to_bytes(pj_media.desc.media),
                           pj_media.desc.port,
-                          _pj_str_to_str(pj_media.desc.transport),
+                          _pj_str_to_bytes(pj_media.desc.transport),
                           pj_media.desc.port_count,
-                          frozenlist([_pj_str_to_str(pj_media.desc.fmt[i]) for i in range(pj_media.desc.fmt_count)]),
+                          frozenlist([_pj_str_to_bytes(pj_media.desc.fmt[i]) for i in range(pj_media.desc.fmt_count)]),
                           connection,
                           frozenlist([FrozenSDPAttribute_create(pj_media.attr[i]) for i in range(pj_media.attr_count)]),
                           frozenlist([FrozenSDPBandwidthInfo_create(pj_media.bandw[i]) for i in range(pj_media.bandw_count)]))
 
 cdef SDPConnection SDPConnection_create(pjmedia_sdp_conn *pj_conn):
-    return SDPConnection(_pj_str_to_str(pj_conn.addr), _pj_str_to_str(pj_conn.net_type),
-                          _pj_str_to_str(pj_conn.addr_type))
+    return SDPConnection(_pj_str_to_bytes(pj_conn.addr), _pj_str_to_bytes(pj_conn.net_type),
+                          _pj_str_to_bytes(pj_conn.addr_type))
 
 cdef FrozenSDPConnection FrozenSDPConnection_create(pjmedia_sdp_conn *pj_conn):
-    return FrozenSDPConnection(_pj_str_to_str(pj_conn.addr), _pj_str_to_str(pj_conn.net_type),
-                               _pj_str_to_str(pj_conn.addr_type))
+    return FrozenSDPConnection(_pj_str_to_bytes(pj_conn.addr), _pj_str_to_bytes(pj_conn.net_type),
+                               _pj_str_to_bytes(pj_conn.addr_type))
 
 cdef SDPAttribute SDPAttribute_create(pjmedia_sdp_attr *pj_attr):
-    return SDPAttribute(_pj_str_to_str(pj_attr.name), _pj_str_to_str(pj_attr.value))
+    return SDPAttribute(_pj_str_to_bytes(pj_attr.name), _pj_str_to_bytes(pj_attr.value))
 
 cdef FrozenSDPAttribute FrozenSDPAttribute_create(pjmedia_sdp_attr *pj_attr):
-    return FrozenSDPAttribute(_pj_str_to_str(pj_attr.name), _pj_str_to_str(pj_attr.value))
+    return FrozenSDPAttribute(_pj_str_to_bytes(pj_attr.name), _pj_str_to_bytes(pj_attr.value))
 
 cdef SDPBandwidthInfo SDPBandwidthInfo_create(pjmedia_sdp_bandw *pj_bandw):
-    return SDPBandwidthInfo(_pj_str_to_str(pj_bandw.modifier), int(pj_bandw.value))
+    return SDPBandwidthInfo(_pj_str_to_bytes(pj_bandw.modifier), int(pj_bandw.value))
 
 cdef FrozenSDPBandwidthInfo FrozenSDPBandwidthInfo_create(pjmedia_sdp_bandw *pj_bandw):
-    return FrozenSDPBandwidthInfo(_pj_str_to_str(pj_bandw.modifier), int(pj_bandw.value))
+    return FrozenSDPBandwidthInfo(_pj_str_to_bytes(pj_bandw.modifier), int(pj_bandw.value))
 
 
 # SDP negotiator
