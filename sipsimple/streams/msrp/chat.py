@@ -635,8 +635,6 @@ class ChatIdentity(object):
     _format_re = re.compile(r'^(?:"?(?P<display_name>[^<]*[^"\s])"?)?\s*<(?P<uri>sips?:.+)>$')
 
     def __init__(self, uri, display_name=None):
-        print('ChatIdentity %s %s %s %s' % (uri, type(uri), display_name, type(display_name)))
-    
         self.uri = uri
         self.display_name = display_name
 
@@ -752,7 +750,6 @@ class CPIMPayload(object):
         header_list = []
 
         if self.sender is not None:
-            print('Sender type %s' % type(self.sender))
             header_list.append('From: {}'.format(self.sender))
         header_list.extend('To: {}'.format(recipient) for recipient in self.recipients)
         header_list.extend('cc: {}'.format(recipient) for recipient in self.courtesy_recipients)
@@ -806,8 +803,6 @@ class CPIMPayload(object):
 
         for prefix, name, value in cls.headers_re.findall(headers):
             namespace = namespaces.get(prefix)
-            print('--------------')  
-            print(prefix, name, value)
 
             if namespace is None or '.' in name:
                 continue
