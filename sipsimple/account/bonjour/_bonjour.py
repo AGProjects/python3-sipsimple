@@ -2012,7 +2012,7 @@ class TXTRecord(object):
             if value is None:
                 item = name
             else:
-                item = '%s=%s' % (name, value)
+                item = '%s=%s' % (name, value.decode() if isinstance(value, bytes) else value)
             if (not self.strict) and (len(item) > 255):
                 item = item[:255]
             parts.append(chr(len(item)))
