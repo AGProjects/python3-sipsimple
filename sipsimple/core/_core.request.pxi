@@ -121,7 +121,7 @@ cdef class Request:
             contact_header_str = PJSTR(contact_header.body.encode())
             contact_header_pj = &contact_header_str.pj_str
         if call_id is not None:
-            self._call_id = PJSTR(call_id.encode())
+            self._call_id = PJSTR(call_id)
             call_id_pj = &self._call_id.pj_str
         if cseq is None:
             self.cseq = -1
@@ -172,9 +172,9 @@ cdef class Request:
 
         _add_headers_to_tdata(self._tdata, self.extra_headers)
 
-        event_dict = dict(obj=self)
-        _pjsip_msg_to_dict(self._tdata.msg, event_dict)
-        print('Request dict %s' % event_dict)
+        #event_dict = dict(obj=self)
+        #_pjsip_msg_to_dict(self._tdata.msg, event_dict)
+        #print('Request dict %s' % event_dict)
 
         if self.credentials is not None:
             status = pjsip_auth_clt_init(&self._auth, ua._pjsip_endpoint._obj, self._tdata.pool, 0)

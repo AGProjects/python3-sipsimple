@@ -1485,17 +1485,17 @@ cdef class BaseCredentials(object):
 
 cdef class Credentials(BaseCredentials):
     # attributes
-    cdef str _username
-    cdef str _realm
-    cdef str _password
+    cdef object _username
+    cdef object _realm
+    cdef object _password
     cdef bint _digest
 
 cdef class FrozenCredentials(BaseCredentials):
     # attributes
     cdef int initialized
-    cdef readonly str username
-    cdef readonly str realm
-    cdef readonly str password
+    cdef readonly object username
+    cdef readonly object realm
+    cdef readonly object password
     cdef readonly bint digest
 
 cdef class BaseSIPURI(object):

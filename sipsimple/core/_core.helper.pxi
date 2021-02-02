@@ -11,7 +11,7 @@ cdef class BaseCredentials:
         global _Credentials_scheme_digest, _Credentials_realm_wildcard
         self._credentials.scheme = _Credentials_scheme_digest.pj_str
 
-    def __init__(self, str username not None, str password not None, str realm='*', bint digest=False):
+    def __init__(self, object username not None, object password not None, object realm=b'*', bint digest=False):
         if self.__class__ is BaseCredentials:
             raise TypeError("BaseCredentials cannot be instantiated directly")
         self.username = username
@@ -34,24 +34,24 @@ cdef class Credentials(BaseCredentials):
         def __get__(self):
             return self._username
 
-        def __set__(self, str username not None):
-            _str_to_pj_str(username.encode(), &self._credentials.username)
+        def __set__(self, object username not None):
+            _str_to_pj_str(username, &self._credentials.username)
             self._username = username
 
     property realm:
         def __get__(self):
             return self._realm
 
-        def __set__(self, str realm not None):
-            _str_to_pj_str(realm.encode(), &self._credentials.realm)
+        def __set__(self, object realm not None):
+            _str_to_pj_str(realm, &self._credentials.realm)
             self._realm = realm
 
     property password:
         def __get__(self):
             return self._password
 
-        def __set__(self, str password not None):
-            _str_to_pj_str(password.encode(), &self._credentials.data)
+        def __set__(self, object password not None):
+            _str_to_pj_str(password, &self._credentials.data)
             self._password = password
 
     property digest:
@@ -68,15 +68,15 @@ cdef class Credentials(BaseCredentials):
 
 
 cdef class FrozenCredentials(BaseCredentials):
-    def __init__(self, str username not None, str password not None, str realm='*', bint digest=False):
+    def __init__(self, object username not None, object password not None, object realm=b'*', bint digest=False):
         if not self.initialized:
             self.username = username
             self.realm = realm
             self.password = password
             self.digest = digest
-            _str_to_pj_str(self.username.encode(), &self._credentials.username)
-            _str_to_pj_str(self.realm.encode(), &self._credentials.realm)
-            _str_to_pj_str(self.password.encode(), &self._credentials.data)
+            _str_to_pj_str(self.username, &self._credentials.username)
+            _str_to_pj_str(self.realm, &self._credentials.realm)
+            _str_to_pj_str(self.password, &self._credentials.data)
             self._credentials.data_type = PJSIP_CRED_DATA_DIGEST if digest else PJSIP_CRED_DATA_PLAIN_PASSWD
             self.initialized = 1
         else:
@@ -282,7 +282,6 @@ cdef class FrozenSIPURI(BaseSIPURI):
 #
 
 cdef dict _pj_sipuri_to_dict(pjsip_sip_uri *uri):
-    #print('_pj_sipuri_to_dict ---------------')
     cdef object scheme
     cdef pj_str_t *scheme_str
     cdef pjsip_param *param
