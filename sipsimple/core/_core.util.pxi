@@ -156,10 +156,7 @@ cdef class frozendict:
 # functions
 
 cdef int _str_to_pj_str(object string, pj_str_t *pj_str) except -1:
-    #print('Convert %s (%s)' % (string, type(string)))
-    if isinstance(string, str):
-        string = string.encode()
-    
+    print('Convert %s (%s)' % (string, type(string)))
     pj_str.ptr = PyBytes_AsString(string)
     pj_str.slen = len(string)
 
@@ -380,14 +377,7 @@ cdef int _BaseSIPURI_to_pjsip_sip_uri(BaseSIPURI uri, pjsip_sip_uri *pj_uri, pj_
         pj_uri.port = uri.port
 
     for name, value in uri.parameters.iteritems():
-        if value is not None:
-            try:
-                int(value)
-            except ValueError:
-                value = value.encode()
-
-        name = name.encode()
-
+        print('Adding parameter for host %s: %s=%s' % (uri.host, name, value))
         if name == "lr":
             pj_uri.lr_param = 1
         elif name == "maddr":

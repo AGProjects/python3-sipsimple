@@ -62,7 +62,7 @@ class Route(object):
     @property
     def uri(self):
         port = None if self._default_ports[self.transport] == self.port else self.port
-        parameters = {} if self.transport == 'udp' else {'transport': self.transport}
+        parameters = {} if self.transport == 'udp' else {'transport': self.transport.encode()}
         return SIPURI(host=self.address, port=port, parameters=parameters)
 
     def __repr__(self):
