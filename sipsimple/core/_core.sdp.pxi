@@ -69,7 +69,7 @@ cdef class BaseSDPSession:
             return set([attr.name for attr in self.attributes]).issuperset(['ice-pwd', 'ice-ufrag'])
 
 cdef class SDPSession(BaseSDPSession):
-    def __init__(self, object address not None, object id=None, object version=None, object user not None="-", object net_type not None=b"IN", object address_type not None=b"IP4",
+    def __init__(self, object address not None, object id=None, object version=None, object user not None=b"-", object net_type not None=b"IN", object address_type not None=b"IP4",
                  object name not None=b" ", SDPConnection connection=None, unsigned long start_time=0, unsigned long stop_time=0, list attributes=None, list bandwidth_info=None, list media=None):
         cdef unsigned int version_id = 2208988800UL
         cdef pj_time_val tv
@@ -275,7 +275,7 @@ cdef class SDPSession(BaseSDPSession):
                 old_media._update(media)
 
 cdef class FrozenSDPSession(BaseSDPSession):
-    def __init__(self, object address not None, object id=None, object version=None, object user not None="-", object net_type not None=b"IN", object address_type not None=b"IP4", object name not None=b" ",
+    def __init__(self, object address not None, object id=None, object version=None, object user not None=b"-", object net_type not None=b"IN", object address_type not None=b"IP4", object name not None=b" ",
                  FrozenSDPConnection connection=None, unsigned long start_time=0, unsigned long stop_time=0, frozenlist attributes not None=frozenlist(), frozenlist bandwidth_info not None=frozenlist(),
                  frozenlist media not None=frozenlist()):
         cdef unsigned int version_id = 2208988800UL
@@ -433,9 +433,9 @@ cdef class BaseSDPMediaStream:
 
         def __get__(self):
             for attribute in self.attributes:
-                if attribute.name in ("sendrecv", "sendonly", "recvonly", "inactive"):
+                if attribute.name in (b"sendrecv", b"sendonly", b"recvonly", b"inactive"):
                     return attribute.name
-            return "sendrecv"
+            return b"sendrecv"
 
     property has_ice_attributes:
 
@@ -698,7 +698,6 @@ cdef class BaseSDPConnection:
 
 cdef class SDPConnection(BaseSDPConnection):
     def __init__(self, object address not None, object net_type not None=b"IN", object address_type not None=b"IP4"):
-        print('SDPConnection %s %s %s %s' % (address, type(address), net_type, type()))
         self.address = address
         self.net_type = net_type
         self.address_type = address_type
@@ -834,6 +833,7 @@ cdef class SDPAttribute(BaseSDPAttribute):
             return self._name
 
         def __set__(self, object name not None):
+            #print('SDP attribute name %s %s' % (name, type(name)))
             _str_to_pj_str(name, &self._sdp_attribute.name)
             self._name = name
 
@@ -843,6 +843,7 @@ cdef class SDPAttribute(BaseSDPAttribute):
             return self._value
 
         def __set__(self, object value not None):
+            #print('SDP attribute value %s %s' % (value, type(value)))
             _str_to_pj_str(value, &self._sdp_attribute.value)
             self._value = value
 

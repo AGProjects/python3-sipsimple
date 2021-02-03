@@ -867,7 +867,6 @@ cdef class RTPTransport:
                     pj_mutex_unlock(lock)
 
     def update_local_sdp(self, SDPSession local_sdp, BaseSDPSession remote_sdp=None, int sdp_index=0):
-        print('Cython mediatransport update_local_sdp')
         cdef int status
         cdef pj_pool_t *pool
         cdef pjmedia_sdp_session *pj_local_sdp
@@ -887,18 +886,14 @@ cdef class RTPTransport:
         if sdp_index >= pj_local_sdp.media_count:
             raise ValueError("sdp_index argument out of range")
         # Remove ICE and SRTP/ZRTP related attributes from SDP, they will be added by pjmedia_transport_encode_sdp
-        print('Cython mediatransport update_local_sdp 1')
         local_media = local_sdp.media[sdp_index]
         local_media.attributes = [<object> attr for attr in local_media.attributes if attr.name not in ('crypto', 'zrtp-hash', 'ice-ufrag', 'ice-pwd', 'ice-mismatch', 'candidate', 'remote-candidates')]
-        print('Cython mediatransport update_local_sdp 2')
         pj_local_sdp = local_sdp.get_sdp_session()
-        print('Cython mediatransport update_local_sdp 3')
 
         with nogil:
             status = pjmedia_transport_encode_sdp(transport, pool, pj_local_sdp, pj_remote_sdp, sdp_index)
         if status != 0:
             raise PJSIPError("Could not update SDP for media transport", status)
-        print('Cython mediatransport update_local_sdp 4')
         local_sdp._update()
         return 0
 
@@ -1215,14 +1210,14 @@ cdef class AudioTransport:
             if is_offer:
                 direction_attr = direction
             else:
-                if self.direction is None or "recv" in self.direction:
-                    direction_attr = "sendrecv"
+                if self.direction is None or "recv" in self.direction.decode():
+                    direction_attr = b"sendrecv"
                 else:
-                    direction_attr = "sendonly"
-            local_media.attributes.append(SDPAttribute(direction_attr, ""))
+                    direction_attr = b"sendonly"
+            local_media.attributes.append(SDPAttribute(direction_attr, b""))
             for attribute in local_media.attributes:
-                if attribute.name == 'rtcp':
-                    attribute.value = attribute.value.split(' ', 1)[0]
+                if attribute.name == b'rtcp':
+                    attribute.value = (attribute.value.decode().split(' ', 1)[0]).encode()
             self._sdp_info.local_media = local_media
             return local_media
         finally:
@@ -1683,14 +1678,14 @@ cdef class VideoTransport:
             if is_offer:
                 direction_attr = direction
             else:
-                if self.direction is None or "recv" in self.direction:
-                    direction_attr = "sendrecv"
+                if self.direction is None or "recv" in self.direction.decode():
+                    direction_attr = b"sendrecv"
                 else:
-                    direction_attr = "sendonly"
-            local_media.attributes.append(SDPAttribute(direction_attr, ""))
+                    direction_attr = b"sendonly"
+            local_media.attributes.append(SDPAttribute(direction_attr, b""))
             for attribute in local_media.attributes:
                 if attribute.name == 'rtcp':
-                    attribute.value = attribute.value.split(' ', 1)[0]
+                    attribute.value = (attribute.value.decode().split(' ', 1)[0]).encode()
             return local_media
         finally:
             with nogil:
@@ -2481,7 +2476,7 @@ _ice_cb.on_ice_complete = _RTPTransport_cb_ice_complete
 _ice_cb.on_ice_state = _RTPTransport_cb_ice_state
 _ice_cb.on_ice_stop = _RTPTransport_cb_ice_stop
 
-valid_sdp_directions = ("sendrecv", "sendonly", "recvonly", "inactive")
+valid_sdp_directions = (b"sendrecv", b"sendonly", b"recvonly", b"inactive")
 
 # ZRTP
 

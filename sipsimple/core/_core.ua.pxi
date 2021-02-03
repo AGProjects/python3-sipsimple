@@ -1102,6 +1102,7 @@ cdef int _cb_opus_fix_tx(pjsip_tx_data *tdata) with gil:
                             continue
                         # this is the opus rtpmap attribute
                         opus_line = attr_value[:pos] + "opus/48000/2"
+                        opus_line = opus_line.encode()
                         new_value.slen = len(opus_line)
                         new_value.ptr = <char *> pj_pool_alloc(tdata.pool, new_value.slen)
                         memcpy(new_value.ptr, PyBytes_AsString(opus_line), new_value.slen)
