@@ -1939,7 +1939,7 @@ cdef class RecordingWaveFile(object):
     cdef pj_mutex_t *_lock
     cdef pj_pool_t *_pool
     cdef pjmedia_port *_port
-    cdef readonly str filename
+    cdef readonly object filename
     cdef readonly AudioMixer mixer
 
     # private methods
@@ -1955,7 +1955,7 @@ cdef class WaveFile(object):
     cdef pj_mutex_t *_lock
     cdef pj_pool_t *_pool
     cdef pjmedia_port *_port
-    cdef readonly str filename
+    cdef readonly object filename
     cdef readonly AudioMixer mixer
 
     # private methods

@@ -376,7 +376,6 @@ cdef int _BaseSIPURI_to_pjsip_sip_uri(BaseSIPURI uri, pjsip_sip_uri *pj_uri, pj_
         pj_uri.port = uri.port
 
     for name, value in uri.parameters.iteritems():
-        print('_BaseSIPURI_to_pjsip_sip_uri for %s %s=%s' % (uri.host, name, value))
         if name == "lr":
             pj_uri.lr_param = 1
         elif name == "maddr":
