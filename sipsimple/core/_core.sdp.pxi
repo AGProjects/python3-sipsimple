@@ -554,7 +554,7 @@ cdef class SDPMediaStream(BaseSDPMediaStream):
             if not isinstance(attributes, SDPAttributeList):
                 attributes = SDPAttributeList(attributes)
             self._attributes = attributes
-            if self._media in ("audio", "video"):
+            if self._media in (b"audio", b"video"):
                 rtp_mappings = self.rtp_mappings.copy()
                 rtpmap_lines = '\n'.join([attr.value for attr in attributes if attr.name=='rtpmap']) # iterators are not supported -Dan
                 rtpmap_codecs = dict([(int(type), MediaCodec(name, rate)) for type, name, rate in self.rtpmap_re.findall(rtpmap_lines)])
@@ -640,7 +640,7 @@ cdef class FrozenSDPMediaStream(BaseSDPMediaStream):
             else:
                 self._sdp_media.conn = connection.get_sdp_connection()
             self.attributes = FrozenSDPAttributeList(attributes) if not isinstance(attributes, FrozenSDPAttributeList) else attributes
-            if self.media in ("audio", "video"):
+            if self.media in (b"audio", b"video"):
                 rtp_mappings = self.rtp_mappings.copy()
                 rtpmap_lines = '\n'.join([attr.value for attr in attributes if attr.name=='rtpmap']) # iterators are not supported -Dan
                 rtpmap_codecs = dict([(int(type), MediaCodec(name, rate)) for type, name, rate in self.rtpmap_re.findall(rtpmap_lines)])
