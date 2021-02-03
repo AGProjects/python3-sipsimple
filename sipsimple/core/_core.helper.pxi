@@ -109,7 +109,6 @@ cdef class BaseSIPURI:
             return self.parameters.get('transport', b'udp')
 
         def __set__(self, object transport not None):
-            print('Set BaseSIPURI transport to %s' % transport)
             if transport.decode().lower() == 'udp':
                 self.parameters.pop('transport', None)
             else:
