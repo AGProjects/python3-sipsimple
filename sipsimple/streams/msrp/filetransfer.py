@@ -33,6 +33,8 @@ from sipsimple.storage import ISIPSimpleApplicationDataStorage
 from sipsimple.streams import InvalidStreamError, UnknownStreamError
 from sipsimple.streams.msrp import MSRPStreamBase
 from sipsimple.threading import run_in_twisted_thread, run_in_thread
+
+#sha1 is much faster on large file than python native implementation 
 from sipsimple.util import sha1
 
 
@@ -106,7 +108,7 @@ class FileSelector(object):
         size_match = cls._size_re.search(string)
         type_match = cls._type_re.search(string)
         hash_match = cls._hash_re.search(string)
-        name = name_match and name_match.group(1).decode('utf-8')
+        name = name_match and name_match.group(1)
         size = size_match and int(size_match.group(1))
         type = type_match and type_match.group(1)
         hash = hash_match and hash_match.group(1)
@@ -314,7 +316,8 @@ class IncomingFileTransferHandler(FileTransferHandler):
 
     def __init__(self):
         super(IncomingFileTransferHandler, self).__init__()
-        self.hash = sha1()
+        #self.hash = sha1() #TODO this fails - adi
+        self.hash = hashlib.sha1()
         self.queue = Queue()
         self.offset = 0
         self.received_chunks = 0
@@ -373,7 +376,8 @@ class IncomingFileTransferHandler(FileTransferHandler):
             if not self.received_chunks and chunk.byte_range.start == 1:
                 self.stream.file_selector.fd.truncate(0)
                 self.stream.file_selector.fd.seek(0)
-                self.hash = sha1()
+                #self.hash = sha1() #TODO this fails - adi
+                self.hash = hashlib.sha1()
                 self.offset = 0
             self.received_chunks += 1
             self.queue.put(chunk)
@@ -397,14 +401,15 @@ class IncomingFileTransferHandler(FileTransferHandler):
             chunk = self.queue.get()
             if chunk is EndTransfer:
                 break
+            data = chunk.data.encode()
             try:
-                fd.write(chunk.data)
+                fd.write(data)
             except EnvironmentError as e:
                 fd.close()
                 notification_center.post_notification('FileTransferHandlerError', sender=self, data=NotificationData(error=str(e)))
                 notification_center.post_notification('FileTransferHandlerDidEnd', sender=self, data=NotificationData(error=True, reason=str(e)))
                 return
-            self.hash.update(chunk.data)
+            self.hash.update(data)
             self.offset += chunk.size
             transferred_bytes = chunk.byte_range.start + chunk.size - 1
             total_bytes = file_selector.size = chunk.byte_range.total
@@ -637,25 +642,39 @@ class FileTransferStream(MSRPStreamBase):
     @classmethod
     def new_from_sdp(cls, session, remote_sdp, stream_index):
         remote_stream = remote_sdp.media[stream_index]
-        if remote_stream.media != b'message' or b'file-selector' not in remote_stream.attributes:
+
+        if remote_stream.media != b'message':
             raise UnknownStreamError
+
+        if  b'file-selector' not in remote_stream.attributes:
+            raise UnknownStreamError
+
         expected_transport = 'TCP/TLS/MSRP' if session.account.msrp.transport == 'tls' else 'TCP/MSRP'
-        if remote_stream.transport != expected_transport:
+        if remote_stream.transport != expected_transport.encode():
             raise InvalidStreamError("expected %s transport in file transfer stream, got %s" % (expected_transport, remote_stream.transport))
-        if remote_stream.formats != ['*']:
+
+        if remote_stream.formats != [b'*']:
             raise InvalidStreamError("wrong format list specified")
+            
+        file_selector_attr = remote_stream.attributes.getfirst(b'file-selector')
         try:
-            file_selector = FileSelector.parse(remote_stream.attributes.getfirst('file-selector'))
+            file_selector = FileSelector.parse(file_selector_attr.decode())
         except Exception as e:
             raise InvalidStreamError("error parsing file-selector: {}".format(e))
-        transfer_id = remote_stream.attributes.getfirst('file-transfer-id', None)
-        if remote_stream.direction == 'sendonly':
-            stream = cls(file_selector, 'recvonly', transfer_id)
-        elif remote_stream.direction == 'recvonly':
-            stream = cls(file_selector, 'sendonly', transfer_id)
-        else:
-            raise InvalidStreamError("wrong stream direction specified")
-        stream.remote_role = remote_stream.attributes.getfirst('setup', 'active')
+
+        transfer_id = remote_stream.attributes.getfirst(b'file-transfer-id', None)
+        transfer_id = transfer_id.decode() if transfer_id else None
+        
+        try:
+            if remote_stream.direction == b'sendonly':
+                stream = cls(file_selector, 'recvonly', transfer_id)
+            elif remote_stream.direction == b'recvonly':
+                stream = cls(file_selector, 'sendonly', transfer_id)
+            else:
+                raise InvalidStreamError("wrong stream direction specified")
+        except Exception as e:
+             traceback.print_exc()
+        stream.remote_role = remote_stream.attributes.getfirst(b'setup', b'active')
         return stream
 
     def initialize(self, session, direction):
