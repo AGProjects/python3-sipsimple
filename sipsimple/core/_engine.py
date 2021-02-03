@@ -37,14 +37,14 @@ class Engine(Thread, metaclass=Singleton):
                              "codecs": ["G722", "speex", "PCMU", "PCMA"],
                              "video_codecs": ["H264", "H263-1998", "VP8"],
                              "enable_colorbar_device": False,
-                             "events": {b"conference":      [b"application/conference-info+xml"],
-                                        b"message-summary": [b"application/simple-message-summary"],
-                                        b"presence":        [b"multipart/related", b"application/rlmi+xml", b"application/pidf+xml"],
-                                        b"presence.winfo":  [b"application/watcherinfo+xml"],
-                                        b"dialog":          [b"multipart/related", b"application/rlmi+xml", b"application/dialog-info+xml"],
-                                        b"dialog.winfo":    [b"application/watcherinfo+xml"],
-                                        b"refer":           [b"message/sipfrag;version=2.0"],
-                                        b"xcap-diff":       [b"application/xcap-diff+xml"]},
+                             "events": {"conference":      ["application/conference-info+xml"],
+                                        "message-summary": ["application/simple-message-summary"],
+                                        "presence":        ["multipart/related", "application/rlmi+xml", "application/pidf+xml"],
+                                        "presence.winfo":  ["application/watcherinfo+xml"],
+                                        "dialog":          ["multipart/related", "application/rlmi+xml", "application/dialog-info+xml"],
+                                        "dialog.winfo":    ["application/watcherinfo+xml"],
+                                        "refer":           ["message/sipfrag;version=2.0"],
+                                        "xcap-diff":       ["application/xcap-diff+xml"]},
                              "incoming_events": set(),
                              "incoming_requests": set()}
 
@@ -101,6 +101,14 @@ class Engine(Thread, metaclass=Singleton):
         self.notification_center.post_notification('SIPEngineWillStart', sender=self)
         init_options = Engine.default_start_options.copy()
         init_options.update(self._options)
+        for k in list(init_options['events'].keys()):
+            if isinstance(k, str):
+                init_options['events'][k.encode()] = init_options['events'][k]
+                del(init_options['events'][k])
+
+        for k in list(init_options['events'].keys()):
+            init_options['events'][k] = list(v.encode() if isinstance(v, str) else v for v in init_options['events'][k])
+
         try:
             self._ua = PJSIPUA(self._handle_event, **init_options)
         except Exception:

@@ -953,7 +953,7 @@ class Session(object):
                     for stream_type in MediaStreamRegistry:
                         try:
                             stream = stream_type.new_from_sdp(self, remote_sdp, index)
-                        except UnknownStreamError:
+                        except UnknownStreamError as e:
                             continue
                         except InvalidStreamError as e:
                             log.error("Invalid stream: {}".format(e))
@@ -1342,7 +1342,7 @@ class Session(object):
                         if not media.has_ice_attributes and not media.has_ice_candidates:
                             media.connection = connection
                     else:
-                        media = SDPMediaStream.new(media.encode())
+                        media = SDPMediaStream.new(media if isinstance(media, bytes) else media.encode() )
                         media.connection = connection
                         media.port = 0
                         media.attributes = []

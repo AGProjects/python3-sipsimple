@@ -32,8 +32,11 @@ cdef class Subscription:
             raise SIPCoreError("Subscription.__init__() was already called")
         if refresh <= 0:
             raise ValueError("refresh argument needs to be a non-negative integer")
-        if event not in ua._events.keys():
-            raise ValueError('Unknown event "%s"' % event)
+        
+        supported_events = list(ua._events.keys())
+        if event not in supported_events:
+            raise ValueError('Unknown event %s, supported events: %s' % (event.decode(), (e.decode() for e in supported_events)))
+
         self.contact_header = FrozenContactHeader.new(contact_header)
         self.event = event
         self.route_header = FrozenRouteHeader.new(route_header)
@@ -211,7 +214,7 @@ cdef class Subscription:
                 raise ValueError('Supplied content_type argument does not contain a "/" character')
             content_type_str = PJSTR(content_type_spl[0].encode())
             content_subtype_str = PJSTR(content_type_spl[1].encode())
-            _str_to_pj_str(body.encode(), &body_pj)
+            _str_to_pj_str(body, &body_pj)
         with nogil:
             status = pjsip_evsub_initiate(self._obj, NULL, expires, &tdata)
         if status != 0:

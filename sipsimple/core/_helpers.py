@@ -19,9 +19,9 @@ class Route(object):
     _default_ports = dict(udp=5060, tcp=5060, tls=5061)
 
     def __init__(self, address, port=None, transport='udp'):
-        self.address = address
+        self.address = address.decode() if isinstance(address, bytes) else address
         self.port = port
-        self.transport = transport
+        self.transport = transport.decode() if isinstance(transport, bytes) else transport
 
     @property
     def address(self):

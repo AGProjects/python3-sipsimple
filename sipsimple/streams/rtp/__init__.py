@@ -411,7 +411,7 @@ class RTPStream(object, metaclass=RTPStreamType):
         # TODO: actually validate the SDP
         settings = SIPSimpleSettings()
         remote_stream = remote_sdp.media[stream_index]
-        if remote_stream.media != cls.type:
+        if remote_stream.media != cls.type.encode():
             raise UnknownStreamError
         if remote_stream.transport not in (b'RTP/AVP', b'RTP/SAVP'):
             raise InvalidStreamError("expected RTP/AVP or RTP/SAVP transport in %s stream, got %s" % (cls.type, remote_stream.transport.decode()))
