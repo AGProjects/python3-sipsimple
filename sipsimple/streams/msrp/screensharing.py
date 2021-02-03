@@ -257,29 +257,31 @@ class ScreenSharingStream(MSRPStreamBase):
     @classmethod
     def new_from_sdp(cls, session, remote_sdp, stream_index):
         remote_stream = remote_sdp.media[stream_index]
-        if remote_stream.media != 'application':
+        if remote_stream.media != b'application':
             raise UnknownStreamError
         accept_types = remote_stream.attributes.getfirst('accept-types', None)
+        accept_types = accept_types.decode() if accept_types else None
         if accept_types is None or 'application/x-rfb' not in accept_types.split():
             raise UnknownStreamError
         expected_transport = 'TCP/TLS/MSRP' if session.account.msrp.transport=='tls' else 'TCP/MSRP'
-        if remote_stream.transport != expected_transport:
+        if remote_stream.transport != expected_transport.encode():
             raise InvalidStreamError("expected %s transport in chat stream, got %s" % (expected_transport, remote_stream.transport))
-        if remote_stream.formats != ['*']:
+        if remote_stream.formats != [b'*']:
             raise InvalidStreamError("wrong format list specified")
         remote_rfbsetup = remote_stream.attributes.getfirst('rfbsetup', 'active')
+        remote_rfbsetup = remote_rfbsetup.decode() if remote_rfbsetup else None
         if remote_rfbsetup == 'active':
             stream = cls(mode='server')
         elif remote_rfbsetup == 'passive':
             stream = cls(mode='viewer')
         else:
             raise InvalidStreamError("unknown rfbsetup attribute in the remote screen sharing stream")
-        stream.remote_role = remote_stream.attributes.getfirst('setup', 'active')
+        stream.remote_role = remote_stream.attributes.getfirst(b'setup', b'active')
         return stream
 
     def _create_local_media(self, uri_path):
         local_media = super(ScreenSharingStream, self)._create_local_media(uri_path)
-        local_media.attributes.append(SDPAttribute('rfbsetup', self.handler.type))
+        local_media.attributes.append(SDPAttribute(b'rfbsetup', self.handler.type.encode()))
         return local_media
 
     def _msrp_reader(self):

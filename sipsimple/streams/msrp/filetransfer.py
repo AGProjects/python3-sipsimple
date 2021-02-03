@@ -637,7 +637,7 @@ class FileTransferStream(MSRPStreamBase):
     @classmethod
     def new_from_sdp(cls, session, remote_sdp, stream_index):
         remote_stream = remote_sdp.media[stream_index]
-        if remote_stream.media != 'message' or 'file-selector' not in remote_stream.attributes:
+        if remote_stream.media != b'message' or b'file-selector' not in remote_stream.attributes:
             raise UnknownStreamError
         expected_transport = 'TCP/TLS/MSRP' if session.account.msrp.transport == 'tls' else 'TCP/MSRP'
         if remote_stream.transport != expected_transport:
@@ -665,10 +665,10 @@ class FileTransferStream(MSRPStreamBase):
 
     def _create_local_media(self, uri_path):
         local_media = super(FileTransferStream, self)._create_local_media(uri_path)
-        local_media.attributes.append(SDPAttribute('file-selector', self.file_selector.sdp_repr))
-        local_media.attributes.append(SDPAttribute('x-file-offset', ''))
+        local_media.attributes.append(SDPAttribute(b'file-selector', self.file_selector.sdp_repr.encode()))
+        local_media.attributes.append(SDPAttribute(b'x-file-offset', b''))
         if self.transfer_id is not None:
-            local_media.attributes.append(SDPAttribute('file-transfer-id', self.transfer_id))
+            local_media.attributes.append(SDPAttribute(b'file-transfer-id', self.transfer_id.encode()))
         return local_media
 
     @property

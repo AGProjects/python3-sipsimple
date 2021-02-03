@@ -180,18 +180,19 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
         try:
             remote_media = remote_sdp.media[stream_index]
             self.remote_media = remote_media
-            self.remote_accept_types = remote_media.attributes.getfirst('accept-types', '').split()
-            self.remote_accept_wrapped_types = remote_media.attributes.getfirst('accept-wrapped-types', '').split()
+            self.remote_accept_types = remote_media.attributes.getfirst(b'accept-types', b'').decode().split()
+            self.remote_accept_wrapped_types = remote_media.attributes.getfirst(b'accept-wrapped-types', b'').decode().split()
             self.cpim_enabled = contains_mime_type(self.accept_types, 'message/cpim') and contains_mime_type(self.remote_accept_types, 'message/cpim')
-            remote_uri_path = remote_media.attributes.getfirst('path')
+            remote_uri_path = remote_media.attributes.getfirst(b'path')
             if remote_uri_path is None:
                 raise AttributeError("remote SDP media does not have 'path' attribute")
-            full_remote_path = [URI.parse(uri) for uri in remote_uri_path.split()]
+            full_remote_path = [URI.parse(uri) for uri in remote_uri_path.decode().split()]
             remote_transport = 'tls' if full_remote_path[0].use_tls else 'tcp'
             if self.transport != remote_transport:
                 raise MSRPStreamError("remote transport ('%s') different from local transport ('%s')" % (remote_transport, self.transport))
             if isinstance(self.session.account, Account) and self.local_role == 'actpass':
                 remote_setup = remote_media.attributes.getfirst('setup', 'passive')
+                remote_setup = remote_setup.decode() if remote_setup else None
                 if remote_setup == 'passive':
                     # If actpass is offered connectors are always started as passive
                     # We need to switch to active if the remote answers with passive

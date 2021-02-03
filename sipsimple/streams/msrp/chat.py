@@ -307,22 +307,22 @@ class ChatStream(MSRPStreamBase):
     @classmethod
     def new_from_sdp(cls, session, remote_sdp, stream_index):
         remote_stream = remote_sdp.media[stream_index]
-        if remote_stream.media != 'message':
+        if remote_stream.media != b'message':
             raise UnknownStreamError
         expected_transport = 'TCP/TLS/MSRP' if session.account.msrp.transport=='tls' else 'TCP/MSRP'
-        if remote_stream.transport != expected_transport:
+        if remote_stream.transport != expected_transport.encode():
             raise InvalidStreamError("expected %s transport in chat stream, got %s" % (expected_transport, remote_stream.transport))
-        if remote_stream.formats != ['*']:
+        if remote_stream.formats != [b'*']:
             raise InvalidStreamError("wrong format list specified")
         stream = cls()
         stream.remote_role = remote_stream.attributes.getfirst('setup', 'active')
         
-        if remote_stream.direction != 'sendrecv':
+        if remote_stream.direction != b'sendrecv':
             raise InvalidStreamError("Unsupported direction for chat stream: %s" % remote_stream.direction)
-        remote_accept_types = remote_stream.attributes.getfirst('accept-types')
+        remote_accept_types = remote_stream.attributes.getfirst(b'accept-types')
         if remote_accept_types is None:
             raise InvalidStreamError("remote SDP media does not have 'accept-types' attribute")
-        if not any(contains_mime_type(cls.accept_types, mime_type) for mime_type in remote_accept_types.split()):
+        if not any(contains_mime_type(cls.accept_types, mime_type) for mime_type in remote_accept_types.decode().split()):
             raise InvalidStreamError("no compatible media types found")
         return stream
 
