@@ -62,7 +62,7 @@ class AudioStream(RTPStream):
             settings = SIPSimpleSettings()
             self._transport.start(local_sdp, remote_sdp, stream_index, timeout=settings.rtp.timeout)
             self._save_remote_sdp_rtp_info(remote_sdp, stream_index)
-            self._check_hold(self._transport.direction, True)
+            self._check_hold(self._transport.direction.decode(), True)
             if self._try_ice and self._ice_state == "NULL":
                 self.state = 'WAIT_ICE'
             else:
@@ -99,14 +99,14 @@ class AudioStream(RTPStream):
                 self.notification_center.post_notification('AudioPortDidChangeSlots', sender=self, data=NotificationData(consumer_slot_changed=True, producer_slot_changed=True,
                                                                                                                          old_consumer_slot=old_consumer_slot, new_consumer_slot=self.consumer_slot,
                                                                                                                          old_producer_slot=old_producer_slot, new_producer_slot=self.producer_slot))
-                if connection.address == '0.0.0.0' and remote_sdp.media[stream_index].direction == 'sendrecv':
-                    self._transport.update_direction('recvonly')
-                self._check_hold(self._transport.direction, False)
+                if connection.address == b'0.0.0.0' and remote_sdp.media[stream_index].direction == b'sendrecv':
+                    self._transport.update_direction(b'recvonly')
+                self._check_hold(self._transport.direction.decode(), False)
                 self.notification_center.post_notification('RTPStreamDidChangeRTPParameters', sender=self)
             else:
                 new_direction = local_sdp.media[stream_index].direction
                 self._transport.update_direction(new_direction)
-                self._check_hold(new_direction, False)
+                self._check_hold(new_direction.decode(), False)
             self._save_remote_sdp_rtp_info(remote_sdp, stream_index)
             self._transport.update_sdp(local_sdp, remote_sdp, stream_index)
             self._hold_request = None
@@ -140,9 +140,9 @@ class AudioStream(RTPStream):
     def reset(self, stream_index):
         with self._lock:
             if self.direction == "inactive" and not self.on_hold_by_local:
-                new_direction = "sendrecv"
+                new_direction = b"sendrecv"
                 self._transport.update_direction(new_direction)
-                self._check_hold(new_direction, False)
+                self._check_hold(new_direction.decode(), False)
                 # TODO: do a full reset, re-creating the AudioTransport, so that a new offer
                 # would contain all codecs and ICE would be renegotiated -Saul
 

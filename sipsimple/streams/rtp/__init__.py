@@ -413,12 +413,12 @@ class RTPStream(object, metaclass=RTPStreamType):
         remote_stream = remote_sdp.media[stream_index]
         if remote_stream.media != cls.type:
             raise UnknownStreamError
-        if remote_stream.transport not in ('RTP/AVP', 'RTP/SAVP'):
-            raise InvalidStreamError("expected RTP/AVP or RTP/SAVP transport in %s stream, got %s" % (cls.type, remote_stream.transport))
+        if remote_stream.transport not in (b'RTP/AVP', b'RTP/SAVP'):
+            raise InvalidStreamError("expected RTP/AVP or RTP/SAVP transport in %s stream, got %s" % (cls.type, remote_stream.transport.decode()))
         local_encryption_policy = session.account.rtp.encryption.key_negotiation if session.account.rtp.encryption.enabled else None
-        if local_encryption_policy == "sdes_mandatory" and not "crypto" in remote_stream.attributes:
+        if local_encryption_policy == "sdes_mandatory" and not b"crypto" in remote_stream.attributes:
             raise InvalidStreamError("SRTP/SDES is locally mandatory but it's not remotely enabled")
-        if remote_stream.transport == 'RTP/SAVP' and "crypto" in remote_stream.attributes and local_encryption_policy not in ("opportunistic", "sdes_optional", "sdes_mandatory"):
+        if remote_stream.transport == b'RTP/SAVP' and b"crypto" in remote_stream.attributes and local_encryption_policy not in ("opportunistic", "sdes_optional", "sdes_mandatory"):
             raise InvalidStreamError("SRTP/SDES is remotely mandatory but it's not locally enabled")
         account_preferred_codecs = getattr(session.account.rtp, '%s_codec_list' % cls.type)
         general_codecs = getattr(settings.rtp, '%s_codec_list' % cls.type)
@@ -475,13 +475,13 @@ class RTPStream(object, metaclass=RTPStreamType):
                 old_direction = self._transport.direction
                 if old_direction is None:
                     new_direction = "sendrecv"
-                elif "send" in old_direction:
+                elif b"send" in old_direction:
                     new_direction = ("sendonly" if (self._hold_request == 'hold' or (self._hold_request is None and self.on_hold_by_local)) else "sendrecv")
                 else:
                     new_direction = ("inactive" if (self._hold_request == 'hold' or (self._hold_request is None and self.on_hold_by_local)) else "recvonly")
             else:
                 new_direction = None
-            print('RTP stream init will get_local_media %s %s' % (index, new_direction)) 
+            new_direction = new_direction.encode() if new_direction else None
             return self._transport.get_local_media(remote_sdp, index, new_direction)
 
     # Notifications
@@ -578,6 +578,7 @@ class RTPStream(object, metaclass=RTPStreamType):
         if self._stun_servers:
             stun_address, stun_port = self._stun_servers.pop()
             try:
+                stun_address = stun_address.encode() if stun_address else None
                 rtp_transport = RTPTransport(ice_stun_address=stun_address, ice_stun_port=stun_port, **self._rtp_args)
             except SIPCoreError as e:
                 self._try_next_rtp_transport(e.args[0])

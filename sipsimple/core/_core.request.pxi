@@ -111,7 +111,7 @@ cdef class Request:
         request_uri_str = PJSTR(struri.encode())
         self.route_header = FrozenRouteHeader.new(route_header)
         self.route_header.uri.parameters.dict["lr"] = None # always send lr parameter in Route header
-        #self.route_header.uri.parameters.dict["hide"] = None # always hide Route header
+        self.route_header.uri.parameters.dict["hide"] = None # always hide Route header
         if contact_header is not None:
             self.contact_header = FrozenContactHeader.new(contact_header)
             contact_parameters = contact_header.parameters.copy()

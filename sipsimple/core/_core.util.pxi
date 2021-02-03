@@ -376,7 +376,7 @@ cdef int _BaseSIPURI_to_pjsip_sip_uri(BaseSIPURI uri, pjsip_sip_uri *pj_uri, pj_
         pj_uri.port = uri.port
 
     for name, value in uri.parameters.iteritems():
-        print('Adding parameter for host %s: %s=%s' % (uri.host, name, value))
+        print('_BaseSIPURI_to_pjsip_sip_uri for %s %s=%s' % (uri.host, name, value))
         if name == "lr":
             pj_uri.lr_param = 1
         elif name == "maddr":
@@ -391,6 +391,8 @@ cdef int _BaseSIPURI_to_pjsip_sip_uri(BaseSIPURI uri, pjsip_sip_uri *pj_uri, pj_
             _str_to_pj_str(value, &pj_uri.user_param)
         else:
             param = <pjsip_param *> pj_pool_alloc(pool, sizeof(pjsip_param))
+            if name == 'hide':
+                name = b'hide'
             _str_to_pj_str(name, &param.name)
             if value is None:
                 param.value.slen = 0

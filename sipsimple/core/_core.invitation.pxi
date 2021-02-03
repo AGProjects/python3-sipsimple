@@ -170,7 +170,6 @@ cdef class Invitation:
             self.peer_address = EndpointAddress(rdata.pkt_info.src_name, rdata.pkt_info.src_port)
             event_dict = dict(obj=self, prev_state=self.state, state="incoming", originator="remote")
             _pjsip_msg_to_dict(rdata.msg_info.msg, event_dict)
-            print(event_dict)
             self.state = "incoming"
             self.remote_user_agent = event_dict['headers']['User-Agent'].body if 'User-Agent' in event_dict['headers'] else None
             try:
@@ -349,26 +348,28 @@ cdef class Invitation:
             if timeout is not None and timeout <= 0:
                 raise ValueError("Timeout value must be positive")
 
-            self.transport = route_header.uri.transport
+            self.transport = route_header.uri.transport.decode()
             self.direction = "outgoing"
             self.credentials = FrozenCredentials.new(credentials) if credentials is not None else None
-            self.request_uri = FrozenSIPURI.new(request_uri)
-            self.route_header = FrozenRouteHeader.new(route_header)
-            self.route_header.uri.parameters.dict[b"lr"] = None # always send lr parameter in Route header
-            self.route_header.uri.parameters.dict[b"hide"] = None # always hide Route header
             self.local_contact_header = FrozenContactHeader.new(contact_header)
             self.sdp.proposed_local = FrozenSDPSession.new(sdp) if sdp is not None else None
 
             from_header_parameters = from_header.parameters.copy()
             from_header_parameters.pop("tag", None)
             from_header.parameters = {}
-            from_header_str = PJSTR(from_header.body)
+            from_header_str = PJSTR(from_header.body.encode())
             to_header_parameters = to_header.parameters.copy()
             to_header_parameters.pop("tag", None)
             to_header.parameters = {}
-            to_header_str = PJSTR(to_header.body)
-            contact_str = PJSTR(str(self.local_contact_header.body))
-            request_uri_str = PJSTR(str(request_uri))
+            to_header_str = PJSTR(to_header.body.encode())
+            contact_str = PJSTR(str(self.local_contact_header.body).encode())
+            self.request_uri = FrozenSIPURI.new(request_uri)
+            struri = str(request_uri)
+            request_uri_str = PJSTR(struri.encode())
+
+            self.route_header = FrozenRouteHeader.new(route_header)
+            self.route_header.uri.parameters.dict["lr"] = None # always send lr parameter in Route header
+            self.route_header.uri.parameters.dict["hide"] = None # always hide Route header
 
             with nogil:
                 status = pjsip_dlg_create_uac(pjsip_ua_instance(), &from_header_str.pj_str, &contact_str.pj_str,
@@ -471,7 +472,6 @@ cdef class Invitation:
         cdef PJSIPUA ua
 
         ua = _get_ua()
-        print('invitation send_response')
 
         with nogil:
             status = pj_mutex_lock(lock)
@@ -499,7 +499,6 @@ cdef class Invitation:
                 raise SIPCoreError("Local SDP cannot be specified for a negative response")
             self.sdp.proposed_local = FrozenSDPSession.new(sdp) if sdp is not None else None
             local_sdp = self.sdp.proposed_local.get_sdp_session() if sdp is not None else NULL
-            print('pjmedia_sdp_neg_modify_local_offer is next')
             if sdp is not None and self.sdp.proposed_remote is None:
                 # There was no remote proposal, this is a reply with an offer
                 with nogil:
@@ -509,13 +508,11 @@ cdef class Invitation:
                 # Retrieve the "fixed" offer from negotiator
                 pjmedia_sdp_neg_get_neg_local(invite_session.neg, &lsdp)
                 local_sdp = <pjmedia_sdp_session *>lsdp
-            print('pjsip_inv_answer is next')
             with nogil:
                 status = pjsip_inv_answer(invite_session, code, &reason_str if reason is not None else NULL, local_sdp, &tdata)
             if status != 0:
                 raise PJSIPError("Could not create %d reply to INVITE" % code, status)
             _add_headers_to_tdata(tdata, extra_headers)
-            print('pjsip_inv_send_msg is next')
             with nogil:
                 status = pjsip_inv_send_msg(invite_session, tdata)
             if status != 0:
@@ -847,7 +844,6 @@ cdef class Invitation:
         contact_str = str(contact_header.uri)
         if contact_header.display_name:
             contact_str = "%s <%s>" % (contact_header.display_name, contact_str)
-        print('Built contact_str %s' % contact_str)
         pj_strdup2_with_null(self._dialog.pool, &contact_str_pj, contact_str.encode())
         contact = pjsip_parse_uri(self._dialog.pool, contact_str_pj.ptr, contact_str_pj.slen, PJSIP_PARSE_URI_AS_NAMEADDR)
         if contact == NULL:
@@ -1183,7 +1179,7 @@ cdef class Invitation:
                 status = sip_status_messages[code]
             except IndexError:
                 status = "Unknown"
-        content = "SIP/2.0 %d %s\r\n" % (code, status)
+        content = b"SIP/2.0 %d %s\r\n" % (code, status)
         self._sipfrag_payload = PJSTR(content)
 
     cdef int _send_notify(self) except -1:

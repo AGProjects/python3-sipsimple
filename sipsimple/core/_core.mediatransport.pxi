@@ -1421,7 +1421,7 @@ cdef class AudioTransport:
                 raise SIPCoreError("Stream is not active")
             if len(digit) != 1 or digit not in "0123456789*#ABCD":
                 raise SIPCoreError("Not a valid DTMF digit: %s" % digit)
-            _str_to_pj_str(digit, &digit_pj)
+            _str_to_pj_str(digit.encode(), &digit_pj)
             if not self._stream_info.tx_event_pt < 0:
                 # If the remote doesn't support telephone-event just don't send DTMF
                 with nogil:
