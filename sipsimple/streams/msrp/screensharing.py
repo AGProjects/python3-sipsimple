@@ -259,7 +259,7 @@ class ScreenSharingStream(MSRPStreamBase):
         remote_stream = remote_sdp.media[stream_index]
         if remote_stream.media != b'application':
             raise UnknownStreamError
-        accept_types = remote_stream.attributes.getfirst('accept-types', None)
+        accept_types = remote_stream.attributes.getfirst(b'accept-types', None)
         accept_types = accept_types.decode() if accept_types else None
         if accept_types is None or 'application/x-rfb' not in accept_types.split():
             raise UnknownStreamError
