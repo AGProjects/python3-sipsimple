@@ -270,13 +270,13 @@ class Publisher(object, metaclass=ABCMeta):
         except PublicationError as e:
             self.publishing = False
             notification_center.remove_observer(self, sender=self._publication)
-            def publish():
+            def publish(e):
                 if self.active:
                     self._command_channel.send(Command('publish', event=command.event, state=self.state, refresh_interval=e.refresh_interval))
                 else:
                     command.signal()
                 self._publication_timer = None
-            self._publication_timer = reactor.callLater(e.retry_after, publish)
+            self._publication_timer = reactor.callLater(e.retry_after, publish, e)
             self._publication = None
             notification_center.post_notification(self.__nickname__ + 'PublicationDidFail', sender=self, data=NotificationData(reason=e.error))
         else:

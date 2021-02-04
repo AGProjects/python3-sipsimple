@@ -298,11 +298,11 @@ class Subscriber(object, metaclass=ABCMeta):
                     notification_center.remove_observer(self, sender=self._subscription)
                     notification_center.post_notification(self.__nickname__ + 'SubscriptionDidEnd', sender=self, data=NotificationData(originator='local'))
         except SubscriptionError as e:
-            def subscribe():
+            def subscribe(e):
                 if self.active:
                     self._command_channel.send(Command('subscribe', command.event, refresh_interval=e.refresh_interval))
                 self._subscription_timer = None
-            self._subscription_timer = reactor.callLater(e.retry_after, subscribe)
+            self._subscription_timer = reactor.callLater(e.retry_after, subscribe, e)
             notification_center.post_notification(self.__nickname__ + 'SubscriptionDidFail', sender=self)
         finally:
             self.subscribed = False

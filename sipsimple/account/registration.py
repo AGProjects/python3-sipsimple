@@ -222,11 +222,11 @@ class Registrar(object):
             self.registered = False
             notification_center.remove_observer(self, sender=self._registration)
             notification_center.post_notification('SIPAccountRegistrationDidFail', sender=self.account, data=NotificationData(error=e.error, retry_after=e.retry_after))
-            def register():
+            def register(e):
                 if self.active:
                     self._command_channel.send(Command('register', command.event, refresh_interval=e.refresh_interval))
                 self._registration_timer = None
-            self._registration_timer = reactor.callLater(e.retry_after, register)
+            self._registration_timer = reactor.callLater(e.retry_after, register, e)
             self._registration = None
             self.account.contact.public_gruu = None
             self.account.contact.temporary_gruu = None
