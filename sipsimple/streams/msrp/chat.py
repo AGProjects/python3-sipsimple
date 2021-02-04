@@ -407,7 +407,7 @@ class ChatStream(MSRPStreamBase):
             self.msrp_session.send_report(chunk, 200, 'OK')
             return
         else:
-            data = ''.join(self.incoming_queue.pop(chunk.message_id, [])) + chunk.data
+            data = ''.join(self.incoming_queue.pop(chunk.message_id, [])) + chunk.data.decode()
             
         if content_type == 'message/cpim':
             try:

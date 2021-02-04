@@ -131,8 +131,9 @@ class FileSelector(object):
 
     @property
     def sdp_repr(self):
-        items = [('name', self.name and '"%s"' % os.path.basename(self.name).encode('utf-8')), ('type', self.type), ('size', self.size), ('hash', self.hash)]
-        return ' '.join('%s:%s' % (name, value) for name, value in items if value is not None)
+        items = [('name', self.name and '"%s"' % os.path.basename(self.name)), ('type', self.type), ('size', self.size), ('hash', self.hash)]
+        sdp = ' '.join('%s:%s' % (name, value) for name, value in items if value is not None)
+        return sdp.encode()
 
 
 class UniqueFilenameGenerator(object):
@@ -401,7 +402,7 @@ class IncomingFileTransferHandler(FileTransferHandler):
             chunk = self.queue.get()
             if chunk is EndTransfer:
                 break
-            data = chunk.data.encode()
+            data = chunk.data
             try:
                 fd.write(data)
             except EnvironmentError as e:
@@ -684,7 +685,7 @@ class FileTransferStream(MSRPStreamBase):
 
     def _create_local_media(self, uri_path):
         local_media = super(FileTransferStream, self)._create_local_media(uri_path)
-        local_media.attributes.append(SDPAttribute(b'file-selector', self.file_selector.sdp_repr.encode()))
+        local_media.attributes.append(SDPAttribute(b'file-selector', self.file_selector.sdp_repr))
         local_media.attributes.append(SDPAttribute(b'x-file-offset', b''))
         if self.transfer_id is not None:
             local_media.attributes.append(SDPAttribute(b'file-transfer-id', self.transfer_id.encode()))
