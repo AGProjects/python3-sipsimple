@@ -1340,7 +1340,7 @@ class Session(object):
                         if not media.has_ice_attributes and not media.has_ice_candidates:
                             media.connection = connection
                     else:
-                        media = SDPMediaStream.new(media if isinstance(media, bytes) else media.encode() )
+                        media = SDPMediaStream.new(media)
                         media.connection = connection
                         media.port = 0
                         media.attributes = []

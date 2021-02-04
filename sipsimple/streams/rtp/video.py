@@ -51,7 +51,7 @@ class VideoStream(RTPStream):
             self._transport.start(local_sdp, remote_sdp, stream_index, timeout=settings.rtp.timeout)
             self._transport.local_video.producer = self.device.producer
             self._save_remote_sdp_rtp_info(remote_sdp, stream_index)
-            self._check_hold(self._transport.direction, True)
+            self._check_hold(self._transport.direction.decode(), True)
             if self._try_ice and self._ice_state == "NULL":
                 self.state = 'WAIT_ICE'
             else:
@@ -63,9 +63,9 @@ class VideoStream(RTPStream):
         with self._lock:
             remote_media = remote_sdp.media[stream_index]
             if 'H264' in remote_media.codec_list:
-                rtpmap = next(attr for attr in remote_media.attributes if attr.name=='rtpmap' and 'h264' in attr.value.lower())
-                payload_type = rtpmap.value.partition(' ')[0]
-                has_profile_level_id = any('profile-level-id' in attr.value.lower() for attr in remote_media.attributes if attr.name=='fmtp' and attr.value.startswith(payload_type + ' '))
+                rtpmap = next(attr for attr in remote_media.attributes if attr.name==b'rtpmap' and 'h264' in attr.value.decode().lower())
+                payload_type = rtpmap.value.decode().partition(' ')[0]
+                has_profile_level_id = any('profile-level-id' in attr.value.decode().lower() for attr in remote_media.attributes if attr.name==b'fmtp' and attr.value.decode().startswith(payload_type + ' '))
                 if not has_profile_level_id:
                     return False
             return True
@@ -73,7 +73,7 @@ class VideoStream(RTPStream):
     def update(self, local_sdp, remote_sdp, stream_index):
         with self._lock:
             new_direction = local_sdp.media[stream_index].direction
-            self._check_hold(new_direction, False)
+            self._check_hold(new_direction.decode(), False)
             self._transport.update_direction(new_direction)
             self._save_remote_sdp_rtp_info(remote_sdp, stream_index)
             self._transport.update_sdp(local_sdp, remote_sdp, stream_index)
@@ -150,7 +150,8 @@ class VideoStream(RTPStream):
 
     def _create_transport(self, rtp_transport, remote_sdp=None, stream_index=None):
         settings = SIPSimpleSettings()
-        codecs = list(self.session.account.rtp.video_codec_list or settings.rtp.video_codec_list)
+        available_codecs = list(self.session.account.rtp.video_codec_list or settings.rtp.video_codec_list)
+        codecs = list(c.encode() for c in available_codecs)
         return VideoTransport(rtp_transport, remote_sdp=remote_sdp, sdp_index=stream_index or 0, codecs=codecs)
 
     def _check_hold(self, direction, is_initial):

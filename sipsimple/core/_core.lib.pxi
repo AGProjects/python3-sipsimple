@@ -436,7 +436,7 @@ cdef class PJMEDIAEndpoint:
                     raise PJSIPError("Could not set video codec priority", status)
         return 0
 
-    cdef void _set_h264_options(self, str profile, int level):
+    cdef void _set_h264_options(self, object profile, int level):
         global h264_profiles_map, h264_profile_level_id, h264_packetization_mode
 
         cdef unsigned int count = PJMEDIA_VID_CODEC_MGR_MAX_CODECS
@@ -460,7 +460,7 @@ cdef class PJMEDIAEndpoint:
         for i from 0 <= i < count:
             if not (info[i].packings & PJMEDIA_VID_PACKING_PACKETS):
                 continue
-            if _pj_str_to_bytes(info[i].encoding_name) != 'H264':
+            if _pj_str_to_bytes(info[i].encoding_name) != b'H264':
                 continue
             status = pjmedia_vid_codec_mgr_get_default_param(NULL, &info[i], &vparam)
             if status != 0:

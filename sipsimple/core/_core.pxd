@@ -1471,7 +1471,7 @@ cdef class PJMEDIAEndpoint(object):
     cdef void _audio_subsystem_shutdown(self)
     cdef void _video_subsystem_init(self, PJCachingPool caching_pool)
     cdef void _video_subsystem_shutdown(self)
-    cdef void _set_h264_options(self, str profile, int level)
+    cdef void _set_h264_options(self, object profile, int level)
     cdef void _set_video_options(self, tuple max_resolution, int max_framerate, float max_bitrate)
 
 # core.helper

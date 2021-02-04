@@ -556,7 +556,7 @@ cdef class SDPMediaStream(BaseSDPMediaStream):
             self._attributes = attributes
             if self._media in (b"audio", b"video"):
                 rtp_mappings = self.rtp_mappings.copy()
-                rtpmap_lines = '\n'.join([attr.value for attr in attributes if attr.name=='rtpmap']) # iterators are not supported -Dan
+                rtpmap_lines = '\n'.join([attr.value.decode() for attr in attributes if attr.name==b'rtpmap']) # iterators are not supported -Dan
                 rtpmap_codecs = dict([(int(type), MediaCodec(name, rate)) for type, name, rate in self.rtpmap_re.findall(rtpmap_lines)])
                 rtp_mappings.update(rtpmap_codecs)
                 self._codec_list = [rtp_mappings.get(int(format), MediaCodec('Unknown', 0)) for format in self.formats]
@@ -642,7 +642,7 @@ cdef class FrozenSDPMediaStream(BaseSDPMediaStream):
             self.attributes = FrozenSDPAttributeList(attributes) if not isinstance(attributes, FrozenSDPAttributeList) else attributes
             if self.media in (b"audio", b"video"):
                 rtp_mappings = self.rtp_mappings.copy()
-                rtpmap_lines = '\n'.join([attr.value for attr in attributes if attr.name=='rtpmap']) # iterators are not supported -Dan
+                rtpmap_lines = '\n'.join([attr.value.decode() for attr in attributes if attr.name==b'rtpmap']) # iterators are not supported -Dan
                 rtpmap_codecs = dict([(int(type), MediaCodec(name, rate)) for type, name, rate in self.rtpmap_re.findall(rtpmap_lines)])
                 rtp_mappings.update(rtpmap_codecs)
                 self.codec_list = frozenlist([rtp_mappings.get(int(format) if format.isdigit() else None, MediaCodec('Unknown', 0)) for format in self.formats])
