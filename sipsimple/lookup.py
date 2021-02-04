@@ -40,6 +40,7 @@ dns.resolver.socket = socket
 dns.query.socket = socket
 dns.query.select = select
 
+#TODO3: dnspython newer than 0.20 has a new API
 if ('_set_polling_backend' in dir(dns.query)):
     dns.query._set_polling_backend(dns.query._select_for)
 
