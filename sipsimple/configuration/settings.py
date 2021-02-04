@@ -86,7 +86,8 @@ class SIPSettings(SettingsGroup):
 
 class TLSSettings(SettingsGroup):
     ca_list = Setting(type=Path, default=None, nillable=True)
-
+    certificate = Setting(type=Path, default=None, nillable=True)
+    verify_server = Setting(type=bool, default=False)
 
 class SIPSimpleSettings(SettingsObject):
     __id__ = 'SIPSimpleSettings'

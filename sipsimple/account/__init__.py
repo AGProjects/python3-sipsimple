@@ -87,6 +87,7 @@ class PresenceSettings(SettingsGroup):
 
 
 class TLSSettings(SettingsGroup):
+    ca_list = Setting(type=Path, default=None, nillable=True)
     certificate = Setting(type=Path, default=None, nillable=True)
     verify_server = Setting(type=bool, default=False)
 
@@ -263,20 +264,23 @@ class Account(SettingsObject):
         # This property can be optimized to cache the credentials it loads from disk,
         # however this is not a time consuming operation (~ 3000 req/sec). -Luci
         settings = SIPSimpleSettings()
-        if self.tls.certificate is not None:
-            certificate_data = open(self.tls.certificate.normalized).read()
+        tls_certificate  = self.tls.certificate or settings.tls.certificate
+        if tls_certificate is not None:
+            certificate_data = open(tls_certificate.normalized).read()
             certificate = X509Certificate(certificate_data)
             private_key = X509PrivateKey(certificate_data)
         else:
             certificate = None
             private_key = None
-        if settings.tls.ca_list is not None:
+
+        ca_list  = self.tls.ca_list or settings.tls.ca_list
+        if ca_list is not None:
             # we should read all certificates in the file, rather than just the first -Luci
-            trusted = [X509Certificate(open(settings.tls.ca_list.normalized).read())]
+            trusted = [X509Certificate(open(ca_list.normalized).read())]
         else:
             trusted = []
         credentials = X509Credentials(certificate, private_key, trusted)
-        credentials.verify_peer = self.tls.verify_server
+        credentials.verify_peer = self.tls.verify_server or settings.tls.certificate
         return credentials
 
     @property
@@ -629,20 +633,23 @@ class BonjourAccount(SettingsObject):
         # This property can be optimized to cache the credentials it loads from disk,
         # however this is not a time consuming operation (~ 3000 req/sec). -Luci
         settings = SIPSimpleSettings()
-        if self.tls.certificate is not None:
-            certificate_data = open(self.tls.certificate.normalized).read()
+        tls_certificate  = self.tls.certificate or settings.tls.certificate
+        if tls_certificate is not None:
+            certificate_data = open(tls_certificate.normalized).read()
             certificate = X509Certificate(certificate_data)
             private_key = X509PrivateKey(certificate_data)
         else:
             certificate = None
             private_key = None
-        if settings.tls.ca_list is not None:
+
+        ca_list  = self.tls.ca_list or settings.tls.ca_list
+        if ca_list is not None:
             # we should read all certificates in the file, rather than just the first -Luci
-            trusted = [X509Certificate(open(settings.tls.ca_list.normalized).read())]
+            trusted = [X509Certificate(open(ca_list.normalized).read())]
         else:
             trusted = []
         credentials = X509Credentials(certificate, private_key, trusted)
-        credentials.verify_peer = self.tls.verify_server
+        credentials.verify_peer = self.tls.verify_server or settings.tls.certificate
         return credentials
 
     @property
