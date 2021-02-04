@@ -210,6 +210,7 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
             self.msrp_connector = None
         except Exception as e:
             self._failure_reason = str(e)
+            traceback.print_exc()
             notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context=context, reason=self._failure_reason))
         else:
             notification_center.post_notification('MediaStreamDidStart', sender=self)
