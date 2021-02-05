@@ -104,6 +104,8 @@ class FileSelector(object):
 
     @classmethod
     def parse(cls, string):
+        if isinstance(string, bytes):
+            string = string.decode()
         name_match = cls._name_re.search(string)
         size_match = cls._size_re.search(string)
         type_match = cls._type_re.search(string)
@@ -659,7 +661,7 @@ class FileTransferStream(MSRPStreamBase):
             
         file_selector_attr = remote_stream.attributes.getfirst(b'file-selector')
         try:
-            file_selector = FileSelector.parse(file_selector_attr.decode())
+            file_selector = FileSelector.parse(file_selector_attr)
         except Exception as e:
             raise InvalidStreamError("error parsing file-selector: {}".format(e))
 
@@ -720,7 +722,10 @@ class FileTransferStream(MSRPStreamBase):
         notification.center.remove_observer(self, sender=self.handler)
 
     def _NH_MediaStreamWillEnd(self, notification):
-        notification.center.remove_observer(self, sender=self.handler)
+        try:
+            notification.center.remove_observer(self, sender=self.handler)
+        except KeyError:
+            pass
 
     def _handle_REPORT(self, chunk):
         # in theory, REPORT can come with Byte-Range which would limit the scope of the REPORT to the part of the message.

@@ -142,9 +142,9 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
                                 raise MSRPStreamError("MSRP relay transport conflicts with MSRP transport setting")
                             relay_host = self.session.account.nat_traversal.msrp_relay.host
                             relay_port = self.session.account.nat_traversal.msrp_relay.port
-                        relay = MSRPRelaySettings(domain=self.session.account.uri.host,
-                                                  username=self.session.account.uri.user,
-                                                  password=self.session.account.credentials.password,
+                        relay = MSRPRelaySettings(domain=self.session.account.uri.host.decode(),
+                                                  username=self.session.account.uri.user.decode(),
+                                                  password=self.session.account.credentials.password.decode(),
                                                   host=relay_host,
                                                   port=relay_port,
                                                   use_tls=self.transport=='tls')
@@ -192,7 +192,6 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
                 raise MSRPStreamError("remote transport ('%s') different from local transport ('%s')" % (remote_transport, self.transport))
             if isinstance(self.session.account, Account) and self.local_role == 'actpass':
                 remote_setup = remote_media.attributes.getfirst('setup', 'passive')
-                remote_setup = remote_setup.decode() if remote_setup else None
                 if remote_setup == 'passive':
                     # If actpass is offered connectors are always started as passive
                     # We need to switch to active if the remote answers with passive
@@ -326,15 +325,22 @@ class ChunkInfo(object):
 
     @property
     def normalized_content(self):
-        if not self.data:
-            return self.header + self.footer
+        header = self.header.decode() if isinstance(self.header, bytes) else self.header
+        footer = self.footer.decode() if isinstance(self.footer, bytes) else self.footer
+        try:
+            data = self.data.decode() if isinstance(self.data, bytes) else self.data
+        except UnicodeDecodeError:
+            data = '<<<stripped data>>>'
+        
+        if not data:
+            return header + footer
         elif self.content_type == 'message/cpim':
-            headers, sep, body = self.data.partition('\r\n\r\n')
+            headers, sep, body = data.partition('\r\n\r\n')
             if not sep:
-                return self.header + self.data + self.footer
+                return header + data + footer
             mime_headers, mime_sep, mime_body = body.partition('\n\n')
             if not mime_sep:
-                return self.header + self.data + self.footer
+                return header + data + footer
             for mime_header in mime_headers.lower().splitlines():
                 if mime_header.startswith('content-type:'):
                     wrapped_content_type = mime_header[13:].partition(';')[0].strip()
@@ -342,14 +348,14 @@ class ChunkInfo(object):
             else:
                 wrapped_content_type = None
             if wrapped_content_type is None or wrapped_content_type == 'application/im-iscomposing+xml' or wrapped_content_type.startswith(('text/', 'message/')):
-                data = self.data
+                data = data
             else:
                 data = headers + sep + mime_headers + mime_sep + '<<<stripped data>>>'
-            return self.header + data + self.footer
+            return header + data + footer
         elif self.content_type is None or self.content_type == 'application/im-iscomposing+xml' or self.content_type.startswith(('text/', 'message/')):
-            return self.header + self.data + self.footer
+            return header + data + footer
         else:
-            return self.header + '<<<stripped data>>>' + self.footer
+            return header + '<<<stripped data>>>' + footer
 
 
 class NotificationProxyLogger(object):
