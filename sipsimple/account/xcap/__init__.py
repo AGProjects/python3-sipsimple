@@ -766,6 +766,7 @@ class XCAPManager(object):
         """
         self.command_proc = proc.spawn(self._run)
 
+    @run_in_green_thread
     def start(self):
         """
         Starts the XCAP manager. This method needs to be called in a green
