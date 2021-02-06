@@ -319,8 +319,7 @@ class IncomingFileTransferHandler(FileTransferHandler):
 
     def __init__(self):
         super(IncomingFileTransferHandler, self).__init__()
-        #self.hash = sha1() #TODO this fails - adi
-        self.hash = hashlib.sha1()
+        self.hash = sha1()
         self.queue = Queue()
         self.offset = 0
         self.received_chunks = 0
@@ -379,8 +378,7 @@ class IncomingFileTransferHandler(FileTransferHandler):
             if not self.received_chunks and chunk.byte_range.start == 1:
                 self.stream.file_selector.fd.truncate(0)
                 self.stream.file_selector.fd.seek(0)
-                #self.hash = sha1() #TODO this fails - adi
-                self.hash = hashlib.sha1()
+                self.hash = sha1()
                 self.offset = 0
             self.received_chunks += 1
             self.queue.put(chunk)

@@ -89,5 +89,5 @@ cdef class sha1(object):
         return PyBytes_FromStringAndSize(<char*>digest, SHA1_DIGEST_SIZE)
 
     def hexdigest(self):
-        return self.digest().encode('hex')
+        return self.digest().hex()
 
