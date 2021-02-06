@@ -775,6 +775,7 @@ class XCAPManager(object):
         self.command_channel.send(command)
         command.wait()
 
+    @run_in_green_thread
     def stop(self):
         """
         Stops the XCAP manager. This method blocks until all the operations are
