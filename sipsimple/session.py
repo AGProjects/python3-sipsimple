@@ -1180,7 +1180,7 @@ class Session(object):
             elif isinstance(e, MediaStreamDidNotInitializeError):
                 error = 'media stream did not initialize: %s' % e.data.reason
             else:
-                error = 'media stream failed: %s' % e.data.reason
+                error = '%s media stream failed: %s' % (e.stream.type, e.data.reason)
             self._fail(originator='local', code=0, reason=None, error=error)
         except InvitationDisconnectedError as e:
             notification_center.remove_observer(self, sender=self._invitation)
@@ -1458,7 +1458,7 @@ class Session(object):
                 reason_header.cause = 500
                 reason_header.text = 'media stream did not initialize'
             else:
-                error = 'media stream failed: %s' % e.data.reason
+                error = '%s media stream failed: %s' % (e.stream.type, e.data.reason)
                 reason_header = ReasonHeader('SIP')
                 reason_header.cause = 500
                 reason_header.text = 'media stream failed to start'
