@@ -460,7 +460,7 @@ class ChatStream(MSRPStreamBase):
         if message.content_type.lower() == IsComposingDocument.content_type:
             try:
                 document = IsComposingDocument.parse(message.content)
-            except ParserError as e:
+            except (ParserError, OSError) as e:
                 self.msrp_session.send_report(chunk, 400, str(e))
                 return
             self.msrp_session.send_report(chunk, 200, 'OK')
