@@ -1,7 +1,7 @@
 
 """Package information"""
 
-__project__ = "python-sipsimple"
+__project__ = "python3-sipsimple"
 __summary__ = "SIP SIMPLE implementation for Python"
 __webpage__ = "https://sipsimpleclient.org"
 
