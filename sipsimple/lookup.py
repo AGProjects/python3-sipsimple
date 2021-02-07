@@ -255,11 +255,12 @@ class DNSLookup(object):
         try:
             # If the host part of the URI is an IP address, we will not do any lookup
             if re.match("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", uri.host.decode()):
-                transport = 'tls' if uri.secure else uri.transport.decode().lower()
+                transport = 'tls' if uri.secure else uri.transport.lower()
                 if transport not in supported_transports:
                     raise DNSLookupError("Transport %s dictated by URI is not supported" % transport)
                 port = uri.port or (5061 if transport=='tls' else 5060)
-                return [Route(address=uri.host.decode(), port=port, transport=transport)]
+                route = [Route(address=uri.host.decode(), port=port, transport=transport)]
+                return route
 
             resolver = DNSResolver()
             resolver.cache = self.cache
