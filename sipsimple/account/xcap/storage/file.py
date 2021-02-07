@@ -28,8 +28,8 @@ class FileStorage(object):
     def load(self, name):
         """Read the file given by name and return its content."""
         try:
-            document = open(os.path.join(self.directory, self.account_id, name)).read()
-        except (IOError, OSError) as e:
+            document = open(os.path.join(self.directory, self.account_id, name), 'rb').read()
+        except (IOError, OSError, UnicodeDecodeError) as e:
             raise XCAPStorageError("failed to load XCAP data for %s/%s: %s" % (self.account_id, name, str(e)))
         else:
             self.names.add(name)

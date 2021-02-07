@@ -88,7 +88,7 @@ class Document(object):
         if not self.cached:
             return
         try:
-            document = StringIO(self.manager.storage.load(self.name))
+            document = StringIO(self.manager.storage.load(self.name).decode())
             self.etag = document.readline().strip() or None
             self.content = self.payload_type.parse(document)
             self.__dict__['dirty'] = False
