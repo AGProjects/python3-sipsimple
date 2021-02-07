@@ -13,6 +13,7 @@ import random
 import re
 import time
 import uuid
+import traceback
 
 from abc import ABCMeta, abstractmethod
 from application.notification import NotificationCenter, NotificationData, IObserver
@@ -675,6 +676,7 @@ class FileTransferStream(MSRPStreamBase):
                 raise InvalidStreamError("wrong stream direction specified")
         except Exception as e:
              traceback.print_exc()
+             return None
         stream.remote_role = remote_stream.attributes.getfirst(b'setup', b'active')
         return stream
 
