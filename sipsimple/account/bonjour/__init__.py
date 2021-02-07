@@ -122,7 +122,17 @@ class BonjourNeighbourRecord(object):
         self.host = re.match(r'^(?P<host>.*?)(\.local)?\.?$', host).group('host')
         contact = txtrecord.get('contact', service_description.name).decode()
         self.uri = FrozenSIPURI.parse(contact)
-        self.presence = BonjourNeighbourPresence(txtrecord.get('state', txtrecord.get('status', None)), txtrecord.get('note', '') or None) # status is read for legacy (remove later) -Dan
+        state = txtrecord.get('state', txtrecord.get('status', None))  # status is read for legacy (remove later) -Dan
+
+        if state:
+            state = state.decode()
+
+        note = txtrecord.get('note', '') or None
+
+        if note:
+            note = note.decode()
+
+        self.presence = BonjourNeighbourPresence(state, note)
 
 
 @implementer(IObserver)
@@ -267,7 +277,7 @@ class BonjourServices(object):
                         our_contact_uri = self.account.contact[NoGRUU, transport]
                     except KeyError:
                         return
-                    if record.uri != our_contact_uri:
+                    if str(record.uri) != str(our_contact_uri):
                         had_neighbour = service_description in self._neighbours
                         self._neighbours[service_description] = record
                         notification_name = 'BonjourAccountDidUpdateNeighbour' if had_neighbour else 'BonjourAccountDidAddNeighbour'
@@ -333,11 +343,11 @@ class BonjourServices(object):
             try:
                 contact = self.account.contact[NoGRUU, transport]
                 instance_id = str(uuid.UUID(settings.instance_id))
-                txtdata = dict(txtvers=1, name=self.account.display_name.decode(), contact="<%s>" % str(contact), instance_id=instance_id)
+                txtdata = dict(txtvers=1, name=self.account.display_name, contact="<%s>" % str(contact), instance_id=instance_id)
                 state = self.account.presence_state
                 if self.account.presence.enabled and state is not None:
                     txtdata['state'] = state.state
-                    txtdata['note'] = state.note.encode('utf-8')
+                    txtdata['note'] = state.note
                 file = _bonjour.DNSServiceRegister(name=str(contact),
                                                    regtype="_sipuri._%s" % (transport if transport == 'udp' else 'tcp'),
                                                    port=contact.port,
@@ -378,7 +388,7 @@ class BonjourServices(object):
                 state = self.account.presence_state
                 if self.account.presence.enabled and state is not None:
                     txtdata['state'] = state.state
-                    txtdata['note'] = state.note.encode('utf-8')
+                    txtdata['note'] = state.note
                 _bonjour.DNSServiceUpdateRecord(file.file, None, flags=0, rdata=_bonjour.TXTRecord(items=txtdata), ttl=0)
             except (_bonjour.BonjourError, KeyError) as e:
                 notification_center.post_notification('BonjourAccountRegistrationUpdateDidFail', sender=self.account, data=NotificationData(reason=str(e), transport=file.transport))
