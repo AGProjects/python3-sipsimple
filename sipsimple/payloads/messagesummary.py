@@ -22,6 +22,7 @@ class MessageSummary(object):
 
     @classmethod
     def parse(cls, content):
+        content = content.decode() if isinstance(content, bytes) else content
         message = StringIO(content)
         summary = cls()
         tmp_headers = []

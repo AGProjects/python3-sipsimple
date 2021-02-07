@@ -454,7 +454,7 @@ class ChatStream(MSRPStreamBase):
         if payload.charset is not None:
             message.content = message.content.decode(payload.charset)
         elif payload.content_type.startswith('text/'):
-            message.content.decode('utf8')
+            message.content = message.content.decode('utf8')
 
         notification_center = NotificationCenter()
         if message.content_type.lower() == IsComposingDocument.content_type:
