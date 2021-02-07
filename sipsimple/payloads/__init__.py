@@ -143,11 +143,8 @@ class XMLDocument(object, metaclass=XMLDocumentType):
     @classmethod
     def parse(cls, document):
         try:
-#            if isinstance(document, str):
-#                xml = etree.XML(document, parser=cls.parser)
-#            elif isinstance(document, bytes):
             if isinstance(document, bytes):
-                xml = etree.XML(document.decode('utf-8'), parser=cls.parser)
+                xml = etree.XML(document, parser=cls.parser)
             else:
                 xml = etree.parse(document, parser=cls.parser).getroot()
             if cls.schema is not None:
