@@ -480,7 +480,7 @@ class ConferenceHandler(object):
                     subscription = Subscription(target_uri, FromHeader(account.uri, account.display_name),
                                                 ToHeader(target_uri),
                                                 ContactHeader(contact_uri),
-                                                'conference',
+                                                b'conference',
                                                 RouteHeader(route.uri),
                                                 credentials=account.credentials,
                                                 refresh=refresh_interval)
