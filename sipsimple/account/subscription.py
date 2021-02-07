@@ -207,7 +207,7 @@ class Subscriber(object, metaclass=ABCMeta):
                     subscription = Subscription(subscription_uri, FromHeader(self.account.uri, self.account.display_name),
                                                 ToHeader(subscription_uri),
                                                 ContactHeader(contact_uri),
-                                                self.event,
+                                                self.event.encode(),
                                                 RouteHeader(route.uri),
                                                 credentials=self.account.credentials,
                                                 refresh=refresh_interval)
