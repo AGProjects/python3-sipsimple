@@ -33,7 +33,7 @@ cdef class sha1(object):
     def __cinit__(self, *args, **kw):
         sha1_init(&self.context)
 
-    def __init__(self, data=''):
+    def __init__(self, data=b''):
         self.update(data)
 
     property name:
