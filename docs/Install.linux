@@ -1,26 +1,27 @@
 
-SIP SIMPLE client SDK installation on Linux
--------------------------------------------
+SIP SIMPLE SDK installation on Linux
+------------------------------------
 
 Home page: http://sipsimpleclient.org
 
-This document described the installation procedure on Linux operating
-systems.
+
+This document described the installation procedure on 
+Linux operating systems.
 
 
 Step 1. Prerequisites
 ---------------------
 
 Both i386 or amd64 architectures are supported. Install the C compiling
-environment, Python 2.7 and the development version for the following
+environment, Python 3 and the development version for the following
 packages:
 
  * openssl
  * ffmpeg
 
 
-Step 2. Install dependencies
-----------------------------
+Step 2. Install system dependencies
+-----------------------------------
 
 See Dependencies.txt for detailed description of the required libraries and
 their minimum version number.
@@ -31,79 +32,68 @@ the following packages, notice the minimum version numbers.
 You can use the easy_install script provided by the python-setuptools
 package to install the packages:
 
-sudo pip install -U cython dnspython lxml python-gnutls python-otr \
-python-application twisted python-dateutil greenlet
+sudo pip3 install -U cython dnspython lxml twisted python-dateutil \
+greenlet zope.interface
 
 
-Step 3. Install SIP SIMPLE client SDK
--------------------------------------
+Step 3. Install AG Projects dependencies
+----------------------------------------
 
-The SDK consists of four parts:
+ - python3-application
+ - python3-eventlib
+ - python3-gnutls
+ - python3-otr
+ - python3-msrplib
+ - python3-xcaplib
 
- 1. python-eventlib
- 2. XCAP library
- 3. MSRP library
- 4. SIP SIMPLE library
 
-# Eventlib
-if [ -d python-eventlib ]; then
-        cd python-eventlib
-        darcs pull -a
-        sudo python setup.py install
-else
-        darcs get http://devel.ag-projects.com/repositories/python-eventlib
-        cd python-eventlib
-        sudo python setup.py install
-fi
-cd ..
+For each of them, in the exact order as listed above, retrieve the packages
+as follows:
 
-# XCAP library
-if [ -d python-xcaplib ]; then
-        cd python-xcaplib
-        darcs pull -a
-        sudo python setup.py install
-else
-        darcs get http://devel.ag-projects.com/repositories/python-xcaplib
-        cd python-xcaplib
-        sudo python setup.py install
-fi
-cd ..
 
-# MSRP library
-if [ -d python-msrplib ]; then
-        cd python-msrplib
-        darcs pull -a
-        sudo python setup.py install
-else
-        darcs get http://devel.ag-projects.com/repositories/python-msrplib
-        cd python-msrplib
-        sudo python setup.py install
-fi
-cd ..
+Using darcs:
 
-# SIP SIMPLE
-if [ -d python-sipsimple ]; then
-	cd python-sipsimple
-	darcs pull -a
-else
-	darcs get --set-scripts-executable http://devel.ag-projects.com/repositories/python-sipsimple
-fi
-cd..
+darcs clone http://devel.ag-projects.com/repositories/PROJECT
 
-cd python-sipsimple
-python setup.py build_ext --pjsip-clean-compile
-sudo python setup.py install
+replace PROJECT with each of the names above
 
-Additional, you can install the command line interface scripts that can be
-used to test the SDK.
+As tar archives from:
 
-if [ -d sipclients ]; then
-	cd sipclients
-	darcs pull -a
-else
-	darcs get --set-scripts-executable http://devel.ag-projects.com/repositories/sipclients
-fi
-cd..
+http://download.ag-projects.com/SipSimpleSDK/Python3/
 
-sudo python setup.py install
+Install these packages by going into each directory.
+
+Using pip inside your virtual environment:
+
+pip3 install --user .
+
+System-wide using setup.py:
+
+sudo python3 setup.py install
+
+As a debian package:
+
+./makedeb.sh
+
+The debian package can be found inside ./dist folder
+
+sudo dpkg -i *.deb
+
+
+Step 4. Install the SDK
+-----------------------
+
+The SDK consists of two packages:
+
+ - python3-sipsimple
+ - sipclients3
+
+Install them similar to the dependencies above.
+
+
+Step 5. Testing the SDK
+-----------------------
+
+Use the command line tools provided by sipclients3 package, the binaries
+start with sip- prefix
 

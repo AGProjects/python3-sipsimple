@@ -1,6 +1,6 @@
 
-SIP SIMPLE client SDK installation on Debian
---------------------------------------------
+SIP SIMPLE SDK installation on Debian
+-------------------------------------
 
 Home page: http://sipsimpleclient.org
 
@@ -19,14 +19,7 @@ sudo apt-key add agp-debian-gpg.key
 Add these lines to /etc/apt/sources.list:
 
 
-Debian Unstable (Sid)
----------------------
-
-deb	http://ag-projects.com/debian unstable main
-deb-src http://ag-projects.com/debian unstable main
-
-
-Debian Stable (Wheezy)
+Debian Stable (Buster)
 -----------------------
 
 deb	http://ag-projects.com/debian stable main
