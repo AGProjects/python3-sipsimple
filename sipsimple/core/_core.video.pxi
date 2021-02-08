@@ -993,7 +993,7 @@ cdef void _stop_video_port(pjmedia_vid_port *port):
 
 cdef class VideoFrame:
 
-    def __init__(self, str data, int width, int height):
+    def __init__(self, object data, int width, int height):
         self.data = data
         self.width = width
         self.height = height
@@ -1017,7 +1017,7 @@ cdef void FrameBufferVideoRenderer_frame_handler(pjmedia_frame_ptr_const frame, 
     if rend is None:
         return
     if rend._frame_handler is not None:
-        data = _pj_buf_len_to_str(<char*>frame.buf, frame.size)
+        data = PyBytes_FromStringAndSize(<char*>frame.buf, frame.size)
         rend._frame_handler(VideoFrame(data, size.w, size.h))
 
 
