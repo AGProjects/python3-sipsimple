@@ -72,7 +72,7 @@ class FileBackend(object):
         """
 
         try:
-            file = open(self.filename)
+            file = open(self.filename, 'rb')
         except IOError as e:
             if e.errno == errno.ENOENT:
                 return {}
@@ -82,6 +82,7 @@ class FileBackend(object):
         state_stack = deque()
         state_stack.appendleft(GroupState(-1))
         for lineno, line in enumerate(file, 1):
+            line = line.decode()
             line = self._parse_line(line, lineno)
             if not line.name:
                 continue

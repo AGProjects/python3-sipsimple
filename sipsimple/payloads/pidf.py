@@ -507,7 +507,7 @@ class TimeOffset(XMLStringElement):
         self.description = description
 
     def __int__(self):
-        return int(self.value)
+        return int(float(self.value))
 
 class DeviceInfo(XMLElement, ServiceExtension):
     _xml_tag = 'device-info'
