@@ -392,6 +392,8 @@ cdef int _BaseSIPURI_to_pjsip_sip_uri(BaseSIPURI uri, pjsip_sip_uri *pj_uri, pj_
             param = <pjsip_param *> pj_pool_alloc(pool, sizeof(pjsip_param))
             if name == 'hide':
                 name = b'hide'
+            elif name == 'tls_name':
+                name = b'tls_name'
             _str_to_pj_str(name, &param.name)
             if value is None:
                 param.value.slen = 0

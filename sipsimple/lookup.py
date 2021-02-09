@@ -239,6 +239,7 @@ class DNSLookup(object):
         naptr_service_transport_map = {"sips+d2t": "tls",
                                        "sip+d2t": "tcp",
                                        "sip+d2u": "udp"}
+
         transport_service_map = {"udp": "_sip._udp",
                                  "tcp": "_sip._tcp",
                                  "tls": "_sips._tcp"}
@@ -255,11 +256,11 @@ class DNSLookup(object):
         try:
             # If the host part of the URI is an IP address, we will not do any lookup
             if re.match("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", uri.host.decode()):
-                transport = 'tls' if uri.secure else uri.transport.lower()
+                transport = 'tls' if uri.secure else uri.transport.decode().lower()
                 if transport not in supported_transports:
                     raise DNSLookupError("Transport %s dictated by URI is not supported" % transport)
                 port = uri.port or (5061 if transport=='tls' else 5060)
-                route = [Route(address=uri.host.decode(), port=port, transport=transport)]
+                route = [Route(address=uri.host, port=port, transport=transport)]
                 return route
 
             resolver = DNSResolver()
@@ -269,12 +270,12 @@ class DNSLookup(object):
 
             # If the port is specified in the URI, we will only do an A lookup
             if uri.port:
-                transport = 'tls' if uri.secure else uri.transport.lower()
+                transport = 'tls' if uri.secure else uri.transport.decode().lower()
                 if transport not in supported_transports:
                     raise DNSLookupError("Transport %s dictated by URI is not supported" % transport)
                 addresses = self._lookup_a_records(resolver, [uri.host.decode()], log_context=log_context)
                 if addresses[uri.host.decode()]:
-                    return [Route(address=addr, port=uri.port, transport=transport) for addr in addresses[uri.host.decode()]]
+                    return [Route(address=addr, port=uri.port, transport=transport, tls_name=uri.host) for addr in addresses[uri.host.decode()]]
 
             # If the transport was already set as a parameter on the SIP URI, only do SRV lookups
             elif 'transport' in uri.parameters:
@@ -286,13 +287,13 @@ class DNSLookup(object):
                 record_name = '%s.%s' % (transport_service_map[transport], uri.host.decode())
                 services = self._lookup_srv_records(resolver, [record_name], log_context=log_context)
                 if services[record_name]:
-                    return [Route(address=result.address, port=result.port, transport=transport) for result in services[record_name]]
+                    return [Route(address=result.address, port=result.port, transport=transport, tls_name=uri.host) for result in services[record_name]]
                 else:
                     # If SRV lookup fails, try A lookup
                     addresses = self._lookup_a_records(resolver, [uri.host.decode()], log_context=log_context)
                     port = 5061 if transport=='tls' else 5060
                     if addresses[uri.host.decode()]:
-                        return [Route(address=addr, port=port, transport=transport) for addr in addresses[uri.host.decode()]]
+                        return [Route(address=addr, port=port, transport=transport, tls_name=uri.host) for addr in addresses[uri.host.decode()]]
 
             # Otherwise, it means we don't have a numeric IP address, a port isn't specified and neither is a transport. So we have to do a full NAPTR lookup
             else:
@@ -308,7 +309,7 @@ class DNSLookup(object):
                 except dns.resolver.Timeout:
                     pointers = []
                 if pointers:
-                    return [Route(address=result.address, port=result.port, transport=naptr_service_transport_map[result.service]) for result in pointers]
+                    return [Route(address=result.address, port=result.port, transport=naptr_service_transport_map[result.service], tls_name=uri.host) for result in pointers]
                 else:
                     # If that fails, try SRV lookup
                     routes = []
@@ -319,7 +320,7 @@ class DNSLookup(object):
                         except dns.resolver.Timeout:
                             continue
                         if services[record_name]:
-                            routes.extend(Route(address=result.address, port=result.port, transport=transport) for result in services[record_name])
+                            routes.extend(Route(address=result.address, port=result.port, transport=transport, tls_name=uri.host) for result in services[record_name])
                     if routes:
                         return routes
                     else:
@@ -329,7 +330,7 @@ class DNSLookup(object):
                             addresses = self._lookup_a_records(resolver, [uri.host.decode()], log_context=log_context)
                             port = 5061 if transport=='tls' else 5060
                             if addresses[uri.host.decode()]:
-                                return [Route(address=addr, port=port, transport=transport) for addr in addresses[uri.host.decode()]]
+                                return [Route(address=addr, port=port, transport=transport, tls_name=uri.host) for addr in addresses[uri.host.decode()]]
         except dns.resolver.Timeout:
             raise DNSLookupError("Timeout in lookup for routes for SIP URI %s" % uri)
         else:

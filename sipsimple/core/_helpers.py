@@ -18,10 +18,11 @@ __all__ = ['Route', 'ContactURIFactory', 'NoGRUU', 'PublicGRUU', 'TemporaryGRUU'
 class Route(object):
     _default_ports = dict(udp=5060, tcp=5060, tls=5061)
 
-    def __init__(self, address, port=None, transport='udp'):
+    def __init__(self, address, port=None, transport='udp', tls_name=None):
         self.address = address.decode() if isinstance(address, bytes) else address
-        self.port = port
         self.transport = transport.decode() if isinstance(transport, bytes) else transport
+        self.tls_name = tls_name.decode() if isinstance(tls_name, bytes) else tls_name
+        self.port = port
 
     @property
     def address(self):
@@ -63,10 +64,12 @@ class Route(object):
     def uri(self):
         port = None if self._default_ports[self.transport] == self.port else self.port
         parameters = {} if self.transport == 'udp' else {'transport': self.transport.encode()}
+        if self.transport == 'tls':
+            parameters['tls_name'] = self.tls_name.encode()
         return SIPURI(host=self.address, port=port, parameters=parameters)
 
     def __repr__(self):
-        return '{0.__class__.__name__}({0.address!r}, port={0.port!r}, transport={0.transport!r})'.format(self)
+        return '{0.__class__.__name__}({0.address!r}, port={0.port!r}, transport={0.transport!r}, tls_name={0.tls_name!r})'.format(self)
 
     def __str__(self):
         return str(self.uri)
