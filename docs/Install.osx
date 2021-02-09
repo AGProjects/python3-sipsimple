@@ -1,31 +1,27 @@
 
-Installation procedure for SIP SIMPLE client SDK on MacOSX >= 10.11
--------------------------------------------------------------------
+Installation procedure for SIP SIMPLE SDK on MacOSX
+---------------------------------------------------
 
 Home page: http://sipsimpleclient.org
 
-This document describes the installation procedure on MacOSX >= 10.11
+This document describes the installation procedure on MacOSX >= 10.14
 
 The installation procedure consists of the steps described below:
 
 Step 1. Prerequisites
-Step 2. Install Dependencies
-Step 3. Install SIP SIMPLE client SDK
+Step 2. Install dependencies
+Step 3. Install SIP SIMPLE SDK
 
 
 Step 1. Prerequisites
 ---------------------
 
- * MacOSX >= 10.12
- * Apple Developer tools (XCode 9)
+ * MacOSX >= 10.14
+ * Apple Developer tools (XCode 11)
  * Homebrew from http://brew.sh
- * darcs version control tool
- * Python pip installer
- * Python virtualenv and virtualenvwrapper modules
 
 
-
-Step 2. Install Dependencies
+Step 2. Install dependencies
 ----------------------------
 
 See Dependencies.txt for detailed description of the required libraries and
@@ -34,130 +30,10 @@ their minimum version number.
 A. Install the C dependencies, the software will be installed
 under /usr/local folder by default with Homebrew:
 
-brew install darcs gnutls yasm pkg-config x264 libvpx mpfr libmpc
+brew install darcs gnutls yasm pkg-config x264 libvpx mpfr libmpc python3
 
 brew install -s ffmpeg
 
-B.  Build and install the Python dependencies
+Step 3. Install SIP SIMPLE SDK 
 
-The procedure below relies on the standard Python interpreter 2.7 that comes
-with MacOSX and Xcode version 9.  A 64bit build will be produced.
-
-This guide assumes all software is being installed in a virtualenv (except for
-the packages installed with Homebrew, of course). 
-
-Install pip:
-
-sudo easy_install pip
-
-Install virtualenv and virtualenvwrapper:
-
-sudo -H pip install virtualenv --upgrade --ignore-installed six
-sudo -H pip install virtualenvwrapper --upgrade --ignore-installed six
-
-The above are installed in /Library/Python/2.7/site-packages
-
-Add to ~/.bashrc:
-
-export WORKON_HOME=$HOME/.virtualenvs
-export PIP_VIRTUALENV_BASE=$WORKON_HOME
-export PIP_RESPECT_VIRTUALENV=true
-[[ -f /usr/share/virtualenvwrapper/virtualenvwrapper_lazy.sh ]] && source /usr/share/virtualenvwrapper/virtualenvwrapper_lazy.sh
-[[ -f /usr/local/bin/virtualenvwrapper_lazy.sh ]] && source /usr/local/bin/virtualenvwrapper_lazy.sh
-
-Creating a virtual environment for python-simple
-
-mkvirtualenv -p $(which python2.7) sipsimple
-
-You'll be dropped right into it. If you want to exit it:
-
-deactivate
-
-And to activate the virtualenv again:
-
-workon sipsimple
-
-Install python dependencies:
-
-pip install -U python-gnutls python-otr dnspython twisted \
-python-application cython python-dateutil greenlet lxml
-
-All packages are installed in:
-
-~/.virtualenvs/sipsimple/lib/python2.7/site-packages/
-
-
-Step 3. Build and install SIP SIMPLE client SDK
------------------------------------------------
-
-Enter virtual environment:
-
-workon sipsimple
-
-The SDK consists of four parts:
-
- 1. python-eventlib
- 2. XCAP library
- 3. MSRP library
- 4. SIP SIMPLE library
-
-# Eventlet
-if [ -d python-eventlib ]; then
-        cd python-eventlib
-        darcs pull -a
-else
-        darcs get http://devel.ag-projects.com/repositories/python-eventlib
-        cd python-eventlib
-fi
-pip install .
-cd ..
-
-# XCAP library
-if [ -d python-xcaplib ]; then
-        cd python-xcaplib
-        darcs pull -a
-else
-        darcs get http://devel.ag-projects.com/repositories/python-xcaplib
-        cd python-xcaplib
-fi
-pip install .
-cd ..
-
-# MSRP library
-if [ -d python-msrplib ]; then
-        cd python-msrplib
-        darcs pull -a
-else
-        darcs get http://devel.ag-projects.com/repositories/python-msrplib
-        cd python-msrplib
-fi
-pip install .
-cd ..
-
-# SIP SIMPLE library
-if [ -d python-sipsimple ]; then
-    cd python-sipsimple
-    darcs pull -a
-else
-    darcs get --set-scripts-executable http://devel.ag-projects.com/repositories/python-sipsimple
-    cd python-sipsimple
-fi
-
-Build and install SIP SIMPLE library:
-
-python setup.py build_ext --pjsip-clean-compile
-python setup.py install
-
-Additional, you can install the command line interface scripts that can be
-used to test the SDK capabilities.
-
-if [ -d sipclients ]; then
-    cd sipclients
-    darcs pull -a
-else
-    darcs get --set-scripts-executable http://devel.ag-projects.com/repositories/sipclients
-    cd sipclients
-fi
-python setup.py install
-cd ..
-
+See Install.linux document
