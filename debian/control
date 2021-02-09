@@ -2,7 +2,7 @@ Source: python-sipsimple
 Section: python
 Priority: optional
 Maintainer: Adrian Georgescu <ag@ag-projects.com>
-Uploaders: Tijmne de Mes <tijmen@ag-projects.com>
+Uploaders: Tijmen de Mes <tijmen@ag-projects.com>
 Build-Depends: debhelper (>= 11), python3,
                dh-python,
                python3-all-dev,
@@ -20,7 +20,7 @@ Build-Depends: debhelper (>= 11), python3,
                pkg-config,
                uuid-dev
 Standards-Version: 4.5.0
-Homepage: http://sipsimpleclient.org
+Homepage: https://sipsimpleclient.org
 
 Package: python3-sipsimple
 Architecture: any
@@ -37,9 +37,7 @@ Depends: ${python3:Depends}, ${shlibs:Depends}, ${misc:Depends},
          python3-xcaplib
 Suggests: libavahi-compat-libdnssd1
 Provides: ${python3:Provides}
-Description: Python SDK for development of SIP end-points
- SIP SIMPLE client SDK is a Software Development Kit for easy development of
- SIP end-points that support rich media like Audio, Video, Instant Messaging,
- File Transfers, Desktop Sharing and Presence. Other media types can be added
- by using an extensible high-level API.
-
+Description: SIP SIMPLE SDK is a Software Development Kit for easy
+ development of SIP clients and servers that support rich media like Audio,
+ Video, Instant Messaging, File Transfers, Desktop Sharing and Presence. 
+ Other media types can be easily added by using an extensible high-level API.
