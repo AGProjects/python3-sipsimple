@@ -65,7 +65,7 @@ class Route(object):
         port = None if self._default_ports[self.transport] == self.port else self.port
         parameters = {} if self.transport == 'udp' else {'transport': self.transport.encode()}
         if self.transport == 'tls':
-            parameters['tls_name'] = self.tls_name.encode()
+            parameters['tls_name'] = self.tls_name.encode() if self.tls_name else None
         return SIPURI(host=self.address, port=port, parameters=parameters)
 
     def __repr__(self):
