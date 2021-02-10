@@ -256,7 +256,7 @@ class RTPStreamEncryption(object):
         self.zrtp.__dict__['sas'] = sas = notification.data.sas
         self.zrtp.__dict__['verified'] = verified = notification.data.verified
         self.zrtp.__dict__['peer_name'] = peer_name = notification.sender.zrtp_peer_name
-        notification.center.post_notification('RTPStreamZRTPReceivedSAS', sender=stream, data=NotificationData(sas=sas, verified=verified, peer_name=peer_name))
+        notification.center.post_notification('RTPStreamZRTPReceivedSAS', sender=stream, data=NotificationData(sas=sas.decode(), verified=verified, peer_name=peer_name))
 
     def _NH_RTPTransportZRTPLog(self, notification):
         stream = self._stream

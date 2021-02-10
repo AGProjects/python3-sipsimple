@@ -2355,7 +2355,7 @@ cdef void _RTPTransport_cb_zrtp_show_sas(pjmedia_transport *tp, char* sas, int v
        rtp_transport = _extract_rtp_transport(tp)
        if rtp_transport is None:
            return
-       _add_event("RTPTransportZRTPReceivedSAS", dict(obj=rtp_transport, sas=str(sas), verified=bool(verified)))
+       _add_event("RTPTransportZRTPReceivedSAS", dict(obj=rtp_transport, sas=bytes(sas), verified=bool(verified)))
    except:
        ua._handle_exception(1)
 
