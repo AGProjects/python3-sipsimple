@@ -451,11 +451,15 @@ class DNSLookup(object):
 class DNSManager(object, metaclass=Singleton):
 
     def __init__(self):
-        default_resolver = InternalResolver()
+        try:
+            default_resolver = InternalResolver()
+        except dns.resolver.NoResolverConfiguration:
+            default_resolver = Null
+            
         self.search = default_resolver.search
         self.domain = default_resolver.domain
-        self.nameservers = default_resolver.nameservers
         self.google_nameservers = ['8.8.8.8', '8.8.4.4']
+        self.nameservers = default_resolver.nameservers or []
         self.probed_domain = 'sip2sip.info.'
         self._channel = coros.queue()
         self._proc = None
@@ -506,7 +510,13 @@ class DNSManager(object, metaclass=Singleton):
         if self._timer is not None and self._timer.active():
             self._timer.cancel()
         self._timer = None
-        resolver = InternalResolver()
+
+        try:
+            resolver = InternalResolver()
+        except dns.resolver.NoResolverConfiguration as e:
+            self._timer = reactor.callLater(15, self._channel.send, Command('probe_dns'))
+            return
+        
         self.domain = resolver.domain
         self.search = resolver.search
         local_nameservers = resolver.nameservers
