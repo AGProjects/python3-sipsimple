@@ -368,9 +368,9 @@ class DNSLookup(object):
             else:
                 notification_center.post_notification('DNSLookupTrace', sender=self, data=NotificationData(query_type='TXT', query_name=str(record_name), nameservers=resolver.nameservers, answer=answer, error=None, **log_context))
                 for result_uri in list(chain(*(r.strings for r in answer.rrset))):
-                    parsed_uri = urlparse(result_uri)
+                    parsed_uri = urlparse(result_uri.decode())
                     if parsed_uri.scheme in ('http', 'https') and parsed_uri.netloc:
-                        results.append(result_uri)
+                        results.append(result_uri.decode())
             if not results:
                 raise DNSLookupError('No XCAP servers found for domain %s' % uri.host.decode())
             return results
