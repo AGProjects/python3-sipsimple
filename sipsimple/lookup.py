@@ -270,7 +270,7 @@ class DNSLookup(object):
 
             # If the port is specified in the URI, we will only do an A lookup
             if uri.port:
-                transport = 'tls' if uri.secure else uri.transport.decode().lower()
+                transport = 'tls' if uri.secure else uri.transport.lower()
                 if transport not in supported_transports:
                     raise DNSLookupError("Host transport %s dictated by URI is not supported" % transport)
                 addresses = self._lookup_a_records(resolver, [uri.host.decode()], log_context=log_context)
