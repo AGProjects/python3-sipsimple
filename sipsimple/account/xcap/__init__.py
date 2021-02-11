@@ -804,12 +804,18 @@ class XCAPManager(object):
             self.command_channel.send(Command('update'))
 
     def add_contact(self, contact):
+        notification_center = NotificationCenter()
+        notification_center.post_notification('XCAPManagerDidAddContact', sender=self, data=NotificationData(contact=contact))
         self._schedule_operation(AddContactOperation(contact=contact))
 
     def update_contact(self, contact, attributes):
+        notification_center = NotificationCenter()
+        notification_center.post_notification('XCAPManagerDidUpdateContact', sender=self, data=NotificationData(contact=contact))
         self._schedule_operation(UpdateContactOperation(contact=contact, attributes=attributes))
 
     def remove_contact(self, contact):
+        notification_center = NotificationCenter()
+        notification_center.post_notification('XCAPManagerDidRemoveContact', sender=self, data=NotificationData(contact=contact))
         self._schedule_operation(RemoveContactOperation(contact=contact))
 
     def add_contact_uri(self, contact, uri):
@@ -822,18 +828,27 @@ class XCAPManager(object):
         self._schedule_operation(RemoveContactURIOperation(contact=contact, uri=uri))
 
     def add_group(self, group):
+        notification_center = NotificationCenter()
+        notification_center.post_notification('XCAPManagerDidAddGroup', sender=self, data=NotificationData(group=group))
         self._schedule_operation(AddGroupOperation(group=group))
 
     def update_group(self, group, attributes):
+        notification_center = NotificationCenter()
+        notification_center.post_notification('XCAPManagerDidUpdateGroup', sender=self, data=NotificationData(group=group))
         self._schedule_operation(UpdateGroupOperation(group=group, attributes=attributes))
 
     def remove_group(self, group):
+        notification_center = NotificationCenter()
+        notification_center.post_notification('XCAPManagerDidRemoveGroup', sender=self, data=NotificationData(group=group))
         self._schedule_operation(RemoveGroupOperation(group=group))
 
     def add_group_member(self, group, contact):
+        notification_center = NotificationCenter()
+        notification_center.post_notification('XCAPManageDidAddGroupMember', sender=self, data=NotificationData(group=group, contact=contact))
         self._schedule_operation(AddGroupMemberOperation(group=group, contact=contact))
 
     def remove_group_member(self, group, contact):
+        notification_center.post_notification('XCAPManageDidRemoveGroupMember', sender=self, data=NotificationData(group=group, contact=contact))
         self._schedule_operation(RemoveGroupMemberOperation(group=group, contact=contact))
 
     def add_policy(self, policy):
@@ -925,25 +940,35 @@ class XCAPManager(object):
         raise proc.ProcExit
 
     def _CH_initialize(self, command):
+        notification_center = NotificationCenter()
+        notification_center.post_notification('XCAPManagerClientWillInitialize', sender=self, data=NotificationData(root=self.account.xcap.xcap_root))
         self.state = 'initializing'
         if self.timer is not None and self.timer.active():
             self.timer.cancel()
         self.timer = None
+        
+        xcap_root = self.account.xcap.xcap_root
+
         if self.account.xcap.xcap_root:
             self.client = XCAPClient(self.account.xcap.xcap_root, self.account.id, password=self.account.auth.password)
         else:
             try:
                 lookup = DNSLookup()
                 xcap_root = random.choice(lookup.lookup_xcap_server(self.account.uri).wait())
-            except DNSLookupError:
+            except DNSLookupError as e:
+                notification_center.post_notification('XCAPManagerClientDidNotInitialize', sender=self, data=NotificationData(error=str(e)))
                 self.timer = self._schedule_command(60,  Command('initialize', command.event))
                 return
             else:
                 self.client = XCAPClient(xcap_root, self.account.id, password=self.account.auth.password)
+                print(self.client)
+
+        notification_center.post_notification('XCAPManagerClientDidInitialize', sender=self, data=NotificationData(client=self.client, root=xcap_root))
 
         try:
             self.server_caps.fetch()
-        except XCAPError:
+        except XCAPError as e:
+            notification_center.post_notification('XCAPManagerClientError', sender=self, data=NotificationData(client=self.client, context='xcap-caps', error=str(e)))
             self.timer = self._schedule_command(60,  Command('initialize', command.event))
             return
         else:
@@ -955,11 +980,11 @@ class XCAPManager(object):
                 # Server must support at least resource-lists, rls-services and org.openmobilealliance.pres-rules
                 self.timer = self._schedule_command(3600,  Command('initialize', command.event))
                 return
+
         self.server_caps.initialize()
         for document in self.documents:
             document.initialize(self.server_caps.content)
 
-        notification_center = NotificationCenter()
         notification_center.post_notification('XCAPManagerDidDiscoverServerCapabilities', sender=self, data=NotificationData(auids=self.server_caps.content.auids))
 
         self.state = 'fetching'
