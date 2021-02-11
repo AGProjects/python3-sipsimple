@@ -797,15 +797,18 @@ class Contact(SettingsState):
 
             contact_attributes = self.__xcapcontact__.get_modified(modified_settings)
 
+            added_uris = []
+            removed_uris = []
+            xcap_uri_map = {}
+            modified_uris = {}
+
             if 'uris' in modified_settings:
                 xcap_uris = self.__xcapcontact__.uris
                 added_uris = [xcap_uris[uri.id] for uri in modified_settings['uris'].added]
                 removed_uris = [uri.__toxcap__() for uri in modified_settings['uris'].removed]
-                modified_uris = dict((xcap_uris[id], xcap_uris[id].get_modified(changemap)) for id, changemap in list(modified_settings['uris'].modified.items()))
-            else:
-                added_uris = []
-                removed_uris = []
-                modified_uris = {}
+                for id, changemap in list(modified_settings['uris'].modified.items()):
+                    modified_uris[xcap_uris[id].id] = xcap_uris[id].get_modified(changemap)
+                    xcap_uri_map[xcap_uris[id].id] = xcap_uris[id]
 
             if self.__xcapcontact__ != previous_xcapcontact:
                 outofsync_accounts = xcap_accounts
@@ -821,8 +824,8 @@ class Contact(SettingsState):
                         xcap_manager.add_contact_uri(self.__xcapcontact__, xcapuri)
                     for xcapuri in removed_uris:
                         xcap_manager.remove_contact_uri(self.__xcapcontact__, xcapuri)
-                    for xcapuri, uri_attributes in list(modified_uris.items()):
-                        xcap_manager.update_contact_uri(self.__xcapcontact__, xcapuri, uri_attributes)
+                    for xcapuri_id, uri_attributes in list(modified_uris.items()):
+                        xcap_manager.update_contact_uri(self.__xcapcontact__, xcap_uri_map[xcapuri_id], uri_attributes)
                     if contact_attributes:
                         xcap_manager.update_contact(self.__xcapcontact__, contact_attributes)
 
