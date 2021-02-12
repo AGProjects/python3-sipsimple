@@ -261,27 +261,6 @@ class Account(SettingsObject):
             return False
 
     @property
-    def tls_certificate(self):
-        settings = SIPSimpleSettings()
-        tls_certificate = self.tls.certificate or settings.tls.certificate
-        certificate = None
-        if tls_certificate is not None:
-            certificate_data = open(tls_certificate.normalized).read()
-            certificate = X509Certificate(certificate_data)
-        data = {'path': tls_certificate, 'object': certificate}
-        return data
-
-    @property
-    def ca_list(self):
-        settings = SIPSimpleSettings()
-        ca_list = self.tls.ca_list or settings.tls.ca_list
-        ca = None
-        if ca_list is not None:
-            ca = [X509Certificate(open(ca_list.normalized).read())]
-        data = {'path': ca_list, 'object': ca}
-        return data
-
-    @property
     def tls_credentials(self):
         # This property can be optimized to cache the credentials it loads from disk,
         # however this is not a time consuming operation (~ 3000 req/sec). -Luci
@@ -676,27 +655,6 @@ class BonjourAccount(SettingsObject):
         return False
 
     @property
-    def tls_certificate(self):
-        settings = SIPSimpleSettings()
-        tls_certificate = self.tls.certificate or settings.tls.certificate
-        certificate = None
-        if tls_certificate is not None:
-            certificate_data = open(tls_certificate.normalized).read()
-            certificate = X509Certificate(certificate_data)
-        data = {'path': tls_certificate, 'object': certificate}
-        return data
-
-    @property
-    def ca_list(self):
-        settings = SIPSimpleSettings()
-        ca_list = self.tls.ca_list or settings.tls.ca_list
-        ca = None
-        if ca_list is not None:
-            ca = [X509Certificate(open(ca_list.normalized).read())]
-        data = {'path': ca_list, 'object': ca}
-        return data
-
-    @property
     def tls_credentials(self):
         # This property can be optimized to cache the credentials it loads from disk,
         # however this is not a time consuming operation (~ 3000 req/sec). -Luci
@@ -710,14 +668,8 @@ class BonjourAccount(SettingsObject):
             certificate = None
             private_key = None
 
-        ca_list  = self.tls.ca_list or settings.tls.ca_list
-        if ca_list is not None:
-            # we should read all certificates in the file, rather than just the first -Luci
-            trusted = [X509Certificate(open(ca_list.normalized).read())]
-        else:
-            trusted = []
-        credentials = X509Credentials(certificate, private_key, trusted)
-        credentials.verify_peer = self.tls.verify_server or settings.tls.certificate
+        credentials = X509Credentials(certificate, private_key, [])
+        credentials.verify_peer = False
         return credentials
 
     @property
