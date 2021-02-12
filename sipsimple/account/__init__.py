@@ -167,6 +167,7 @@ class Account(SettingsObject):
         self._dwi_version = None
         self._presence_version = None
         self._dialog_version = None
+        self.trusted_cas = []
 
     def start(self):
         if self._started or self._deleted:
@@ -284,8 +285,10 @@ class Account(SettingsObject):
     def tls_credentials(self):
         # This property can be optimized to cache the credentials it loads from disk,
         # however this is not a time consuming operation (~ 3000 req/sec). -Luci
+
         settings = SIPSimpleSettings()
         tls_certificate  = self.tls.certificate or settings.tls.certificate
+
         if tls_certificate is not None:
             certificate_data = open(tls_certificate.normalized).read()
             certificate = X509Certificate(certificate_data)
@@ -294,13 +297,36 @@ class Account(SettingsObject):
             certificate = None
             private_key = None
 
+        trusted_cas = []
         ca_list  = self.tls.ca_list or settings.tls.ca_list
+
         if ca_list is not None:
-            # we should read all certificates in the file, rather than just the first -Luci
-            trusted = [X509Certificate(open(ca_list.normalized).read())]
-        else:
-            trusted = []
-        credentials = X509Credentials(certificate, private_key, trusted)
+            if len(self.trusted_cas) > 0:
+                trusted_cas = self.trusted_cas
+            else:
+                crt = None
+                start = False
+                ca_text = open(ca_list.normalized).read()
+            
+                for line in ca_text.split("\n"):
+                   if "BEGIN CERT" in line:
+                      start = True
+                      crt = line + "\n"
+                   elif "END CERT" in line:
+                      crt = crt + line + "\n"
+                      end = True
+                      start = False
+                      try:
+                          trusted_cas.append(X509Certificate(crt))
+                      except GNUTLSError as e:
+                          continue
+      
+                   elif start:
+                      crt = crt + line + "\n"
+
+                self.trusted_cas = trusted_cas
+
+        credentials = X509Credentials(certificate, private_key, trusted_cas)
         credentials.verify_peer = self.tls.verify_server or settings.tls.certificate
         return credentials
 
