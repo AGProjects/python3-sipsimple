@@ -42,7 +42,7 @@ class FileStorage(object):
         try:
             makedirs(os.path.join(self.directory, self.account_id))
             file = openfile(tmp_filename, 'wb', permissions=0o600)
-            file.write(data)
+            file.write(data if isinstance(data, bytes) else data.encode())
             file.close()
             if platform.system() == 'Windows':
                 # os.rename does not work on Windows if the destination file already exists.

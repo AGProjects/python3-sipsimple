@@ -40,6 +40,7 @@ from sipsimple.threading import run_in_twisted_thread
 from sipsimple.threading.green import Command, Worker, run_in_green_thread
 from sipsimple.util import execute_once
 
+import traceback
 
 class XCAPError(Exception): pass
 class FetchRequiredError(XCAPError): pass
@@ -135,14 +136,16 @@ class Document(object):
             self.fetch_time = datetime.utcnow()
             if self.cached:
                 try:
-                    self.manager.storage.save(self.name, self.etag + os.linesep + document)
+                    self.manager.storage.save(self.name, self.etag + os.linesep + document.decode() if isinstance(document, bytes) else document)
                 except XCAPStorageError:
                     pass
 
     def update(self):
         if not self.dirty:
             return
+
         data = self.content.toxml() if self.content is not None else None
+        #print('XCAP document %s will be updated' % self.name)
         try:
             kw = dict(etag=self.etag) if self.etag is not None else dict(etagnot='*')
             if data is not None:
@@ -159,12 +162,15 @@ class Document(object):
             else:
                 raise XCAPError("failed to update %s document: %s" % (self.name, e))
         self.etag = response.etag if data is not None else None
+
+        #print('Updated %s to etag %s' % (self.name, response.etag))
+
         self.dirty = False
         self.update_time = datetime.utcnow()
         if self.cached:
             try:
                 if data is not None:
-                    self.manager.storage.save(self.name, self.etag + os.linesep + data)
+                    self.manager.storage.save(self.name, self.etag + os.linesep + data.decode() if isinstance(data, bytes) else data)
                 else:
                     self.manager.storage.delete(self.name)
             except XCAPStorageError:
@@ -556,8 +562,9 @@ class Icon(object):
     @classmethod
     def from_payload(cls, payload):
         try:
-            data = base64.decodestring(payload.data.value)
-        except Exception:
+            base64_bytes = payload.data.value.encode('ascii')
+            data = base64.b64decode(base64_bytes)
+        except Exception as e:
             return None
         else:
             description = payload.description.value if payload.description else None
@@ -848,6 +855,7 @@ class XCAPManager(object):
         self._schedule_operation(AddGroupMemberOperation(group=group, contact=contact))
 
     def remove_group_member(self, group, contact):
+        notification_center = NotificationCenter()
         notification_center.post_notification('XCAPManageDidRemoveGroupMember', sender=self, data=NotificationData(group=group, contact=contact))
         self._schedule_operation(RemoveGroupMemberOperation(group=group, contact=contact))
 
@@ -961,7 +969,6 @@ class XCAPManager(object):
                 return
             else:
                 self.client = XCAPClient(xcap_root, self.account.id, password=self.account.auth.password)
-                print(self.client)
 
         notification_center.post_notification('XCAPManagerClientDidInitialize', sender=self, data=NotificationData(client=self.client, root=xcap_root))
 
@@ -1640,7 +1647,9 @@ class XCAPManager(object):
             self.status_icon.dirty = self.status_icon.content is not None
             self.status_icon.content = None
         else:
-            content = prescontent.PresenceContent(data=base64.encodestring(icon.data), mime_type=icon.mime_type, encoding='base64', description=icon.description)
+            icon_bytes = icon.data
+            data = base64.b64encode(icon_bytes).decode('utf-8')
+            content = prescontent.PresenceContent(data=data, mime_type=icon.mime_type, encoding='base64', description=icon.description)
             if self.status_icon.content == content:
                 return
             self.status_icon.content = content
@@ -1742,8 +1751,9 @@ class XCAPManager(object):
 
         if self.status_icon.supported and self.status_icon.content:
             status_icon = Icon.from_payload(self.status_icon.content)
-            status_icon.url = self.status_icon.url
-            status_icon.etag = self.status_icon.etag
+            if status_icon:
+                status_icon.url = self.status_icon.url
+                status_icon.etag = self.status_icon.etag
         else:
             status_icon = None
 
