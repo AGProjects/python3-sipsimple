@@ -23,6 +23,7 @@ from sipsimple.configuration.settings import SIPSimpleSettings
 from sipsimple.core import SDPAttribute, SDPConnection, SDPMediaStream
 from sipsimple.streams import IMediaStream, MediaStreamType, StreamError
 from sipsimple.threading.green import run_in_green_thread
+from gnutls.errors import CertificateError, CertificateAuthorityError, CertificateExpiredError, CertificateSecurityError, CertificateRevokedError
 
 
 class MSRPStreamError(StreamError):
@@ -162,8 +163,9 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
                         self.local_role = 'actpass' if outgoing else 'passive'
             full_local_path = self.msrp_connector.prepare(local_uri=URI(host=host.default_ip, port=0, use_tls=self.transport=='tls', credentials=self.session.account.tls_credentials))
             self.local_media = self._create_local_media(full_local_path)
+        except (CertificateError, CertificateAuthorityError, CertificateExpiredError, CertificateSecurityError, CertificateRevokedError) as e:
+            notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason=e))
         except Exception as e:
-            traceback.print_exc()
             notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason=str(e)))
         else:
             notification_center.post_notification('MediaStreamDidInitialize', sender=self)
