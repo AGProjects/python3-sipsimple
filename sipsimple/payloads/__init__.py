@@ -61,6 +61,8 @@ from sipsimple.payloads.datatypes import Boolean, Byte, UnsignedByte, Short, Uns
 from sipsimple.payloads.datatypes import PositiveInteger, NegativeInteger, NonNegativeInteger, NonPositiveInteger, DateTime, AnyURI
 from sipsimple.util import All
 
+from xcaplib.client import Document
+
 
 ## Exceptions
 
@@ -143,14 +145,27 @@ class XMLDocument(object, metaclass=XMLDocumentType):
     @classmethod
     def parse(cls, document):
         try:
-            if isinstance(document, bytes):
+        
+            if isinstance(document, Document):
+                xml = etree.XML(document.encode(), parser=cls.parser)
+        
+            elif isinstance(document, str):
+                print('------------We have string')
                 xml = etree.XML(document, parser=cls.parser)
+            elif isinstance(document, bytes):
+                print('------------We have bytes')
+                xml = etree.XML(document.decode('utf-8'), parser=cls.parser)
             else:
                 xml = etree.parse(document, parser=cls.parser).getroot()
+                
+            print('%s XML was parsed' % type(document))
+
             if cls.schema is not None:
                 cls.schema.assertValid(xml)
+
             return cls.root_element.from_element(xml, xml_document=cls)
         except (etree.DocumentInvalid, etree.XMLSyntaxError, ValueError) as e:
+            print('%s XML was not parsed' % type(document))
             raise ParserError(str(e))
 
     @classmethod
