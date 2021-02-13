@@ -202,7 +202,8 @@ class ResourceLists(XMLListRootElement):
     def get_xpath(self, element):
         if not isinstance(element, (List, Entry, EntryRef, External, ResourceLists)):
             raise ValueError('can only find xpath for List, Entry, EntryRef or External elements')
-        nsmap = dict((namespace, prefix) for prefix, namespace in list(self._xml_document.nsmap.items()))
+
+        nsmap = dict((namespace, prefix) for prefix, namespace in self._xml_document.nsmap.items())
         nsmap[self._xml_namespace] = None
         xpath_nsmap = {}
         root_xpath = '/' + self._xml_tag
