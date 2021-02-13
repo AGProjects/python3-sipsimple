@@ -16,6 +16,7 @@ from application.python.types import Singleton
 from application.system import host as Host
 from eventlib import coros, proc
 from gnutls.crypto import X509Certificate, X509PrivateKey
+from gnutls.errors import GNUTLSError
 from gnutls.interfaces.twisted import X509Credentials
 from zope.interface import implementer
 
@@ -168,6 +169,7 @@ class Account(SettingsObject):
         self._presence_version = None
         self._dialog_version = None
         self.trusted_cas = []
+        self.ca_list = None
 
     def start(self):
         if self._started or self._deleted:
@@ -268,14 +270,17 @@ class Account(SettingsObject):
         settings = SIPSimpleSettings()
         tls_certificate  = self.tls.certificate or settings.tls.certificate
 
-        if tls_certificate is not None:
-            certificate_data = open(tls_certificate.normalized).read()
-            certificate = X509Certificate(certificate_data)
-            private_key = X509PrivateKey(certificate_data)
-        else:
-            certificate = None
-            private_key = None
+        certificate = None
+        private_key = None
 
+        if tls_certificate is not None:
+            try:
+                certificate_data = open(tls_certificate.normalized).read()
+                certificate = X509Certificate(certificate_data)
+                private_key = X509PrivateKey(certificate_data)
+            except (FileNotFoundError, GNUTLSError, UnicodeDecodeError):
+                pass
+                
         trusted_cas = []
         ca_list  = self.tls.ca_list or settings.tls.ca_list
 
@@ -285,7 +290,10 @@ class Account(SettingsObject):
             else:
                 crt = None
                 start = False
-                ca_text = open(ca_list.normalized).read()
+                try:
+                    ca_text = open(ca_list.normalized).read()
+                except (FileNotFoundError, GNUTLSError, UnicodeDecodeError):
+                    ca_text = ''
             
                 for line in ca_text.split("\n"):
                    if "BEGIN CERT" in line:
@@ -297,13 +305,14 @@ class Account(SettingsObject):
                       start = False
                       try:
                           trusted_cas.append(X509Certificate(crt))
-                      except GNUTLSError as e:
+                      except (GNUTLSError, ValueError) as e:
                           continue
       
                    elif start:
                       crt = crt + line + "\n"
 
                 self.trusted_cas = trusted_cas
+                self.ca_list = ca_list
 
         credentials = X509Credentials(certificate, private_key, trusted_cas)
         credentials.verify_peer = self.tls.verify_server or settings.tls.certificate
