@@ -38,13 +38,13 @@ cdef class Referral:
         from_header_parameters = from_header.parameters.copy()
         from_header_parameters.pop("tag", None)
         from_header.parameters = {}
-        from_header_str = PJSTR(from_header.body)
+        from_header_str = PJSTR(from_header.body.encode())
         to_header_parameters = to_header.parameters.copy()
         to_header_parameters.pop("tag", None)
         to_header.parameters = {}
-        to_header_str = PJSTR(to_header.body)
-        contact_str = PJSTR(str(contact_header.body))
-        request_uri_str = PJSTR(str(request_uri))
+        to_header_str = PJSTR(to_header.body.encode())
+        contact_str = PJSTR(str(contact_header.body).encode())
+        request_uri_str = PJSTR(str(request_uri).encode())
         with nogil:
             status = pjsip_dlg_create_uac(pjsip_ua_instance(), &from_header_str.pj_str, &contact_str.pj_str,
                                           &to_header_str.pj_str, &request_uri_str.pj_str, &self._dlg)
@@ -243,7 +243,7 @@ cdef class Referral:
         if not self._create_subscription:
             _add_headers_to_tdata(tdata, [Header('Refer-Sub', 'false')])
         # We can't remove the Event header or PJSIP will fail to match responses to this request
-        _remove_headers_from_tdata(tdata, ["Expires"])
+        _remove_headers_from_tdata(tdata, [b"Expires"])
         with nogil:
             status = pjsip_evsub_send_request(self._obj, tdata)
         if status != 0:
@@ -871,7 +871,7 @@ cdef void _Referral_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event
                 else:
                     referral.peer_address.ip = rdata.pkt_info.src_name
                     referral.peer_address.port = rdata.pkt_info.src_port
-            referral._cb_got_response(ua, rdata, _pj_str_to_bytes(event.body.tsx_state.tsx.method.name))
+            referral._cb_got_response(ua, rdata, _pj_str_to_str(event.body.tsx_state.tsx.method.name))
     except:
         ua._handle_exception(1)
 

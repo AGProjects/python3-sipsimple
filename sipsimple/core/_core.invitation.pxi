@@ -646,7 +646,7 @@ cdef class Invitation:
             _add_headers_to_tdata(tdata, [refer_to_header, Header('Referred-By', str(self.local_identity.uri))])
             _add_headers_to_tdata(tdata, extra_headers)
             # We can't remove the Event header or PJSIP will fail to match responses to this request
-            _remove_headers_from_tdata(tdata, ["Expires"])
+            _remove_headers_from_tdata(tdata, [b"Expires"])
             with nogil:
                 status = pjsip_evsub_send_request(self._transfer_usage, tdata)
             if status != 0:
@@ -1278,7 +1278,7 @@ cdef class Invitation:
             raise PJSIPError("failed to acquire lock", status)
         try:
             prev_state = self.transfer_state
-            self._set_transfer_state(timer.state)
+            self._set_transfer_state(timer.state.decode() if isinstance(timer.state, bytes) else timer.state)
             if timer.state == "ACCEPTED" and prev_state == "SENT":
                 _add_event("SIPInvitationTransferDidStart", dict(obj=self))
             elif timer.state == "TERMINATED":
