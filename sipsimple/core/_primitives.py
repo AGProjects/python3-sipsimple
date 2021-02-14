@@ -147,7 +147,7 @@ class Registration(object):
 class Message(object):
 
     def __init__(self, from_header, to_header, route_header, content_type, body, credentials=None, extra_headers=None):
-        self._request = Request("MESSAGE", to_header.uri, from_header, to_header, route_header, credentials=credentials, extra_headers=extra_headers, content_type=content_type, body=body.encode())
+        self._request = Request("MESSAGE", to_header.uri, from_header, to_header, route_header, credentials=credentials, extra_headers=extra_headers, content_type=content_type, body=body if isinstance(body, bytes) else body.encode())
         self._lock = RLock()
 
     from_header = property(lambda self: self._request.from_header)
