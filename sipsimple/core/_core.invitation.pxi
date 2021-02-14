@@ -1700,7 +1700,7 @@ cdef void _Invitation_transfer_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, 
                 rdata_dict = dict()
                 _pjsip_msg_to_dict(rdata.msg_info.msg, rdata_dict)
                 try:
-                    timer = TransferResponseCallbackTimer(_pj_str_to_bytes(event.body.tsx_state.tsx.method.name), rdata_dict)
+                    timer = TransferResponseCallbackTimer(_pj_str_to_str(event.body.tsx_state.tsx.method.name), rdata_dict)
                     timer.schedule(0, <timer_callback>invitation._transfer_cb_response, invitation)
                 except:
                     invitation._fail(ua)

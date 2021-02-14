@@ -42,7 +42,7 @@ cdef class BaseSDPSession:
         cdef int buf_len
         buf_len = pjmedia_sdp_print(self.get_sdp_session(), cbuf, sizeof(cbuf))
         if buf_len > -1:
-            return _pj_buf_len_to_str(cbuf, buf_len)
+            return _pj_buf_len_to_str(cbuf, buf_len).decode()
         return ''
 
     def __richcmp__(self, other, op):
