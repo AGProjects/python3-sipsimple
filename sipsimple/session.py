@@ -487,15 +487,16 @@ class ConferenceHandler(object):
                     notification_center.add_observer(self, sender=subscription)
                     try:
                         subscription.subscribe(timeout=limit(remaining_time, min=1, max=5))
-                    except SIPCoreError:
+                    except SIPCoreError as e:
                         notification_center.remove_observer(self, sender=subscription)
                         timeout = 5
-                        raise SubscriptionError(error='Internal error', timeout=timeout)
+                        raise SubscriptionError(error='Internal error %s' % str(e), timeout=timeout)
                     self._subscription = subscription
+
                     try:
                         while True:
                             notification = self._data_channel.wait()
-                            if notification.sender is subscription and notification.name == 'SIPSubscriptionDidStart':
+                            if notification.sender is subscription:
                                 break
                     except SIPSubscriptionDidFail as e:
                         notification_center.remove_observer(self, sender=subscription)
