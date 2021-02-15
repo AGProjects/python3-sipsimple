@@ -12,9 +12,8 @@ Linux operating systems.
 Step 1. Prerequisites
 ---------------------
 
-Both i386 or amd64 architectures are supported. Install the C compiling
-environment, Python 3 and the development version for the following
-packages:
+Install the C compiling environment, Python 3 and the development version
+for the following packages:
 
  * openssl
  * ffmpeg
@@ -63,7 +62,7 @@ http://download.ag-projects.com/SipSimpleSDK/Python3/
 
 Install these packages by going into each directory.
 
-Using pip inside your virtual environment:
+Using pip3 inside your user environment:
 
 pip3 install --user .
 
@@ -86,7 +85,7 @@ Step 4. Install the SDK
 The SDK consists of two packages:
 
  - python3-sipsimple
- - sipclients3
+ - sipclients3 (for testing all SDK functions)
 
 Install them similar to the dependencies above.
 

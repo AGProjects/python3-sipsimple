@@ -17,25 +17,26 @@ Packages available from AG Projects:
 
 Packages available within the OS distribution:
  
- * python                   http://python.org >= 3.6.5
+ * python3                  http://python.org >= 3.6.5
  * python3-lxml             http://pypi.org/project/lxml/
  * python3-greenlet         http://pypi.python.org/pypi/greenlet 
  * cython                   http://www.cython.org
  * dnspython                http://www.dnspython.org
  * twisted                  http://twistedmatrix.com
- * zope-interface           http://www.zope.org      
+ * zope-interface           http://www.zope.org
+ * openssl
 
 
 Other libraries (C):
 
  * ffmpeg (libavformat, libswscale, libavcodec, libavutil)
- * libx264 (recent snapshot)
- * libvpx (>= 1.3.0)
+ * libx264
+ * libvpx
  * libasound2
  * libuuid
  * libsqlite3
  * pkg-config
- * openssl
+
 
 To compile the video dependencies (ffmpeg / libx264 / libvpx):
 
