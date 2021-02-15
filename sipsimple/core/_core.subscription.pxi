@@ -323,7 +323,8 @@ cdef class Subscription:
         body = event_dict["body"]
         content_type = event_dict["headers"].get("Content-Type", None)
         event = event_dict["headers"].get("Event", None)
-        if event is None or event.event != self.event or (body is not None and content_type is not None and content_type.content_type not in ua.events[event.event]):
+
+        if event is None or event.event != self.event.decode() or (body is not None and content_type is not None and content_type.content_type.encode() not in ua.events[event.event.encode()]):
             return 0
         notify_dict["request_uri"] = event_dict["request_uri"]
         notify_dict["from_header"] = event_dict["headers"].get("From", None)
