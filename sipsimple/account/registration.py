@@ -274,6 +274,10 @@ class Registrar(object):
     def _NH_SIPRegistrationDidFail(self, notification):
         if notification.sender is self._registration:
             self._data_channel.send_exception(SIPRegistrationDidFail(notification.data))
+            if self.active and notification.data.code:
+                if notification.data.code == 408 or notification.data.code >= 500:
+                    self._command_channel.send(Command('register'))
+
 
     def _NH_SIPRegistrationDidEnd(self, notification):
         if notification.sender is self._registration:
