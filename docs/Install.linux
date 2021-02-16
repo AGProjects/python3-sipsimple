@@ -85,7 +85,7 @@ Step 4. Install the SDK
 The SDK consists of two packages:
 
  - python3-sipsimple
- - sipclients3 (for testing all SDK functions)
+ - sipclients3 (optional, for testing all SDK functions)
 
 Install them similar to the dependencies above.
 
@@ -93,6 +93,6 @@ Install them similar to the dependencies above.
 Step 5. Testing the SDK
 -----------------------
 
-Use the command line tools provided by sipclients3 package, the binaries
+Use the command line tools provided by sipclients3 package, the executables
 start with sip- prefix
 

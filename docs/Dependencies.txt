@@ -4,54 +4,18 @@ SIP SIMPLE client SDK dependencies
 
 Home page: http://sipsimpleclient.org
 
+Python packages available from AG Projects:
 
-Packages available from AG Projects:
-
- * python3-application      http://pypi.python.org/simple/python-application
+ * python3-application      http://download.ag-projects.com/SipSimpleSDK/Python3/ 
  * python3-eventlib         http://download.ag-projects.com/SipSimpleSDK/Python3/ 
  * python3-gnutls           http://download.ag-projects.com/SipSimpleSDK/Python3/
  * python3-otr              http://download.ag-projects.com/SipSimpleSDK/Python3/
  * python3-msrplib          http://download.ag-projects.com/SipSimpleSDK/Python3/
  * python3-xcaplib          http://download.ag-projects.com/SipSimpleSDK/Python3/
 
+The dependencies for each package can be found inside debian/control file
 
-Packages available within the OS distribution:
- 
- * python3                  http://python.org >= 3.6.5
- * python3-lxml             http://pypi.org/project/lxml/
- * python3-greenlet         http://pypi.python.org/pypi/greenlet 
- * cython                   http://www.cython.org
- * dnspython                http://www.dnspython.org
- * twisted                  http://twistedmatrix.com
- * zope-interface           http://www.zope.org
- * openssl
+On a Debian or Ubuntu based system you can install their dependencies using:
 
-
-Other libraries (C):
-
- * ffmpeg (libavformat, libswscale, libavcodec, libavutil)
- * libx264
- * libvpx
- * libasound2
- * libuuid
- * libsqlite3
- * pkg-config
-
-
-To compile the video dependencies (ffmpeg / libx264 / libvpx):
-
-export SIPSIMPLE_FFMPEG_PATH=$HOME/work/ag-projects/video/local
-
-NOTE: yasm is required in order to enable asm optimizations. It does not
-come preinstalled on OSX, so it has to be manually installed. (brew install
-yasm will do)
-
-NOTE: libx264 and libvpx can be installed also using Homebrew on OSX.
-
-
-For ffmpeg:
-
-./configure --enable-shared --disable-static --enable-memalign-hack --enable-gpl --enable-libx264 --disable-avdevice --disable-swresample --disable-postproc --prefix=$SIPSIMPLE_FFMPEG_PATH
-make
-make install
+sudo mk-build-deps --install debian/control
 
