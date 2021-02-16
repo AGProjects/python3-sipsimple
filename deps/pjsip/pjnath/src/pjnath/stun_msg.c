@@ -1,4 +1,4 @@
-/* $Id: stun_msg.c 3553 2011-05-05 06:14:19Z nanang $ */
+/* $Id: stun_msg.c 4895 2014-08-20 10:35:29Z bennylp $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

@@ -1,4 +1,4 @@
-/* $Id: evsub_msg.c 3841 2011-10-24 09:28:13Z ming $ */
+/* $Id: evsub_msg.c 4537 2013-06-19 06:47:43Z riza $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

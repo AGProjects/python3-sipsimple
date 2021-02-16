@@ -1,4 +1,4 @@
-/* $Id: lock.c 4412 2013-03-05 03:12:32Z riza $ */
+/* $Id: lock.c 4992 2015-03-06 06:09:22Z ming $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

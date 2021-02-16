@@ -1,4 +1,4 @@
-/* $Id: sip_transport.c 4530 2013-05-30 09:27:49Z nanang $ */
+/* $Id: sip_transport.c 5246 2016-02-25 04:38:34Z nanang $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

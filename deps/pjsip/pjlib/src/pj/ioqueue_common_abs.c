@@ -1,4 +1,4 @@
-/* $Id: ioqueue_common_abs.c 4359 2013-02-21 11:18:36Z bennylp $ */
+/* $Id: ioqueue_common_abs.c 5194 2015-11-06 04:18:46Z nanang $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

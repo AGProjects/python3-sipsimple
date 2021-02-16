@@ -1,4 +1,4 @@
-/* $Id: sip_uri.c 4228 2012-08-13 07:26:03Z bennylp $ */
+/* $Id: sip_uri.c 4979 2015-02-10 03:20:04Z ming $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

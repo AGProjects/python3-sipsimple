@@ -1,4 +1,4 @@
-/* $Id: crc32.c 2511 2009-03-13 12:28:00Z bennylp $ */
+/* $Id: crc32.c 4537 2013-06-19 06:47:43Z riza $ */
 /*
  * This is an implementation of CRC32. See ISO 3309 and ITU-T V.42 
  * for a formal specification

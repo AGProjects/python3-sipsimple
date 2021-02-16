@@ -1,4 +1,4 @@
-/* $Id: colorbar_dev.c 4158 2012-06-06 09:56:14Z nanang $ */
+/* $Id: colorbar_dev.c 5050 2015-04-07 11:23:41Z nanang $ */
 /*
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  *

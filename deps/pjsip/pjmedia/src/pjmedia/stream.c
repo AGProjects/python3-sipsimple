@@ -1,4 +1,4 @@
-/* $Id: stream.c 4336 2013-01-29 08:15:02Z ming $ */
+/* $Id: stream.c 5242 2016-02-18 03:15:19Z riza $ */
 /*
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

@@ -1,4 +1,4 @@
-/* $Id: timer.h 4359 2013-02-21 11:18:36Z bennylp $ */
+/* $Id: timer.h 4567 2013-07-19 06:31:28Z bennylp $ */
 /* 
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

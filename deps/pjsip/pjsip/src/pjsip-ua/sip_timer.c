@@ -1,4 +1,4 @@
-/* $Id: sip_timer.c 4213 2012-07-23 13:31:26Z nanang $ */
+/* $Id: sip_timer.c 4967 2014-12-05 04:03:06Z ming $ */
 /* 
  * Copyright (C) 2009-2011 Teluu Inc. (http://www.teluu.com)
  *

@@ -1,4 +1,4 @@
-/* $Id: stun_session.c 4360 2013-02-21 11:26:35Z bennylp $ */
+/* $Id: stun_session.c 5233 2016-01-05 14:34:22Z riza $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

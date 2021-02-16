@@ -1,4 +1,4 @@
-/* $Id: sock.h 4343 2013-02-07 09:35:34Z nanang $ */
+/* $Id: sock.h 4860 2014-06-19 05:07:12Z riza $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

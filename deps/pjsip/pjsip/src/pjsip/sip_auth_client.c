@@ -1,4 +1,4 @@
-/* $Id: sip_auth_client.c 4322 2013-01-17 10:09:09Z bennylp $ */
+/* $Id: sip_auth_client.c 5227 2015-12-31 04:03:37Z ming $ */
 /*
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

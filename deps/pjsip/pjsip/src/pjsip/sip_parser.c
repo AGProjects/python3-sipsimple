@@ -1,4 +1,4 @@
-/* $Id: sip_parser.c 4445 2013-03-20 11:29:08Z nanang $ */
+/* $Id: sip_parser.c 5223 2015-12-30 04:07:28Z ming $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

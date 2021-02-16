@@ -1,4 +1,4 @@
-/* $Id: string_i.h 3553 2011-05-05 06:14:19Z nanang $ */
+/* $Id: string_i.h 5229 2015-12-31 05:06:03Z ming $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

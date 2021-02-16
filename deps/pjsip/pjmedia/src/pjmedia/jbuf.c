@@ -1,4 +1,4 @@
-/* $Id: jbuf.c 4369 2013-02-21 21:55:54Z bennylp $ */
+/* $Id: jbuf.c 4728 2014-02-04 10:13:56Z bennylp $ */
 /*
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

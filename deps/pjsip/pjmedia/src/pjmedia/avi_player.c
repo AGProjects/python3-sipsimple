@@ -1,4 +1,4 @@
-/* $Id: avi_player.c 4057 2012-04-17 06:54:50Z bennylp $ */
+/* $Id: avi_player.c 5046 2015-04-06 06:21:41Z nanang $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  *

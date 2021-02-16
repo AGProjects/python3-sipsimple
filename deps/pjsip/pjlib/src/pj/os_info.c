@@ -1,4 +1,4 @@
-/* $Id: os_info.c 4411 2013-03-04 04:34:38Z nanang $ */
+/* $Id: os_info.c 4610 2013-10-03 10:26:14Z ming $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

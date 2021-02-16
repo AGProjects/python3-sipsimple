@@ -1,4 +1,4 @@
-/* $Id: sip_ua_layer.c 4420 2013-03-05 11:59:54Z bennylp $ */
+/* $Id: sip_ua_layer.c 5243 2016-02-19 03:16:24Z riza $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

@@ -1,4 +1,4 @@
-/* $Id: wav_player.c 4122 2012-05-14 11:04:46Z bennylp $ */
+/* $Id: wav_player.c 5170 2015-08-25 08:45:46Z nanang $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

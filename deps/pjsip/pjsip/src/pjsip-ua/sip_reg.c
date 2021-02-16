@@ -1,4 +1,4 @@
-/* $Id: sip_reg.c 4319 2013-01-16 10:20:55Z bennylp $ */
+/* $Id: sip_reg.c 4989 2015-03-03 07:52:36Z ming $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

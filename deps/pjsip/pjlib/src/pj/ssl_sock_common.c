@@ -1,4 +1,4 @@
-/* $Id: ssl_sock_common.c 3999 2012-03-30 07:10:13Z bennylp $ */
+/* $Id: ssl_sock_common.c 5214 2015-12-11 04:59:56Z ming $ */
 /* 
  * Copyright (C) 2009-2011 Teluu Inc. (http://www.teluu.com)
  *

@@ -1,4 +1,4 @@
-/* $Id: splitcomb.c 3664 2011-07-19 03:42:28Z nanang $ */
+/* $Id: splitcomb.c 4959 2014-11-10 01:44:37Z ming $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

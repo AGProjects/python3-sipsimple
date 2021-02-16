@@ -1,4 +1,4 @@
-/* $Id: h263_packetizer.c 4006 2012-04-02 08:40:54Z nanang $ */
+/* $Id: h263_packetizer.c 4537 2013-06-19 06:47:43Z riza $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  *

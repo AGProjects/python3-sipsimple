@@ -1,4 +1,4 @@
-/* $Id: sip_replaces.c 4268 2012-09-28 08:56:08Z nanang $ */
+/* $Id: sip_replaces.c 4537 2013-06-19 06:47:43Z riza $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

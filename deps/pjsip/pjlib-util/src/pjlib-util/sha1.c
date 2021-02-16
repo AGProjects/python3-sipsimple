@@ -1,4 +1,4 @@
-/* $Id: sha1.c 3549 2011-05-05 05:10:06Z nanang $ */
+/* $Id: sha1.c 4537 2013-06-19 06:47:43Z riza $ */
 /*
  * Modified 2/07
  * By Benny Prijono <benny@prijono.org>

@@ -1,4 +1,4 @@
-/* $Id: hash.c 4296 2012-11-07 04:56:26Z nanang $ */
+/* $Id: hash.c 4537 2013-06-19 06:47:43Z riza $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

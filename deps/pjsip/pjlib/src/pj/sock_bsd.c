@@ -1,4 +1,4 @@
-/* $Id: sock_bsd.c 4233 2012-08-21 11:16:06Z ming $ */
+/* $Id: sock_bsd.c 4860 2014-06-19 05:07:12Z riza $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

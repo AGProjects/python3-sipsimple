@@ -1,4 +1,4 @@
-/* $Id: sip_100rel.c 4208 2012-07-18 07:52:33Z ming $ */
+/* $Id: sip_100rel.c 4936 2014-10-01 06:45:02Z ming $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

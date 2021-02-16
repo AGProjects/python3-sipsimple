@@ -1,4 +1,4 @@
-/* $Id: g711.c 4266 2012-09-26 05:55:18Z nanang $ */
+/* $Id: g711.c 4987 2015-03-03 02:41:27Z ming $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>
