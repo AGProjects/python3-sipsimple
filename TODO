@@ -1,9 +1,10 @@
 TODO
 ----
 
- - Fix DNS async in lookup.py
- - Incoming file transfers are broken in msrplib
- - Command line clients don't quit
+ - Find a solution for DNS async in lookup.py for dnspython >= 2.1.0
+ - Command line clients don't quit sometimes
+ - Amn active account cannot be removed (try Blink)
+ - Fix Incoming REFER and SUBSCRIBE
 
 
 TODO Python version 2
