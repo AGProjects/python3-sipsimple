@@ -1341,7 +1341,7 @@ cdef class Invitation:
             raise PJSIPError("failed to acquire lock", status)
         try:
             sub_state_hdr = timer.rdata["headers"].get("Subscription-State", None)
-            if self.transfer_state != "TERMINATED" and sub_state_hdr is not None and sub_state_hdr.expires > 0:
+            if self.transfer_state != "TERMINATED" and sub_state_hdr is not None and sub_state_hdr.expires is not None and sub_state_hdr.expires > 0:
                 if self._transfer_refresh_timer is not None:
                     self._transfer_refresh_timer.cancel()
                     self._transfer_refresh_timer = None
