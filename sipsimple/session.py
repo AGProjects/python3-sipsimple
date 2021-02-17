@@ -643,6 +643,7 @@ class TransferHandler(object):
         self._command_channel = coros.queue()
         self._data_channel = coros.queue()
         self._proc = proc.spawn(self._run)
+        self.completed = False
 
     def _run(self):
         while True:
@@ -747,6 +748,7 @@ class TransferHandler(object):
     def _CH_outgoing_transfer(self, command):
         self.direction = 'outgoing'
         notification_center = NotificationCenter()
+        self.completed = False
         self.state = 'starting'
         while True:
             try:
@@ -789,9 +791,12 @@ class TransferHandler(object):
         self._data_channel.send(notification)
 
     def _NH_SIPInvitationTransferDidFail(self, notification):
-        self._data_channel.send_exception(SIPInvitationTransferDidFail(notification.data))
+        self.direction = None
+        if not self.completed:
+            self._data_channel.send_exception(SIPInvitationTransferDidFail(notification.data))
 
     def _NH_SIPInvitationTransferDidEnd(self, notification):
+        self.direction = None
         self._data_channel.send(notification)
 
     def _NH_SIPInvitationTransferGotNotify(self, notification):
@@ -801,6 +806,15 @@ class TransferHandler(object):
                 code = int(match.group('code'))
                 reason = match.group('reason')
                 notification.center.post_notification('SIPSessionTransferGotProgress', sender=self.session, data=NotificationData(code=code, reason=reason))
+                if code == 200:
+                    self.completed = True
+                    self.direction = None
+                    self.state = None
+                    notification.center.post_notification('SIPSessionTransferDidEnd', sender=self.session)
+                elif code >= 400:
+                    self.state = None
+                    self.direction = None
+                    notification.center.post_notification('SIPSessionTransferDidFail', sender=self.session, data=NotificationData(code=code, reason=reason))
 
     def _NH_SIPSessionTransferDidStart(self, notification):
         if notification.sender is self.session and self.state == 'starting':
