@@ -1159,7 +1159,7 @@ cdef class Invitation:
         self._send_notify()
         with nogil:
             pjsip_evsub_terminate(self._transfer_usage, 0)
-        match = sipfrag_re.match(self._sipfrag_payload.str)
+        match = sipfrag_re.match(self._sipfrag_payload.str.decode())
         code = int(match.group('code'))
         reason = match.group('reason')
         state_timer = TransferStateCallbackTimer("TERMINATED", code, reason)
@@ -1179,8 +1179,8 @@ cdef class Invitation:
                 status = sip_status_messages[code]
             except IndexError:
                 status = "Unknown"
-        content = b"SIP/2.0 %d %s\r\n" % (code, status)
-        self._sipfrag_payload = PJSTR(content)
+        content = "SIP/2.0 %d %s\r\n" % (code, status)
+        self._sipfrag_payload = PJSTR(content.encode())
 
     cdef int _send_notify(self) except -1:
         cdef pjsip_evsub_state state

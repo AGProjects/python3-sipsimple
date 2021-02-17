@@ -202,10 +202,12 @@ cdef int _dict_to_pjsip_param(object params, pjsip_param *param_list, pj_pool_t 
         param = <pjsip_param *> pj_pool_alloc(pool, sizeof(pjsip_param))
         if param == NULL:
             return -1
+        name = name if isinstance(name, bytes) else name.encode()
         _str_to_pj_str(name, &param.name)
         if value is None:
             param.value.slen = 0
         else:
+            value = value if isinstance(value, bytes) else value.encode()
             _str_to_pj_str(value, &param.value)
         pj_list_insert_after(<pj_list *> param_list, <pj_list *> param)
     return 0
