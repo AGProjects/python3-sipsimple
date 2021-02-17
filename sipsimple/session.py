@@ -754,14 +754,16 @@ class TransferHandler(object):
             try:
                 notification = self._data_channel.wait()
             except SIPInvitationTransferDidFail as e:
-                self.state = 'failed'
+                self.state = None
+                self.direction = None
                 notification_center.post_notification('SIPSessionTransferDidFail', sender=self.session, data=NotificationData(code=e.data.code, reason=e.data.reason))
                 return
             if notification.name == 'SIPInvitationTransferDidStart':
                 self.state = 'started'
                 notification_center.post_notification('SIPSessionTransferDidStart', sender=self.session)
             elif notification.name == 'SIPInvitationTransferDidEnd':
-                self.state = 'ended'
+                self.state = None
+                self.direction = None
                 self.session.end()
                 notification_center.post_notification('SIPSessionTransferDidEnd', sender=self.session)
                 return
