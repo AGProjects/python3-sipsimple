@@ -3,8 +3,8 @@ TODO
 
  - Find a solution for DNS async in lookup.py for dnspython >= 2.1.0
  - Command line clients don't quit sometimes
- - Amn active account cannot be removed (try Blink)
- - Fix Incoming REFER and SUBSCRIBE
+ - An active account cannot be removed (try Blink)
+ - Cannot retry a Transfer if failed (invitation._transfer_usage is not reset) 
 
 
 TODO Python version 2
