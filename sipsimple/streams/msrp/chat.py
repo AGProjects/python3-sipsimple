@@ -704,9 +704,7 @@ class QueuedOTRInternalMessage(QueuedMessage):
 
 class SimplePayload(object):
     def __init__(self, content, content_type, charset=None):
-        if not isinstance(content, bytes):
-            raise TypeError("content should be an instance of bytes")
-        self.content = content
+        self.content = content if isinstance(content, bytes) else content.encode()
         self.content_type = content_type
         self.charset = charset
 
@@ -718,8 +716,7 @@ class SimplePayload(object):
 
     @classmethod
     def decode(cls, content, content_type):
-        if not isinstance(content, bytes):
-            raise TypeError("content should be an instance of bytes")
+        content if isinstance(content, bytes) else content.encode()
         type_helper = EmailParser().parsestr('Content-Type: {}'.format(content_type))
         content_type = type_helper.get_content_type()
         charset = type_helper.get_content_charset()
