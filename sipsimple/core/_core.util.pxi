@@ -230,9 +230,7 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
             array_header = <pjsip_generic_array_hdr *> header
             header_data = []
             for i from 0 <= i < array_header.count:
-                pass
-                # TODO crash here
-                #header_data.append(_pj_str_to_str(array_header.values[i]))
+                header_data.append(_pj_str_to_bytes(array_header.values[i]))
         elif header_name == "Contact":
             multi_header = True
             header_data = FrozenContactHeader_create(<pjsip_contact_hdr *> header)
@@ -297,6 +295,7 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
         header = <pjsip_hdr *> (<pj_list *> header).next
     info_dict["headers"] = headers
     body = msg.body
+
     if body == NULL:
         info_dict["body"] = None
     else:
