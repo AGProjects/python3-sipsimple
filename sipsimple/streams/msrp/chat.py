@@ -3,6 +3,7 @@
 This module provides classes to parse and generate SDP related to SIP sessions that negotiate Instant Messaging, including CPIM as defined in RFC3862
 """
 
+import binascii
 import pickle as pickle
 import codecs
 import os
@@ -176,15 +177,15 @@ class OTREncryption(object):
     @property
     def key_fingerprint(self):
         try:
-            return self.otr_session.local_private_key.public_key.fingerprint
-        except AttributeError:
+            return binascii.hexlify(self.otr_session.local_private_key.public_key.fingerprint).decode()
+        except (AttributeError, TypeError):
             return None
 
     @property
     def peer_fingerprint(self):
         try:
-            return self.otr_session.remote_public_key.fingerprint
-        except AttributeError:
+            return binascii.hexlify(self.otr_session.remote_public_key.fingerprint).decode()
+        except (AttributeError, TypeError):
             return None
 
     @property
