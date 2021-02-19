@@ -1,0 +1,452 @@
+Index: pjlib/src/pj/os_core_unix.c
+===================================================================
+--- pjlib/src/pj/os_core_unix.c	(revision 5249)
++++ pjlib/src/pj/os_core_unix.c	(working copy)
+@@ -37,6 +37,11 @@
+ 
+ #if defined(PJ_HAS_SEMAPHORE_H) && PJ_HAS_SEMAPHORE_H != 0
+ #  include <semaphore.h>
++#  if defined(PJ_DARWINOS) && PJ_DARWINOS!=0
++#    include <mach/mach.h>
++#    include <mach/task.h>
++#    include <mach/semaphore.h>
++#  endif
+ #endif
+ 
+ #include <unistd.h>	    // getpid()
+@@ -107,7 +112,11 @@
+ #if defined(PJ_HAS_SEMAPHORE) && PJ_HAS_SEMAPHORE != 0
+ struct pj_sem_t
+ {
++#if defined(PJ_DARWINOS) && PJ_DARWINOS!=0
++    semaphore_t        *sem;
++#else
+     sem_t	       *sem;
++#endif
+     char		obj_name[PJ_MAX_OBJ_NAME];
+ };
+ #endif /* PJ_HAS_SEMAPHORE */
+@@ -1553,35 +1562,16 @@
+     PJ_ASSERT_RETURN(sem, PJ_ENOMEM);
+ 
+ #if defined(PJ_DARWINOS) && PJ_DARWINOS!=0
+-    /* MacOS X doesn't support anonymous semaphore */
+     {
+-	char sem_name[PJ_GUID_MAX_LENGTH+1];
+-	pj_str_t nam;
+-
+-	/* We should use SEM_NAME_LEN, but this doesn't seem to be
+-	 * declared anywhere? The value here is just from trial and error
+-	 * to get the longest name supported.
+-	 */
+-#	define MAX_SEM_NAME_LEN	23
+-
+-	/* Create a unique name for the semaphore. */
+-	if (PJ_GUID_STRING_LENGTH <= MAX_SEM_NAME_LEN) {
+-	    nam.ptr = sem_name;
+-	    pj_generate_unique_string(&nam);
+-	    sem_name[nam.slen] = '\0';
+-	} else {
+-	    pj_create_random_string(sem_name, MAX_SEM_NAME_LEN);
+-	    sem_name[MAX_SEM_NAME_LEN] = '\0';
+-	}
+-
+-	/* Create semaphore */
+-	sem->sem = sem_open(sem_name, O_CREAT|O_EXCL, S_IRUSR|S_IWUSR,
+-			    initial);
+-	if (sem->sem == SEM_FAILED)
+-	    return PJ_RETURN_OS_ERROR(pj_get_native_os_error());
+-
+-	/* And immediately release the name as we don't need it */
+-	sem_unlink(sem_name);
++        kern_return_t err;
++        sem->sem = PJ_POOL_ALLOC_T(pool, semaphore_t);
++        err = semaphore_create(mach_task_self(), sem->sem, SYNC_POLICY_FIFO, initial);
++        if (err != KERN_SUCCESS) {
++            if (err == KERN_RESOURCE_SHORTAGE)
++                return PJ_RETURN_OS_ERROR(ENOMEM);
++            else
++                return PJ_RETURN_OS_ERROR(EINVAL);
++        }
+     }
+ #else
+     sem->sem = PJ_POOL_ALLOC_T(pool, sem_t);
+@@ -1617,6 +1607,7 @@
+ {
+ #if PJ_HAS_THREADS
+     int result;
++    int error;
+ 
+     PJ_CHECK_STACK();
+     PJ_ASSERT_RETURN(sem, PJ_EINVAL);
+@@ -1624,6 +1615,20 @@
+     PJ_LOG(6, (sem->obj_name, "Semaphore: thread %s is waiting",
+ 			      pj_thread_this()->obj_name));
+ 
++#if defined(PJ_DARWINOS) && PJ_DARWINOS!=0
++    {
++        do
++            result = semaphore_wait(*(sem->sem));
++        while (result == KERN_ABORTED);
++
++        if (result == KERN_SUCCESS) {
++            result = error = 0;
++        } else {
++            result = -1;
++            error = EINVAL;
++        }
++    }
++#else
+     result = sem_wait( sem->sem );
+ 
+     if (result == 0) {
+@@ -1632,12 +1637,14 @@
+     } else {
+ 	PJ_LOG(6, (sem->obj_name, "Semaphore: thread %s FAILED to acquire",
+ 				  pj_thread_this()->obj_name));
++	error = pj_get_native_os_error();
+     }
++#endif
+ 
+     if (result == 0)
+ 	return PJ_SUCCESS;
+     else
+-	return PJ_RETURN_OS_ERROR(pj_get_native_os_error());
++	return PJ_RETURN_OS_ERROR(error);
+ #else
+     pj_assert( sem == (pj_sem_t*) 1 );
+     return PJ_SUCCESS;
+@@ -1651,20 +1658,45 @@
+ {
+ #if PJ_HAS_THREADS
+     int result;
++    int error;
+ 
+     PJ_CHECK_STACK();
+     PJ_ASSERT_RETURN(sem, PJ_EINVAL);
+ 
++#if defined(PJ_DARWINOS) && PJ_DARWINOS!=0
++    {
++        mach_timespec_t interval;
++        kern_return_t err;
++
++        interval.tv_sec = 0;
++        interval.tv_nsec = 0;
++
++        err = semaphore_timedwait(*(sem->sem), interval);
++        if (err == KERN_SUCCESS) {
++            result = error = 0;
++        } else if (err == KERN_OPERATION_TIMED_OUT) {
++            result = -1;
++            error = EAGAIN;
++        } else {
++            result = -1;
++            error = EINVAL;
++        }
++    }
++#else
+     result = sem_trywait( sem->sem );
+ 
+     if (result == 0) {
+ 	PJ_LOG(6, (sem->obj_name, "Semaphore acquired by thread %s",
+ 				  pj_thread_this()->obj_name));
++    } else {
++        error = pj_get_native_os_error();
+     }
++#endif
++
+     if (result == 0)
+ 	return PJ_SUCCESS;
+     else
+-	return PJ_RETURN_OS_ERROR(pj_get_native_os_error());
++	return PJ_RETURN_OS_ERROR(error);
+ #else
+     pj_assert( sem == (pj_sem_t*)1 );
+     return PJ_SUCCESS;
+@@ -1678,14 +1710,30 @@
+ {
+ #if PJ_HAS_THREADS
+     int result;
++    int error;
+     PJ_LOG(6, (sem->obj_name, "Semaphore released by thread %s",
+ 			      pj_thread_this()->obj_name));
++#if defined(PJ_DARWINOS) && PJ_DARWINOS!=0
++    {
++        kern_return_t err;
++        err = semaphore_signal(*(sem->sem));
++        if (err == KERN_SUCCESS) {
++            result = error = 0;
++        } else {
++            result = -1;
++            error = EINVAL;
++        }
++    }
++#else
+     result = sem_post( sem->sem );
++    if (result != 0)
++        error = pj_get_native_os_error();
++#endif
+ 
+     if (result == 0)
+ 	return PJ_SUCCESS;
+     else
+-	return PJ_RETURN_OS_ERROR(pj_get_native_os_error());
++	return PJ_RETURN_OS_ERROR(error);
+ #else
+     pj_assert( sem == (pj_sem_t*) 1);
+     return PJ_SUCCESS;
+@@ -1699,6 +1747,7 @@
+ {
+ #if PJ_HAS_THREADS
+     int result;
++    int error;
+ 
+     PJ_CHECK_STACK();
+     PJ_ASSERT_RETURN(sem, PJ_EINVAL);
+@@ -1706,15 +1755,26 @@
+     PJ_LOG(6, (sem->obj_name, "Semaphore destroyed by thread %s",
+ 			      pj_thread_this()->obj_name));
+ #if defined(PJ_DARWINOS) && PJ_DARWINOS!=0
+-    result = sem_close( sem->sem );
++    {
++        kern_return_t err;
++        err = semaphore_destroy(mach_task_self(), *(sem->sem));
++        if (err == KERN_SUCCESS) {
++            result = error = -1;
++        } else {
++            result = -1;
++            error = EINVAL;
++        }
++    }
+ #else
+     result = sem_destroy( sem->sem );
++    if (result != 0)
++        error = pj_get_native_os_error();
+ #endif
+ 
+     if (result == 0)
+ 	return PJ_SUCCESS;
+     else
+-	return PJ_RETURN_OS_ERROR(pj_get_native_os_error());
++	return PJ_RETURN_OS_ERROR(error);
+ #else
+     pj_assert( sem == (pj_sem_t*) 1 );
+     return PJ_SUCCESS;
+Index: pjlib/src/pj/ssl_sock_ossl.c
+===================================================================
+--- pjlib/src/pj/ssl_sock_ossl.c	(revision 5249)
++++ pjlib/src/pj/ssl_sock_ossl.c	(working copy)
+@@ -43,6 +43,7 @@
+ /* 
+  * Include OpenSSL headers 
+  */
++#include <openssl/asn1.h>
+ #include <openssl/bio.h>
+ #include <openssl/ssl.h>
+ #include <openssl/err.h>
+@@ -49,9 +50,24 @@
+ #include <openssl/x509v3.h>
+ 
+ 
++#if !USING_LIBRESSL && OPENSSL_VERSION_NUMBER >= 0x10100000L
++#  define OPENSSL_NO_SSL2	    /* seems to be removed in 1.1.0 */
++#  define M_ASN1_STRING_data(x)	    ASN1_STRING_get0_data(x)
++#  define M_ASN1_STRING_length(x)   ASN1_STRING_length(x)
++#  if defined(OPENSSL_API_COMPAT) && OPENSSL_API_COMPAT >= 0x10100000L
++#     define X509_get_notBefore(x)  X509_get0_notBefore(x)
++#     define X509_get_notAfter(x)   X509_get0_notAfter(x)
++#  endif
++#else
++#  define SSL_CIPHER_get_id(c)	    (c)->id
++#  define SSL_set_session(ssl, s)   (ssl)->session = (s)
++#endif
++
++
+ #ifdef _MSC_VER
+ #  pragma comment( lib, "libeay32")
+ #  pragma comment( lib, "ssleay32")
++#  pragma comment( lib, "crypt32")
+ #endif
+ 
+ 
+@@ -174,6 +190,7 @@
+     send_buf_t		  send_buf;
+     write_data_t	  send_pending;	/* list of pending write to network */
+     pj_lock_t		 *write_mutex;	/* protect write BIO and send_buf   */
++    pj_lock_t		 *state_mutex;	/* protect the socket state (sending on one thread, destroying it in another   */
+ 
+     SSL_CTX		 *ossl_ctx;
+     SSL			 *ossl_ssl;
+@@ -318,8 +335,12 @@
+     pj_assert(status == PJ_SUCCESS);
+ 
+     /* Init OpenSSL lib */
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+     SSL_library_init();
+     SSL_load_error_strings();
++#else
++    OPENSSL_init_ssl(0, NULL);
++#endif
+ #if OPENSSL_VERSION_NUMBER < 0x009080ffL
+     /* This is now synonym of SSL_library_init() */
+     OpenSSL_add_all_algorithms();
+@@ -333,6 +354,7 @@
+ 	STACK_OF(SSL_CIPHER) *sk_cipher;
+ 	unsigned i, n;
+ 
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+ 	meth = (SSL_METHOD*)SSLv23_server_method();
+ 	if (!meth)
+ 	    meth = (SSL_METHOD*)TLSv1_server_method();
+@@ -344,6 +366,12 @@
+ 	if (!meth)
+ 	    meth = (SSL_METHOD*)SSLv2_server_method();
+ #endif
++
++#else
++	/* Specific version methods are deprecated in 1.1.0 */
++	meth = (SSL_METHOD*)TLS_method();
++#endif
++
+ 	pj_assert(meth);
+ 
+ 	ctx=SSL_CTX_new(meth);
+@@ -360,7 +388,7 @@
+ 	    const SSL_CIPHER *c;
+ 	    c = sk_SSL_CIPHER_value(sk_cipher,i);
+ 	    openssl_ciphers[i].id = (pj_ssl_cipher)
+-				    (pj_uint32_t)c->id & 0x00FFFFFF;
++				    (pj_uint32_t)SSL_CIPHER_get_id(c) & 0x00FFFFFF;
+ 	    openssl_ciphers[i].name = SSL_CIPHER_get_name(c);
+ 	}
+ 
+@@ -525,6 +553,7 @@
+ 	ssock->param.proto = PJ_SSL_SOCK_PROTO_SSL23;
+ 
+     /* Determine SSL method to use */
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+     switch (ssock->param.proto) {
+     case PJ_SSL_SOCK_PROTO_TLS1:
+ 	ssl_method = (SSL_METHOD*)TLSv1_method();
+@@ -540,6 +569,10 @@
+ #endif
+ 	break;
+     }
++#else
++    /* Specific version methods are deprecated in 1.1.0 */
++    ssl_method = (SSL_METHOD*)TLS_method();
++#endif
+ 
+     if (!ssl_method) {
+ 	ssl_method = (SSL_METHOD*)SSLv23_method();
+@@ -810,6 +843,8 @@
+ /* Reset SSL socket state */
+ static void reset_ssl_sock_state(pj_ssl_sock_t *ssock)
+ {
++    pj_lock_acquire(ssock->state_mutex);
++
+     ssock->ssl_state = SSL_STATE_NULL;
+ 
+     destroy_ssl(ssock);
+@@ -831,6 +866,8 @@
+      * For now, just clear thread error queue here.
+      */
+     ERR_clear_error();
++
++    pj_lock_release(ssock->state_mutex);
+ }
+ 
+ 
+@@ -864,7 +901,8 @@
+ 	    const SSL_CIPHER *c;
+ 	    c = sk_SSL_CIPHER_value(sk_cipher, j);
+ 	    if (ssock->param.ciphers[i] == (pj_ssl_cipher)
+-					   ((pj_uint32_t)c->id & 0x00FFFFFF))
++					   ((pj_uint32_t)SSL_CIPHER_get_id(c) &
++					   0x00FFFFFF))
+ 	    {
+ 		const char *c_name;
+ 
+@@ -989,7 +1027,7 @@
+     pj_bool_t update_needed;
+     char buf[512];
+     pj_uint8_t serial_no[64] = {0}; /* should be >= sizeof(ci->serial_no) */
+-    pj_uint8_t *q;
++    const pj_uint8_t *q;
+     unsigned len;
+     GENERAL_NAMES *names = NULL;
+ 
+@@ -999,7 +1037,7 @@
+     X509_NAME_oneline(X509_get_issuer_name(x), buf, sizeof(buf));
+ 
+     /* Get serial no */
+-    q = (pj_uint8_t*) M_ASN1_STRING_data(X509_get_serialNumber(x));
++    q = (const pj_uint8_t*) M_ASN1_STRING_data(X509_get_serialNumber(x));
+     len = M_ASN1_STRING_length(X509_get_serialNumber(x));
+     if (len > sizeof(ci->serial_no)) 
+ 	len = sizeof(ci->serial_no);
+@@ -1070,8 +1108,8 @@
+ 		    type = PJ_SSL_CERT_NAME_URI;
+                     break;
+                 case GEN_IPADD:
+-		    p = ASN1_STRING_data(name->d.ip);
+-		    len = ASN1_STRING_length(name->d.ip);
++		    p = (unsigned char*)M_ASN1_STRING_data(name->d.ip);
++		    len = M_ASN1_STRING_length(name->d.ip);
+ 		    type = PJ_SSL_CERT_NAME_IP;
+                     break;
+ 		default:
+@@ -2200,6 +2238,12 @@
+     if (status != PJ_SUCCESS)
+ 	return status;
+ 
++    /* Create socket state mutex */
++    status = pj_lock_create_recursive_mutex(pool, pool->obj_name,
++					    &ssock->state_mutex);
++    if (status != PJ_SUCCESS)
++	return status;
++
+     /* Init secure socket param */
+     pj_ssl_sock_param_copy(pool, &ssock->param, param);
+     ssock->param.read_buffer_size = ((ssock->param.read_buffer_size+7)>>3)<<3;
+@@ -2231,6 +2275,7 @@
+ 
+     reset_ssl_sock_state(ssock);
+     pj_lock_destroy(ssock->write_mutex);
++    pj_lock_destroy(ssock->state_mutex);
+     
+     pool = ssock->pool;
+     ssock->pool = NULL;
+@@ -2288,7 +2333,7 @@
+ 
+ 	/* Current cipher */
+ 	cipher = SSL_get_current_cipher(ssock->ossl_ssl);
+-	info->cipher = (cipher->id & 0x00FFFFFF);
++	info->cipher = (SSL_CIPHER_get_id(cipher) & 0x00FFFFFF);
+ 
+ 	/* Remote address */
+ 	pj_sockaddr_cp(&info->remote_addr, &ssock->rem_addr);
+@@ -2561,9 +2606,13 @@
+ 
+     PJ_ASSERT_RETURN(ssock && data && size && (*size>0), PJ_EINVAL);
+ 
+-    if (ssock->ssl_state != SSL_STATE_ESTABLISHED) 
+-	return PJ_EINVALIDOP;
++    pj_lock_acquire(ssock->state_mutex);
+ 
++    if (ssock->ssl_state != SSL_STATE_ESTABLISHED) {
++        status = PJ_EINVALIDOP;
++        goto on_return;
++    }
++
+     // Ticket #1573: Don't hold mutex while calling PJLIB socket send().
+     //pj_lock_acquire(ssock->write_mutex);
+ 
+@@ -2588,6 +2637,7 @@
+ 
+ on_return:
+     //pj_lock_release(ssock->write_mutex);
++    pj_lock_release(ssock->state_mutex);
+     return status;
+ }
+ 
