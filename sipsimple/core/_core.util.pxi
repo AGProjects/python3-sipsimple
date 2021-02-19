@@ -303,7 +303,8 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
         if status != 0:
             info_dict["body"] = None
         else:
-            info_dict["body"] = _pj_buf_len_to_str(buf, buf_len).decode()
+            info_dict["body"] = _pj_buf_len_to_str(buf, buf_len)
+
     if msg.type == PJSIP_REQUEST_MSG:
         info_dict["method"] = _pj_str_to_str(msg.line.req.method.name)
         # You need to call pjsip_uri_get_uri on the request URI if the message is for transmitting,
