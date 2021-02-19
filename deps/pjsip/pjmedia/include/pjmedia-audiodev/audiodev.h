@@ -1,4 +1,4 @@
-/* $Id: audiodev.h 4243 2012-08-31 11:42:17Z nanang $ */
+/* $Id: audiodev.h 5201 2015-11-19 04:03:00Z ming $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

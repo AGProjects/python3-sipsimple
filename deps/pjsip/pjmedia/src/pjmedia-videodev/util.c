@@ -1,4 +1,4 @@
-/* $Id$ */
+/* $Id: util.c 5157 2015-08-10 09:11:39Z nanang $ */
 /*
  * Copyright (C) 2014-2015 Teluu Inc. (http://www.teluu.com)
  *

@@ -1,4 +1,4 @@
-/* $Id: avi_dev.h 4016 2012-04-04 05:05:50Z bennylp $ */
+/* $Id: avi_dev.h 5117 2015-06-25 04:51:59Z ming $ */
 /*
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  *

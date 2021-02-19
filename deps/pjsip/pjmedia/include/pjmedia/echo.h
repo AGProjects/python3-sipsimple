@@ -1,4 +1,4 @@
-/* $Id: echo.h 4082 2012-04-24 13:09:14Z bennylp $ */
+/* $Id: echo.h 5186 2015-10-06 05:57:51Z ming $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

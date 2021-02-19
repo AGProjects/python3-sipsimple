@@ -1,4 +1,4 @@
-/* $Id: format.h 4470 2013-04-15 10:40:26Z bennylp $ */
+/* $Id: format.h 4994 2015-03-17 04:02:44Z nanang $ */
 /*
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

@@ -1,4 +1,4 @@
-/* $Id: vid_codec_util.c 4362 2013-02-21 14:51:56Z nanang $ */
+/* $Id: vid_codec_util.c 5046 2015-04-06 06:21:41Z nanang $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

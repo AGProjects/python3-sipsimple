@@ -1,4 +1,4 @@
-/* $Id: sound_legacy.c 3553 2011-05-05 06:14:19Z nanang $ */
+/* $Id: sound_legacy.c 5140 2015-07-31 07:12:36Z nanang $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  *

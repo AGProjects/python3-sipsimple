@@ -1,4 +1,4 @@
-/* $Id: config.h 4443 2013-03-20 06:56:19Z nanang $ */
+/* $Id: config.h 5242 2016-02-18 03:15:19Z riza $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>

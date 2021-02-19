@@ -1,4 +1,4 @@
-/* $Id: sdp_neg.c 4498 2013-04-24 09:52:25Z bennylp $ */
+/* $Id: sdp_neg.c 5170 2015-08-25 08:45:46Z nanang $ */
 /* 
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
  * Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>
