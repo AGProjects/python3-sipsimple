@@ -548,7 +548,7 @@ class Account(SettingsObject):
 
 
 class BonjourMSRPSettings(SettingsGroup):
-    transport = Setting(type=MSRPTransport, default='tcp')
+    transport = Setting(type=MSRPTransport, default='tls')
 
 
 class BonjourAccountEnabledSetting(Setting):
