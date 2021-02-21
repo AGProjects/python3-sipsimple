@@ -32,7 +32,7 @@ You can use the easy_install script provided by the python-setuptools
 package to install the packages:
 
 sudo pip3 install -U cython dnspython lxml twisted python-dateutil \
-greenlet zope.interface
+greenlet zope.interface requests
 
 
 Step 3. Install AG Projects dependencies
@@ -48,7 +48,6 @@ Step 3. Install AG Projects dependencies
 
 For each of them, in the exact order as listed above, retrieve the packages
 as follows:
-
 
 Using darcs:
 

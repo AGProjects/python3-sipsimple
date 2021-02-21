@@ -30,7 +30,7 @@ their minimum version number.
 A. Install the C dependencies, the software will be installed
 under /usr/local folder by default with Homebrew:
 
-brew install darcs gnutls yasm pkg-config x264 libvpx mpfr libmpc
+brew install pkg-config darcs gnutls yasm pkg-config x264 libvpx mpfr libmpc
 
 brew install -s ffmpeg
 
