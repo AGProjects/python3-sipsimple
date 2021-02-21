@@ -334,10 +334,14 @@ class BonjourServices(object):
         if self._register_timer is not None and self._register_timer.active():
             self._register_timer.cancel()
         self._register_timer = None
-        supported_transports = set(transport for transport in settings.sip.transport_list if transport!='tls' or self.account.tls.certificate is not None)
+        supported_transports = set(transport for transport in settings.sip.transport_list if transport != 'tls' or self.account.tls.certificate is not None)
         registered_transports = set(file.transport for file in self._files if isinstance(file, BonjourRegistrationFile))
         missing_transports = supported_transports - registered_transports
         added_transports = set()
+        
+        if len(missing_transports) > 1 and 'udp' in missing_transports:
+            missing_transports.remove('udp')
+    
         for transport in missing_transports:
             notification_center.post_notification('BonjourAccountWillRegister', sender=self.account, data=NotificationData(transport=transport))
             try:
