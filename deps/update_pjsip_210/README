@@ -1,0 +1,9 @@
+This is experiemental work in progress, non-functional yet.
+
+1. ZSRTP does not compile on Mac
+
+2. undefined symbol: pjmedia_vid_stream_get_info
+
+
+from sipsimple.core._core import *
+ImportError: .local/lib/python3.6/site-packages/sipsimple/core/_core.cpython-36m-x86_64-linux-gnu.so: undefined symbol: pjmedia_vid_stream_get_info

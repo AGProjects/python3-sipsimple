@@ -1,0 +1,155 @@
+diff -ruN sipsimple/core/_core.lib.pxi sipsimple/core/_core.lib.pxi
+--- sipsimple/core/_core.lib.pxi	2021-02-18 22:20:23.927865045 +0100
++++ sipsimple/core/_core.lib.pxi	2021-02-06 20:08:25.900660619 +0100
+@@ -269,7 +269,7 @@
+         if status != 0:
+             raise PJSIPError("Could not initialize ffmpeg video codecs", status)
+         self._has_ffmpeg_video = 1
+-        status = pjmedia_codec_vpx_init(NULL, &caching_pool._obj.factory)
++        status = pjmedia_codec_vpx_vid_init(NULL, &caching_pool._obj.factory)
+         if status != 0:
+             raise PJSIPError("Could not initialize vpx video codecs", status)
+         self._has_vpx = 1
+@@ -284,7 +284,7 @@
+         if self._has_ffmpeg_video:
+             pjmedia_codec_ffmpeg_vid_deinit()
+         if self._has_vpx:
+-            pjmedia_codec_vpx_deinit()
++            pjmedia_codec_vpx_vid_deinit()
+         if pjmedia_vid_codec_mgr_instance() != NULL:
+             pjmedia_vid_codec_mgr_destroy(NULL)
+         if pjmedia_event_mgr_instance() != NULL:
+@@ -298,7 +298,6 @@
+         cdef unsigned int count = PJMEDIA_CODEC_MGR_MAX_CODECS
+         cdef pjmedia_codec_info info[PJMEDIA_CODEC_MGR_MAX_CODECS]
+         cdef unsigned int prio[PJMEDIA_CODEC_MGR_MAX_CODECS]
+-        cdef int i
+         cdef list retval
+         cdef int status
+         status = pjmedia_codec_mgr_enum_codecs(pjmedia_endpt_get_codec_mgr(self._obj), &count, info, prio)
+@@ -372,7 +371,6 @@
+         cdef unsigned int count = PJMEDIA_VID_CODEC_MGR_MAX_CODECS
+         cdef pjmedia_vid_codec_info info[PJMEDIA_VID_CODEC_MGR_MAX_CODECS]
+         cdef unsigned int prio[PJMEDIA_VID_CODEC_MGR_MAX_CODECS]
+-        cdef int i
+         cdef list retval
+         cdef int status
+         status = pjmedia_vid_codec_mgr_enum_codecs(NULL, &count, info, prio)
+@@ -443,7 +441,6 @@
+         cdef pjmedia_vid_codec_info info[PJMEDIA_VID_CODEC_MGR_MAX_CODECS]
+         cdef pjmedia_vid_codec_param vparam
+         cdef unsigned int prio[PJMEDIA_VID_CODEC_MGR_MAX_CODECS]
+-        cdef int i
+         cdef int status
+         cdef PJSTR h264_profile_level_id_value
+         cdef PJSTR h264_packetization_mode_value = PJSTR(b"1")    # TODO; make it configurable?
+@@ -482,7 +479,6 @@
+         cdef pjmedia_vid_codec_info info[PJMEDIA_VID_CODEC_MGR_MAX_CODECS]
+         cdef pjmedia_vid_codec_param vparam
+         cdef unsigned int prio[PJMEDIA_VID_CODEC_MGR_MAX_CODECS]
+-        cdef int i
+         cdef int status
+ 
+         max_width, max_height = max_resolution
+diff -ruN sipsimple/core/_core.mediatransport.pxi sipsimple/core/_core.mediatransport.pxi
+--- sipsimple/core/_core.mediatransport.pxi	2021-02-18 22:20:23.931865157 +0100
++++ sipsimple/core/_core.mediatransport.pxi	2021-02-16 02:49:03.872618274 +0100
+@@ -397,7 +397,7 @@
+             pj_remote_sdp = NULL
+         if sdp_index < 0:
+             raise ValueError("sdp_index argument cannot be negative")
+-        if sdp_index >= pj_local_sdp.media_count:
++        if sdp_index >= <int>pj_local_sdp.media_count:
+             raise ValueError("sdp_index argument out of range")
+         with nogil:
+             status = pjmedia_transport_media_create(transport, pool, 0, pj_remote_sdp, sdp_index)
+@@ -488,7 +488,6 @@
+     def set_INIT(self):
+         global _ice_cb
+         cdef int af
+-        cdef int i
+         cdef int status
+         cdef int port
+         cdef pj_caching_pool *caching_pool
+@@ -882,7 +881,7 @@
+             pj_remote_sdp = NULL
+         if sdp_index < 0:
+             raise ValueError("sdp_index argument cannot be negative")
+-        if sdp_index >= pj_local_sdp.media_count:
++        if sdp_index >= <int>pj_local_sdp.media_count:
+             raise ValueError("sdp_index argument out of range")
+         # Remove ICE and SRTP/ZRTP related attributes from SDP, they will be added by pjmedia_transport_encode_sdp
+         local_media = local_sdp.media[sdp_index]
+diff -ruN sipsimple/core/_core.pxd sipsimple/core/_core.pxd
+--- sipsimple/core/_core.pxd	2021-02-18 22:20:23.935865270 +0100
++++ sipsimple/core/_core.pxd	2021-02-06 20:02:57.495316125 +0100
+@@ -906,8 +906,8 @@
+     int pjmedia_codec_register_audio_codecs(pjmedia_endpt *endpt, const pjmedia_audio_codec_config *c) nogil
+     int pjmedia_codec_ffmpeg_vid_init(pjmedia_vid_codec_mgr *mgr, pj_pool_factory *pf) nogil
+     int pjmedia_codec_ffmpeg_vid_deinit() nogil
+-    int pjmedia_codec_vpx_init(pjmedia_vid_codec_mgr *mgr, pj_pool_factory *pf) nogil
+-    int pjmedia_codec_vpx_deinit() nogil
++    int pjmedia_codec_vpx_vid_init(pjmedia_vid_codec_mgr *mgr, pj_pool_factory *pf) nogil
++    int pjmedia_codec_vpx_vid_deinit() nogil
+ 
+ cdef extern from "pjsip.h":
+ 
+diff -ruN sipsimple/core/_core.sdp.pxi sipsimple/core/_core.sdp.pxi
+--- sipsimple/core/_core.sdp.pxi	2021-02-18 22:20:23.995866960 +0100
++++ sipsimple/core/_core.sdp.pxi	2021-02-06 19:30:28.787506745 +0100
+@@ -966,7 +966,6 @@
+ 
+ cdef SDPSession SDPSession_create(pjmedia_sdp_session_ptr_const pj_session):
+     cdef SDPConnection connection = None
+-    cdef int i
+     if pj_session.conn != NULL:
+         connection = SDPConnection_create(pj_session.conn)
+     return SDPSession(_pj_str_to_bytes(pj_session.origin.addr),
+@@ -985,7 +984,6 @@
+ 
+ cdef FrozenSDPSession FrozenSDPSession_create(pjmedia_sdp_session_ptr_const pj_session):
+     cdef FrozenSDPConnection connection = None
+-    cdef int i
+     if pj_session.conn != NULL:
+         connection = FrozenSDPConnection_create(pj_session.conn)
+     return FrozenSDPSession(_pj_str_to_bytes(pj_session.origin.addr),
+@@ -1004,7 +1002,6 @@
+ 
+ cdef SDPMediaStream SDPMediaStream_create(pjmedia_sdp_media *pj_media):
+     cdef SDPConnection connection = None
+-    cdef int i
+     if pj_media.conn != NULL:
+         connection = SDPConnection_create(pj_media.conn)
+     return SDPMediaStream(_pj_str_to_bytes(pj_media.desc.media),
+@@ -1018,7 +1015,6 @@
+ 
+ cdef FrozenSDPMediaStream FrozenSDPMediaStream_create(pjmedia_sdp_media *pj_media):
+     cdef FrozenSDPConnection connection = None
+-    cdef int i
+     if pj_media.conn != NULL:
+         connection = FrozenSDPConnection_create(pj_media.conn)
+     return FrozenSDPMediaStream(_pj_str_to_bytes(pj_media.desc.media),
+diff -ruN sipsimple/core/_core.ua.pxi sipsimple/core/_core.ua.pxi
+--- sipsimple/core/_core.ua.pxi	2021-02-18 22:20:24.003867185 +0100
++++ sipsimple/core/_core.ua.pxi	2021-02-06 19:30:46.520008320 +0100
+@@ -1075,8 +1075,6 @@
+     cdef pjmedia_sdp_session *sdp
+     cdef pjmedia_sdp_media *media
+     cdef pjmedia_sdp_attr *attr
+-    cdef int i
+-    cdef int j
+     cdef pj_str_t new_value
+     try:
+         ua = _get_ua()
+diff -ruN sipsimple/core/_core.util.pxi sipsimple/core/_core.util.pxi
+--- sipsimple/core/_core.util.pxi	2021-02-18 22:20:24.051868537 +0100
++++ sipsimple/core/_core.util.pxi	2021-02-06 20:14:30.530825814 +0100
+@@ -219,7 +219,7 @@
+     cdef pjsip_ctype_hdr *ctype_header
+     cdef pjsip_cseq_hdr *cseq_header
+     cdef char *buf
+-    cdef int buf_len, i, status
++    cdef int buf_len, status
+     headers = {}
+     header = <pjsip_hdr *> (<pj_list *> &msg.hdr).next
+     while header != &msg.hdr:
