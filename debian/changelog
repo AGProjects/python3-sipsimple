@@ -1,8 +1,24 @@
 python-sipsimple (4.0.0) unstable; urgency=medium
 
   * Migrated to python 3
+  * Added migration filees fto or pjsip 2.10
+  * Only publish Bonjour UDP transport if no other transport exists
+  * Use TLS as default MSRP transport for Bonjour accounts
+  * Update installation instructions
+  * Show TLS error details in failure notification
+  * Capture TLS certificates read errors
+  * Do not verify TLS peer for Bonjour connections
+  * Capture MSRP TLS verification error context
+  * Load entire list of CAs
+  * Post more XCAP notifications
+  * Catch DNS resolver initializations exceptions
+  * Added tls_name URI param to verify the peer inside PJSIP
+  * Log which media stream has failed
+  * Added tls_certificate ca_list properties for accounts
+  * Fallback to tls general options if account tls settings are missing
+  * Patch dns.query for versions that support setting the backend
 
- -- Adrian Georgescu <ag@ag-projects.com>  Sat, 30 Jan 2021 13:01:29 +0100
+ -- Adrian Georgescu <ag@ag-projects.com>  Thu, 25 Feb 2021 12:55:49 +0100
 
 python-sipsimple (3.5.1) unstable; urgency=medium
 
