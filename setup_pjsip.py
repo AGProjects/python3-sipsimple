@@ -97,8 +97,8 @@ class PJSIP_build_ext(build_ext):
             stdout, stderr = sub.communicate(input=input)
             returncode = sub.returncode
             if not silent:
-                sys.stdout.write(stdout)
-                sys.stderr.write(stderr)
+                sys.stdout.write(stdout.decode())
+                sys.stderr.write(stderr.decode())
         except OSError as e:
             if e.errno == errno.ENOENT:
                 raise RuntimeError('"%s" is not present on this system' % cmdline[0])
@@ -106,7 +106,7 @@ class PJSIP_build_ext(build_ext):
                 raise
         if returncode != 0:
             raise RuntimeError('Got return value %d while executing "%s", stderr output was:\n%s' % (returncode, " ".join(cmdline), stderr))
-        return stdout
+        return stdout.decode()
 
     @staticmethod
     def get_make_cmd():
@@ -124,8 +124,8 @@ class PJSIP_build_ext(build_ext):
     @classmethod
     def get_makefile_variables(cls, makefile):
         """Returns all variables in a makefile as a dict"""
-        stdout = cls.distutils_exec_process([cls.get_make_cmd(), "-f", makefile, "-pR", makefile], silent=True)
-        return dict(tup for tup in re.findall("(^[a-zA-Z]\w+)\s*:?=\s*(.*)$", stdout.decode(), re.MULTILINE))
+        stdout = cls.distutils_exec_process([cls.get_make_cmd(), "-f", makefile, "-pR", makefile], silent=False)
+        return dict(tup for tup in re.findall("(^[a-zA-Z]\w+)\s*:?=\s*(.*)$", stdout, re.MULTILINE))
 
     @classmethod
     def makedirs(cls, path):
@@ -139,7 +139,7 @@ class PJSIP_build_ext(build_ext):
     def initialize_options(self):
         build_ext.initialize_options(self)
         self.pjsip_clean_compile = 0
-        self.pjsip_verbose_build = 0
+        self.pjsip_verbose_build = 1
         self.pjsip_dir = os.path.join(os.path.dirname(__file__), "deps", "pjsip")
 
     def configure_pjsip(self):
