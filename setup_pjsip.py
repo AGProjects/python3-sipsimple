@@ -33,7 +33,7 @@ if sys_platform == "darwin":
     sqlite_cflags = "-I/usr/local/opt/sqlite/include"
     sqlite_ldflags = "-L/usr/local/opt/sqlite/lib"
     # Prepare final flags
-    arch_flags =  "-arch x86_64"
+    arch_flags =  "-arch x86_64 -mmacosx-version-min=%s" % min_osx_version
     local_cflags = " %s %s %s -mmacosx-version-min=%s -isysroot %s" % (arch_flags, ossl_cflags, sqlite_cflags, min_osx_version, osx_sdk_path)
     local_ldflags = " %s %s %s -isysroot %s" % (arch_flags, ossl_ldflags, sqlite_ldflags, osx_sdk_path)
     os.environ['CFLAGS'] = os.environ.get('CFLAGS', '') + local_cflags
