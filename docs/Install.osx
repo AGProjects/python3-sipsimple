@@ -18,7 +18,7 @@ Step 1. Prerequisites
 
  * MacOSX >= 10.14
  * Apple Developer tools (XCode 11)
- * Homebrew from http://brew.sh
+ * MacPorts from https://guide.macports.org
 
 
 Step 2. Install dependencies
@@ -27,12 +27,108 @@ Step 2. Install dependencies
 See Dependencies.txt for detailed description of the required libraries and
 their minimum version number.
 
-A. Install the C dependencies, the software will be installed
-under /usr/local folder by default with Homebrew:
+A. Install the C dependencies
 
-brew install pkg-config darcs gnutls yasm pkg-config x264 libvpx mpfr libmpc
+Install some building tools:
 
-brew install -s ffmpeg
+port install darcs pkg-config yasm 
+
+Install the dynamic libraries required by sipsimple:
+
+sudo port install x264 gnutls openssl sqlite gnutls ffmpeg mpfr libmpc libvpx
+
+If building for the Mac Store or a notarized version a lot more attention is
+required to build all dependencies.  All dynamic libraries must:
+
+  1. be signed with an Apple developer account
+  2. contain LC_VERSION_MIN_MACOSX option
+  3. not load non-system libraries from outside the sandbox
+
+For solving 2) all port packages and their depedencies must be re-compiled from
+sources. First locate all the dependencies of each package:
+
+  otool -L /opt/local/lib/XYZ.dylib
+
+For each found dependency, remove the binary package and reinstall the port
+from source:
+
+   sudo port uninstall package
+   sudo port -s install package
+
+Check if the library contains LC_VERSION_MIN_MACOSX flag, for example:
+   
+otool -l /opt/local/lib/libgnutls.dylib |grep -B1 -A3 LC_VERSION_MIN_MACOSX
+Load command 8
+      cmd LC_VERSION_MIN_MACOSX
+  cmdsize 16
+  version 10.11
+      sdk 10.14
+
+For solving 3) use install_name_tool as follows:
+
+old_path="/opt/local/lib/\|/usr/local/opt/libmpc/lib/"  # <-- add all native lib paths
+new_path="@executable_path/../Frameworks/" # <- replace with relative path inside sandbox
+
+for library in $@; do
+  new_basename=$(basename $library)
+  echo $new_basename
+  install_name_tool -id $new_path$new_basename $library
+  dependencies=$(otool -L $library | grep $old_path | awk '{print $1}')
+  for dependency in $dependencies; do
+      new_basename=$(basename $dependency)
+      new_name="$new_path$new_basename"
+      install_name_tool -change $dependency $new_name $library
+  done
+done
+
+For example:
+
+otool -L /opt/local/lib/libgnutls.dylib
+	/opt/local/lib/libgnutls.30.dylib (compatibility version 59.0.0, current version 59.1.0)
+	/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0, current version 58286.255.3)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 1575.17.0)
+	/opt/local/lib/libp11-kit.0.dylib (compatibility version 4.0.0, current version 4.0.0)
+	/opt/local/lib/libidn2.0.dylib (compatibility version 4.0.0, current version 4.7.0)
+	/opt/local/lib/libunistring.2.dylib (compatibility version 4.0.0, current version 4.0.0)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1252.250.1)
+	/opt/local/lib/libtasn1.6.dylib (compatibility version 13.0.0, current version 13.0.0)
+	/opt/local/lib/libnettle.8.dylib (compatibility version 8.0.0, current version 8.1.0)
+	/opt/local/lib/libhogweed.6.dylib (compatibility version 6.0.0, current version 6.1.0)
+	/opt/local/lib/libgmp.10.dylib (compatibility version 15.0.0, current version 15.1.0)
+	/opt/local/lib/libintl.8.dylib (compatibility version 10.0.0, current version 10.5.0)
+
+
+after running install_name_tool becomes:
+
+otool -L Frameworks/libgnutls.30.dylib 
+	@executable_path/../Frameworks/libgnutls.30.dylib (compatibility version 59.0.0, current version 59.1.0)
+	/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0, current version 58286.255.3)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 1575.17.0)
+	@executable_path/../Frameworks/libp11-kit.0.dylib (compatibility version 4.0.0, current version 4.0.0)
+	@executable_path/../Frameworks/libidn2.0.dylib (compatibility version 4.0.0, current version 4.7.0)
+	@executable_path/../Frameworks/libunistring.2.dylib (compatibility version 4.0.0, current version 4.0.0)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1252.250.1)
+	@executable_path/../Frameworks/libtasn1.6.dylib (compatibility version 13.0.0, current version 13.0.0)
+	@executable_path/../Frameworks/libnettle.8.dylib (compatibility version 8.0.0, current version 8.1.0)
+	@executable_path/../Frameworks/libhogweed.6.dylib (compatibility version 6.0.0, current version 6.1.0)
+	@executable_path/../Frameworks/libgmp.10.dylib (compatibility version 15.0.0, current version 15.1.0)
+	@executable_path/../Frameworks/libintl.8.dylib (compatibility version 10.0.0, current version 10.5.0)
+
+
+Building libvpx library
+-----------------------
+
+To obtain LC_VERSION_MIN_MACOSX for libvpx.dylib:
+
+Download the sources of libvpx from github. Run configure, then edit libs.mk and change the
+line:
+
+$(BUILD_PFX)$(LIBVPX_SO): extralibs += -lm
+
+to:
+
+$(BUILD_PFX)$(LIBVPX_SO): extralibs += -lm -mmacosx-version-min=10.11
+
 
 
 Step 3. Install SIP SIMPLE SDK 
@@ -40,3 +136,5 @@ Step 3. Install SIP SIMPLE SDK
 
 See Install.linux document
 
+Same steps related to C dependencies must be taken for .so dynamic libraries
+that are part of Python packages on which the SDK depends.
