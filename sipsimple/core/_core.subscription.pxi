@@ -8,7 +8,7 @@ cdef class Subscription:
     #public methods
 
     def __cinit__(self, *args, **kwargs):
-        self.state = "NULL"
+        self.state = b"NULL"
         pj_timer_entry_init(&self._timeout_timer, 0, <void *> self, _Subscription_cb_timer)
         self._timeout_timer_active = 0
         pj_timer_entry_init(&self._refresh_timer, 1, <void *> self, _Subscription_cb_timer)
@@ -28,7 +28,7 @@ cdef class Subscription:
         cdef pjsip_cred_info *cred_info
         cdef PJSIPUA ua = _get_ua()
         cdef int status
-        if self._obj != NULL or self.state != "NULL":
+        if self._obj != NULL or self.state != b"NULL":
             raise SIPCoreError("Subscription.__init__() was already called")
         if refresh <= 0:
             raise ValueError("refresh argument needs to be a non-negative integer")
@@ -119,7 +119,7 @@ cdef class Subscription:
         with nogil:
             pjsip_dlg_inc_lock(self._dlg)
         try:
-            if self.state == "TERMINATED":
+            if self.state == b"TERMINATED":
                 raise SIPCoreError('This method may not be called in the "TERMINATED" state')
             if (content_type is not None and body is None) or (content_type is None and body is not None):
                 raise ValueError("Both or none of content_type and body arguments need to be specified")
@@ -137,7 +137,7 @@ cdef class Subscription:
             self.body = body
             self._send_subscribe(ua, self.refresh, &self._subscribe_timeout, self.extra_headers, content_type, body)
             self._cancel_timers(ua, 0, 1)
-            if prev_state == "NULL":
+            if prev_state == b"NULL":
                 _add_event("SIPSubscriptionWillStart", dict(obj=self))
         finally:
             with nogil:
@@ -150,9 +150,9 @@ cdef class Subscription:
         with nogil:
             pjsip_dlg_inc_lock(self._dlg)
         try:
-            if self.state == "TERMINATED":
+            if self.state == b"TERMINATED":
                 return
-            if self.state == "NULL":
+            if self.state == b"NULL":
                 raise SIPCoreError('This method may not be called in the "NULL" state')
             if timeout is not None:
                 if timeout <= 0:
@@ -187,7 +187,7 @@ cdef class Subscription:
             self._obj = NULL
             self._timeout_timer_active = 0
             self._refresh_timer_active = 0
-            self.state = "TERMINATED"
+            self.state = b"TERMINATED"
             return None
         else:
             return ua
@@ -242,7 +242,7 @@ cdef class Subscription:
         cdef int status
         cdef pj_time_val end_timeout
         self.state = state
-        if state == "ACCEPTED" and prev_state == "SENT":
+        if state == b"ACCEPTED" and prev_state == b"SENT":
             try:
                 contact_header = headers['Contact'][0]
             except LookupError:
@@ -270,7 +270,7 @@ cdef class Subscription:
                         with nogil:
                             pjsip_evsub_terminate(self._obj, 1)
                 return 0
-        elif state == "TERMINATED":
+        elif state == b"TERMINATED":
             pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
             self._cancel_timers(ua, 1, 1)
             self._obj = NULL
@@ -296,7 +296,7 @@ cdef class Subscription:
         cdef pj_time_val refresh
         _pjsip_msg_to_dict(rdata.msg_info.msg, event_dict)
         self.to_header = FrozenToHeader_create(rdata.msg_info.to_hdr)
-        if self.state != "TERMINATED":
+        if self.state != b"TERMINATED":
             try:
                 contact_header = event_dict["headers"]["Contact"][0]
             except LookupError:
@@ -307,7 +307,7 @@ cdef class Subscription:
                 expires = self._expires
             if expires == 0:
                 return 0
-        if self.state != "TERMINATED" and not self._want_end:
+        if self.state != b"TERMINATED" and not self._want_end:
             self._cancel_timers(ua, 1, 0)
             refresh.sec = max(1, expires - self.expire_warning_time, expires/2)
             refresh.msec = 0
@@ -789,7 +789,7 @@ cdef void _Subscription_cb_state(pjsip_evsub *sub, pjsip_event *event) with gil:
         if (event != NULL and event.type == PJSIP_EVENT_TSX_STATE and
             (event.body.tsx_state.tsx.state == PJSIP_TSX_STATE_COMPLETED or
              event.body.tsx_state.tsx.state == PJSIP_TSX_STATE_TERMINATED)):
-            if state == "TERMINATED":
+            if state == b"TERMINATED":
                 if event.body.tsx_state.tsx.role == PJSIP_ROLE_UAC:
                     code = event.body.tsx_state.tsx.status_code
                     reason = _pj_str_to_str(event.body.tsx_state.tsx.status_text)
