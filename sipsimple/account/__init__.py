@@ -376,9 +376,10 @@ class Account(SettingsObject):
         self._mwi_voicemail_uri = None
 
     def _NH_MWISubscriptionGotNotify(self, notification):
-        if notification.data.body and notification.data.content_type == MessageSummary.content_type:
+        body = notification.data.body.decode() if notification.data.body else None
+        if body and notification.data.content_type == MessageSummary.content_type:
             try:
-                message_summary = MessageSummary.parse(notification.data.body)
+                message_summary = MessageSummary.parse(body)
             except ParserError:
                 pass
             else:
@@ -386,9 +387,10 @@ class Account(SettingsObject):
                 notification.center.post_notification('SIPAccountGotMessageSummary', sender=self, data=NotificationData(message_summary=message_summary))
 
     def _NH_PresenceWinfoSubscriptionGotNotify(self, notification):
-        if notification.data.body and notification.data.content_type == WatcherInfoDocument.content_type:
+        body = notification.data.body.decode() if notification.data.body else None
+        if body and notification.data.content_type == WatcherInfoDocument.content_type:
             try:
-                watcher_info = WatcherInfoDocument.parse(notification.data.body)
+                watcher_info = WatcherInfoDocument.parse(body)
                 watcher_list = watcher_info['sip:' + self.id]
             except (ParserError, KeyError):
                 pass
@@ -413,9 +415,10 @@ class Account(SettingsObject):
         self._pwi_version = None
 
     def _NH_DialogWinfoSubscriptionGotNotify(self, notification):
-        if notification.data.body and notification.data.content_type == WatcherInfoDocument.content_type:
+        body = notification.data.body.decode() if notification.data.body else None
+        if body and notification.data.content_type == WatcherInfoDocument.content_type:
             try:
-                watcher_info = WatcherInfoDocument.parse(notification.data.body)
+                watcher_info = WatcherInfoDocument.parse(body)
                 watcher_list = watcher_info['sip:' + self.id]
             except (ParserError, KeyError):
                 pass
@@ -440,7 +443,7 @@ class Account(SettingsObject):
         self._dwi_version = None
 
     def _NH_PresenceSubscriptionGotNotify(self, notification):
-        body = notification.data.body.decode()
+        body = notification.data.body.decode() if notification.data.body else None
         if body and notification.data.content_type == RLSNotify.content_type:
             try:
                 rls_notify = RLSNotify.parse('{content_type}\r\n\r\n{body}'.format(content_type=notification.data.headers['Content-Type'], body=body))
@@ -467,9 +470,10 @@ class Account(SettingsObject):
         self._presence_version = None
 
     def _NH_SelfPresenceSubscriptionGotNotify(self, notification):
-        if notification.data.body and notification.data.content_type == PIDFDocument.content_type:
+        body = notification.data.body.decode() if notification.data.body else None
+        if body and notification.data.content_type == PIDFDocument.content_type:
             try:
-                pidf_doc = PIDFDocument.parse(notification.data.body)
+                pidf_doc = PIDFDocument.parse(body)
             except ParserError:
                 pass
             else:
@@ -478,9 +482,10 @@ class Account(SettingsObject):
                 notification.center.post_notification('SIPAccountGotSelfPresenceState', sender=self, data=NotificationData(pidf=pidf_doc))
 
     def _NH_DialogSubscriptionGotNotify(self, notification):
-        if notification.data.body and notification.data.content_type == RLSNotify.content_type:
+        body = notification.data.body.decode() if notification.data.body else None
+        if body and notification.data.content_type == RLSNotify.content_type:
             try:
-                rls_notify = RLSNotify.parse('{content_type}\r\n\r\n{body}'.format(content_type=notification.data.headers['Content-Type'], body=notification.data.body))
+                rls_notify = RLSNotify.parse('{content_type}\r\n\r\n{body}'.format(content_type=notification.data.headers['Content-Type'], body=body))
             except ParserError:
                 pass
             else:
