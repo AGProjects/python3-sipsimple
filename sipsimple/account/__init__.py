@@ -440,9 +440,10 @@ class Account(SettingsObject):
         self._dwi_version = None
 
     def _NH_PresenceSubscriptionGotNotify(self, notification):
-        if notification.data.body and notification.data.content_type == RLSNotify.content_type:
+        body = notification.data.body.decode()
+        if body and notification.data.content_type == RLSNotify.content_type:
             try:
-                rls_notify = RLSNotify.parse('{content_type}\r\n\r\n{body}'.format(content_type=notification.data.headers['Content-Type'], body=notification.data.body))
+                rls_notify = RLSNotify.parse('{content_type}\r\n\r\n{body}'.format(content_type=notification.data.headers['Content-Type'], body=body))
             except ParserError:
                 pass
             else:
@@ -456,7 +457,7 @@ class Account(SettingsObject):
                 elif not rls_notify.full_state and rls_notify.version > self._presence_version + 1:
                     self._presence_subscriber.resubscribe()
                 self._presence_version = rls_notify.version
-                data = NotificationData(version=rls_notify.version, full_state=rls_notify.full_state, resource_map=dict((resource.uri, resource) for resource in rls_notify))
+                data = NotificationData(version=rls_notify.version, full_state=rls_notify.full_state, resource_map=dict((str(resource.uri), resource) for resource in rls_notify))
                 notification.center.post_notification('SIPAccountGotPresenceState', sender=self, data=data)
 
     def _NH_PresenceSubscriptionDidEnd(self, notification):
