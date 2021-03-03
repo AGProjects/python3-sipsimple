@@ -1,7 +1,7 @@
 python3-sipsimple (4.0.0) unstable; urgency=medium
 
   * Migrated to python 3
-  * Added migration filees fto or pjsip 2.10
+  * Added migration files for pjsip 2.10
   * Only publish Bonjour UDP transport if no other transport exists
   * Use TLS as default MSRP transport for Bonjour accounts
   * Update installation instructions
