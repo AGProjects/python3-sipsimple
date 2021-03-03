@@ -1,4 +1,4 @@
-python-sipsimple (4.0.0) unstable; urgency=medium
+python3-sipsimple (4.0.0) unstable; urgency=medium
 
   * Migrated to python 3
   * Added migration filees fto or pjsip 2.10
@@ -18,7 +18,7 @@ python-sipsimple (4.0.0) unstable; urgency=medium
   * Fallback to tls general options if account tls settings are missing
   * Patch dns.query for versions that support setting the backend
 
- -- Adrian Georgescu <ag@ag-projects.com>  Thu, 25 Feb 2021 12:55:49 +0100
+ -- Adrian Georgescu <ag@ag-projects.com>  Wed Mar  3 15:29:13 -03 2021
 
 python-sipsimple (3.5.1) unstable; urgency=medium
 

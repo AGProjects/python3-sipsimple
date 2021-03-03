@@ -1,4 +1,4 @@
-Source: python-sipsimple
+Source: python3-sipsimple
 Section: python
 Priority: optional
 Maintainer: Adrian Georgescu <ag@ag-projects.com>
