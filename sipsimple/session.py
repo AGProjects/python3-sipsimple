@@ -984,7 +984,7 @@ class Session(object):
                             break
         self.direction = 'incoming'
         self.state = 'incoming'
-        self.transport = invitation.transport
+        self.transport = invitation.transport.decode().lower()
         self._invitation = invitation
         self.conference = ConferenceHandler(self)
         self.transfer_handler = TransferHandler(self)
@@ -1042,7 +1042,7 @@ class Session(object):
         self.direction = 'outgoing'
         self.proposed_streams = streams
         self.route = routes[0]
-        self.transport = self.route.transport
+        self.transport = self.route.transport.lower()
         self.local_focus = is_focus
         self._invitation = Invitation()
         self._local_identity = FromHeader(self.account.uri, self.account.display_name)
