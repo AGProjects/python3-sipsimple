@@ -533,12 +533,15 @@ cdef void _transport_state_cb(pjsip_transport *tp, pjsip_transport_state state, 
         local_address = '%s:%d' % (_buf_to_str(buf), pj_sockaddr_get_port(&tp.local_addr))
     else:
         local_address = None
+
     remote_address = '%s:%d' % (_pj_str_to_str(tp.remote_name.host), tp.remote_name.port)
-    event_dict = dict(transport=tp.type_name.decode().lower(), local_address=local_address, remote_address=remote_address)
+    event_dict = dict(transport=tp.type_name, local_address=local_address, remote_address=remote_address)
+    
     if state == PJSIP_TP_STATE_CONNECTED:
         _add_event("SIPEngineTransportDidConnect", event_dict)
     else:
-        event_dict['reason'] = _pj_status_to_str(info.status)
+        reason = _pj_status_to_str(info.status)
+        event_dict['reason'] = reason
         _add_event("SIPEngineTransportDidDisconnect", event_dict)
 
 
