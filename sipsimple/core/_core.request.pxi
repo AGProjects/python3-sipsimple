@@ -12,7 +12,7 @@ cdef class EndpointAddress:
         return "%s(%r, %r)" % (self.__class__.__name__, self.ip, self.port)
 
     def __str__(self):
-        return "%s:%d" % (self.ip, self.port)
+        return "%s:%d" % (self.ip.decode(), self.port)
 
 
 cdef class Request:

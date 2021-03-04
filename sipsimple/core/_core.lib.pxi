@@ -534,8 +534,9 @@ cdef void _transport_state_cb(pjsip_transport *tp, pjsip_transport_state state, 
     else:
         local_address = None
 
+    transport = tp.type_name.decode().lower()
     remote_address = '%s:%d' % (_pj_str_to_str(tp.remote_name.host), tp.remote_name.port)
-    event_dict = dict(transport=tp.type_name, local_address=local_address, remote_address=remote_address)
+    event_dict = dict(transport=transport, local_address=local_address, remote_address=remote_address)
     
     if state == PJSIP_TP_STATE_CONNECTED:
         _add_event("SIPEngineTransportDidConnect", event_dict)
