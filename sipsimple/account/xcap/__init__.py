@@ -130,14 +130,18 @@ class Document(object):
                     self.fetch_time = datetime.utcnow()
             elif e.status != 304: # Other than Not Modified:
                 raise XCAPError("failed to fetch %s document: %s" % (self.name, e))
+
         except ParserError as e:
             raise XCAPError("failed to parse %s document: %s" % (self.name, e))
         else:
             self.fetch_time = datetime.utcnow()
+
             if self.cached:
                 try:
-                    self.manager.storage.save(self.name, self.etag + os.linesep + document.decode() if isinstance(document, bytes) else document)
-                except XCAPStorageError:
+                    data = self.etag + os.linesep
+                    data += document.decode() if isinstance(document, bytes) else document
+                    self.manager.storage.save(self.name, data)
+                except XCAPStorageError as e:
                     pass
 
     def update(self):
