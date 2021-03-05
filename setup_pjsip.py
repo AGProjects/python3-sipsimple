@@ -139,7 +139,7 @@ class PJSIP_build_ext(build_ext):
     def initialize_options(self):
         build_ext.initialize_options(self)
         self.pjsip_clean_compile = 0
-        self.pjsip_verbose_build = 1
+        self.pjsip_verbose_build = 0
         self.pjsip_dir = os.path.join(os.path.dirname(__file__), "deps", "pjsip")
 
     def configure_pjsip(self):
