@@ -38,7 +38,6 @@ from sipsimple.payloads import addressbook, commonpolicy, dialogrules, omapolicy
 from sipsimple.payloads import rpid; del rpid  # needs to be imported to register its namespace
 from sipsimple.threading import run_in_twisted_thread
 from sipsimple.threading.green import Command, Worker, run_in_green_thread
-from sipsimple.util import execute_once
 
 import traceback
 
@@ -770,7 +769,7 @@ class XCAPManager(object):
     def rls_dialog_uri(self):
         return SIPAddress('%s+dialog@%s' % (self.account.id.username, self.account.id.domain))
 
-    @execute_once
+    @run_in_green_thread
     def init(self):
         """
         Initializes the XCAP manager before it can be started. Needs to be
