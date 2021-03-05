@@ -1733,7 +1733,7 @@ class XCAPManager(object):
     def _NH_XCAPSubscriptionGotNotify(self, notification):
         if notification.data.content_type == xcapdiff.XCAPDiffDocument.content_type:
             try:
-                xcap_diff = xcapdiff.XCAPDiffDocument.parse(notification.data.body)
+                xcap_diff = xcapdiff.XCAPDiffDocument.parse(notification.data.body.decode())
             except ParserError:
                 self.command_channel.send(Command('fetch', documents=set(self.document_names)))
             else:
