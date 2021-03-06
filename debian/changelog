@@ -1,3 +1,12 @@
+python3-sipsimple (4.0.1) unstable; urgency=medium
+
+  * Fixed accessing invitation.transport
+  * Update pjsip 2.10 patches
+  * Reset verbose build flag
+  * Fixed decoding xcap-diff payload
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Sat, 06 Mar 2021 09:51:19 -0300
+
 python3-sipsimple (4.0.0) unstable; urgency=medium
 
   * Migrated to python 3
