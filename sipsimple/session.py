@@ -984,7 +984,7 @@ class Session(object):
                             break
         self.direction = 'incoming'
         self.state = 'incoming'
-        self.transport = invitation.transport.decode().lower()
+        self.transport = invitation.transport.lower()
         self._invitation = invitation
         self.conference = ConferenceHandler(self)
         self.transfer_handler = TransferHandler(self)
