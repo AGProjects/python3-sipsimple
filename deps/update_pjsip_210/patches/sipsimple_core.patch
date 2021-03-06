@@ -1,3 +1,15 @@
+diff -ruN setup_pjsip.py setup_pjsip.py
+--- setup_pjsip.py	2021-02-18 22:20:23.927865045 +0100
++++ setup_pjsip.py	2021-02-06 20:08:25.900660619 +0100
+@@ -162,7 +162,7 @@
+             cmd = ["bash", "configure"]
+         else:
+             cmd = ["./configure"]
+-        cmd.extend(["--disable-g7221-codec"])
++        cmd.extend(["--with-vpx"])
+         ffmpeg_path = env.get("SIPSIMPLE_FFMPEG_PATH", None)
+         if ffmpeg_path is not None:
+             cmd.append("--with-ffmpeg=%s" % os.path.abspath(os.path.expanduser(ffmpeg_path)))
 diff -ruN sipsimple/core/_core.lib.pxi sipsimple/core/_core.lib.pxi
 --- sipsimple/core/_core.lib.pxi	2021-02-18 22:20:23.927865045 +0100
 +++ sipsimple/core/_core.lib.pxi	2021-02-06 20:08:25.900660619 +0100
@@ -132,6 +144,19 @@ diff -ruN sipsimple/core/_core.sdp.pxi sipsimple/core/_core.sdp.pxi
 diff -ruN sipsimple/core/_core.ua.pxi sipsimple/core/_core.ua.pxi
 --- sipsimple/core/_core.ua.pxi	2021-02-18 22:20:24.003867185 +0100
 +++ sipsimple/core/_core.ua.pxi	2021-02-06 19:30:46.520008320 +0100
+@@ -103,8 +103,10 @@
+             raise PJSIPError("Could not initialize event queue mutex", status)
+ 
+         self._ip_address = kwargs["ip_address"].encode() if kwargs["ip_address"] else None
+-        self.codecs = list(codec.encode() for codec in kwargs["codecs"])
+-        self.video_codecs = list(codec.encode() for codec in kwargs["video_codecs"])
++        #TODO self.codecs = list(codec.encode() for codec in kwargs["codecs"])
++        self.codecs = list(codec for codec in kwargs["codecs"])
++        #TODO self.video_codecs = list(codec.encode() for codec in kwargs["video_codecs"])
++        self.video_codecs = list(codec for codec in kwargs["video_codecs"])
+ 
+         self._module_name = PJSTR(b"mod-core")
+         self._module.name = self._module_name.pj_str
 @@ -1075,8 +1075,6 @@
      cdef pjmedia_sdp_session *sdp
      cdef pjmedia_sdp_media *media
