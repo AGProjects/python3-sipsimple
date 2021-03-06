@@ -236,6 +236,39 @@ diff -ruN pjproject-2.10/pjlib/src/pj/os_core_unix.c pjsip/pjlib/src/pj/os_core_
  #else
      pj_assert( sem == (pj_sem_t*) 1 );
      return PJ_SUCCESS;
+--- pjproject-2.10/pjmedia/include/pjmedia/config_auto.h.in	2021-02-05 09:00:45.241108718 +0100
++++ pjsip/pjmedia/include/pjmedia/config_auto.h.in	2021-02-22 21:46:52.232215546 +0100
+@@ -36,6 +36,7 @@
+ #undef PJMEDIA_HAS_G711_CODEC
+ #endif
+
++#define PJMEDIA_HAS_VIDEO		1
+
+ #endif  /* __PJMEDIA_CONFIG_AUTO_H_ */
+
+diff -ruN pjproject-2.10/pjmedia/build/Makefile pjproject-2.10/pjmedia/build/Makefile
+--- pjproject-2.10/pjmedia/build/Makefile	2021-02-05 09:00:45.241108718 +0100
++++ pjsip/pjmedia/build/Makefile	2021-02-22 21:46:52.232215546 +0100
+@@ -72,8 +72,8 @@
+ 			sound_legacy.o sound_port.o stereo_port.o stream_common.o \
+ 			stream.o stream_info.o tonegen.o transport_adapter_sample.o \
+ 			transport_ice.o transport_loop.o transport_srtp.o transport_udp.o \
+-			types.o vid_codec.o vid_codec_util.o \
+-			vid_port.o vid_stream.o vid_stream_info.o vid_conf.o \
++			transport_zrtp.o types.o vid_codec.o vid_codec_util.o mixer_port.o \
++			vid_port.o vid_stream.o vid_tee.o vid_stream_info.o vid_conf.o \
+ 			wav_player.o wav_playlist.o wav_writer.o wave.o \
+ 			wsola.o audiodev.o videodev.o
+ 
+@@ -106,7 +106,7 @@
+ export PJMEDIA_VIDEODEV_SRCDIR = ../src/pjmedia-videodev
+ export PJMEDIA_VIDEODEV_OBJS += videodev.o errno.o avi_dev.o ffmpeg_dev.o \
+ 				colorbar_dev.o v4l2_dev.o opengl_dev.o \
+-				util.o
++				util.o fb_dev.o null_dev.o
+ export PJMEDIA_VIDEODEV_CFLAGS += $(_CFLAGS)
+ export PJMEDIA_VIDEODEV_CXXFLAGS += $(_CXXFLAGS)
+ export PJMEDIA_VIDEODEV_LDFLAGS += $(PJMEDIA_LDLIB) \
 diff -ruN pjproject-2.10/pjmedia/include/pjmedia/event.h pjsip/pjmedia/include/pjmedia/event.h
 --- pjproject-2.10/pjmedia/include/pjmedia/event.h	2020-02-14 10:48:27.000000000 +0100
 +++ pjsip/pjmedia/include/pjmedia/event.h	2021-02-06 16:57:17.374166159 +0100
@@ -1123,21 +1156,20 @@ diff -ruN pjproject-2.10/pjmedia/include/pjmedia/vid_stream.h pjsip/pjmedia/incl
  
  /**
   * @}
-diff -ruN pjproject-2.10/pjmedia/include/pjmedia-audiodev/audiodev.h pjsip/pjmedia/include/pjmedia-audiodev/audiodev.h
---- pjproject-2.10/pjmedia/include/pjmedia-audiodev/audiodev.h	2020-02-14 10:48:27.000000000 +0100
-+++ pjsip/pjmedia/include/pjmedia-audiodev/audiodev.h	2021-02-06 16:53:28.395408793 +0100
-@@ -24,6 +24,7 @@
+--- pjproject-2.10/pjmedia/include/pjmedia/audiodev.h	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/include/pjmedia/audiodev.h	2021-02-06 16:53:28.395408793 +0100
+@@ -29,6 +29,7 @@
   * @file audiodev.h
-  * @brief Audio subsystem API.
+  * @brief Audio device API.
   */
 +#include <pj/os.h>
- #include <pj/pool.h>
- #include <pjmedia/audiodev.h>
- 
-@@ -99,10 +100,38 @@
- PJ_DECL(pj_status_t)
- pjmedia_aud_unregister_factory(pjmedia_aud_dev_factory_create_func_ptr adf);
- 
+ #include <pjmedia-audiodev/config.h>
+ #include <pjmedia-audiodev/errno.h>
+ #include <pjmedia/format.h>
+@@ -93,6 +94,38 @@
+ typedef pjmedia_aud_dev_factory*
+ (*pjmedia_aud_dev_factory_create_func_ptr)(pj_pool_factory*);
+
 +typedef enum pjmedia_aud_dev_event {
 +    PJMEDIA_AUD_DEV_DEFAULT_INPUT_CHANGED,
 +    PJMEDIA_AUD_DEV_DEFAULT_OUTPUT_CHANGED,
@@ -1147,9 +1179,8 @@ diff -ruN pjproject-2.10/pjmedia/include/pjmedia-audiodev/audiodev.h pjsip/pjmed
 +
 +
 +typedef void (*pjmedia_aud_dev_observer_callback)(pjmedia_aud_dev_event event);
- 
- /**
-- * @}
++ 
++/**
 + * This structure specifies the parameters to set an audio device observer
 + */
 +typedef struct pjmedia_aud_dev_observer {
@@ -1169,11 +1200,20 @@ diff -ruN pjproject-2.10/pjmedia/include/pjmedia-audiodev/audiodev.h pjsip/pjmed
 + *
 + * @return             PJ_SUCCESS on successful operation or the appropriate
 + *                     error code.
-  */
++ */
 +PJ_DECL(pj_status_t) pjmedia_aud_dev_set_observer_cb(pjmedia_aud_dev_observer_callback cb);
- 
- PJ_END_DECL
- 
+
+ /* Audio driver structure */
+ typedef struct pjmedia_aud_driver
+@@ -120,6 +150,8 @@
+     unsigned        dev_cnt;           /* Total number of devices.         */
+     pj_uint32_t             dev_list[PJMEDIA_AUD_MAX_DEVS];/* Array of device IDs.             */
+
++    pjmedia_aud_dev_observer  dev_observer;
++
+ } pjmedia_aud_subsys;
+
+
 diff -ruN pjproject-2.10/pjmedia/include/pjmedia-audiodev/audiodev_imp.h pjsip/pjmedia/include/pjmedia-audiodev/audiodev_imp.h
 --- pjproject-2.10/pjmedia/include/pjmedia-audiodev/audiodev_imp.h	2020-02-14 10:48:27.000000000 +0100
 +++ pjsip/pjmedia/include/pjmedia-audiodev/audiodev_imp.h	2021-02-06 18:37:31.685678395 +0100
@@ -3656,6 +3696,15 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/vid_stream.c pjsip/pjmedia/src/pjme
  	case PJMEDIA_EVENT_KEYFRAME_MISSING:
  	    /* Republish this event later from get_frame(). */
  	    pj_memcpy(&stream->miss_keyframe_event, event, sizeof(*event));
+@@ -534,7 +541,7 @@
+                                pkt_len);
+
+     /* Send RTCP */
+-    send_rtcp(stream, PJ_TRUE, PJ_FALSE);
++    send_rtcp(stream, PJ_TRUE, PJ_FALSE, PJ_FALSE, PJ_FALSE);
+
+     /* Update stats in case the stream is paused */
+     stream->rtcp.stat.rtp_tx_last_seq = pj_ntohs(stream->enc->rtp.out_hdr.seq);
 @@ -1028,6 +1039,14 @@
      }
  
@@ -3919,7 +3968,8 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/vid_tee.c pjsip/pjmedia/src/pjmedia
 -        pj_status_t status;
  
          vfi = pjmedia_get_video_format_info(NULL, port->info.fmt.id);
-         if (vfi == NULL)
+-        if (vfi == NULL)
++        if (vfi == NULL) {
 -            return PJMEDIA_EBADFMT;
 +            status = PJMEDIA_EBADFMT;
 +            goto end;
@@ -3934,7 +3984,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/vid_tee.c pjsip/pjmedia/src/pjmedia
          
          realloc_buf(tee, (option & PJMEDIA_VID_TEE_DST_DO_IN_PLACE_PROC)?
                      2: 1, vafp.framebytes);
-@@ -248,7 +281,7 @@
+@@ -248,7 +280,7 @@
                       NULL, tee->pool, &conv_param,
                       &tee->tee_conv[tee->dst_port_cnt].conv);
          if (status != PJ_SUCCESS)
@@ -3943,7 +3993,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/vid_tee.c pjsip/pjmedia/src/pjmedia
          
          tee->tee_conv[tee->dst_port_cnt].conv_buf_size = vafp.framebytes;
      } else {
-@@ -259,8 +292,12 @@
+@@ -259,8 +291,12 @@
      tee->dst_ports[tee->dst_port_cnt].dst = port;
      tee->dst_ports[tee->dst_port_cnt].option = option;
      ++tee->dst_port_cnt;
@@ -3958,7 +4008,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/vid_tee.c pjsip/pjmedia/src/pjmedia
  }
  
  
-@@ -276,6 +313,8 @@
+@@ -276,6 +312,8 @@
      PJ_ASSERT_RETURN(vid_tee && vid_tee->info.signature==TEE_PORT_SIGN,
  		     PJ_EINVAL);
  
@@ -3967,7 +4017,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/vid_tee.c pjsip/pjmedia/src/pjmedia
      for (i = 0; i < tee->dst_port_cnt; ++i) {
  	if (tee->dst_ports[i].dst == port) {
              if (tee->tee_conv[i].conv)
-@@ -286,10 +325,13 @@
+@@ -286,10 +324,13 @@
              pj_array_erase(tee->tee_conv, sizeof(tee->tee_conv[0]),
  			   tee->dst_port_cnt, i);
  	    --tee->dst_port_cnt;
@@ -3981,7 +4031,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/vid_tee.c pjsip/pjmedia/src/pjmedia
      return PJ_ENOTFOUND;
  }
  
-@@ -300,6 +342,12 @@
+@@ -300,6 +341,12 @@
      unsigned i, j;
      const pj_uint8_t PUT_FRM_DONE = 1;
  
@@ -3994,7 +4044,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/vid_tee.c pjsip/pjmedia/src/pjmedia
      pj_bzero(tee->put_frm_flag, tee->dst_port_cnt *
  				sizeof(tee->put_frm_flag[0]));
  
-@@ -364,6 +412,7 @@
+@@ -364,6 +411,7 @@
          }
      }
  
@@ -4002,7 +4052,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/vid_tee.c pjsip/pjmedia/src/pjmedia
      return PJ_SUCCESS;
  }
  
-@@ -383,6 +432,11 @@
+@@ -383,6 +431,11 @@
  
      PJ_ASSERT_RETURN(port && port->info.signature==TEE_PORT_SIGN, PJ_EINVAL);
  
@@ -6928,7 +6978,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-videodev/videodev.c pjsip/pjmedia/s
      vid_subsys->drv[vid_subsys->drv_cnt++].create = &pjmedia_qt_factory;
  #endif
 +#if PJMEDIA_VIDEO_DEV_HAS_AVF
-+    vid_subsys.drv[vid_subsys.drv_cnt++].create = &pjmedia_avf_factory;
++    vid_subsys->drv[vid_subsys->drv_cnt++].create = &pjmedia_avf_factory;
 +#endif
  #if PJMEDIA_VIDEO_DEV_HAS_OPENGL
      vid_subsys->drv[vid_subsys->drv_cnt++].create = &pjmedia_opengl_factory;
@@ -6938,10 +6988,10 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-videodev/videodev.c pjsip/pjmedia/s
      vid_subsys->drv[vid_subsys->drv_cnt++].create = &pjmedia_cbar_factory;
  #endif
 +#if PJMEDIA_VIDEO_DEV_HAS_FB
-+    vid_subsys.drv[vid_subsys.drv_cnt++].create = &pjmedia_fb_factory;
++    vid_subsys->drv[vid_subsys->drv_cnt++].create = &pjmedia_fb_factory;
 +#endif
 +#if PJMEDIA_VIDEO_DEV_HAS_NULL
-+    vid_subsys.drv[vid_subsys.drv_cnt++].create = &pjmedia_null_factory;
++    vid_subsys->drv[vid_subsys->drv_cnt++].create = &pjmedia_null_factory;
 +#endif
  
      /* Initialize each factory and build the device ID list */
@@ -7459,6 +7509,29 @@ diff -ruN pjproject-2.10/third_party/build/os-auto.mak.in pjsip/third_party/buil
  ifneq (@ac_no_webrtc@,1)
  ifeq (@ac_external_webrtc@,1)
  # External webrtc
+diff -ruN pjproject-2.10/build.mak.in pjsip/build.mak.in
+--- pjproject-2.10/build.mak.in	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/build.mak.in	2021-02-06 16:09:49.029693848 +0100
+@@ -148,6 +148,19 @@
+ endif
+ endif
+
++#ifneq (@ac_no_zsrtp@,1)
++ifeq (@ac_external_zsrtp@,1)
++APP_THIRD_PARTY_EXT += -lzsrtp
++else
++APP_THIRD_PARTY_LIB_FILES += $(PJ_DIR)/third_party/lib/libzsrtp-$(LIB_SUFFIX)
++ifeq ($(PJ_SHARED_LIBRARIES),)
++APP_THIRD_PARTY_LIBS += -lzsrtp-$(TARGET_NAME) -lsqlite3 -lstdc++
++else
++APP_THIRD_PARTY_LIBS += -lzsrtp
++APP_THIRD_PARTY_LIB_FILES += $(PJ_DIR)/third_party/lib/libzsrtp.$(SHLIB_SUFFIX).$(PJ_VERSION_MAJOR) $(PJ_DIR)/third_party/lib/libzsrtp.$(SHLIB_SUFFIX)
++endif
++endif
++#endif
+
+ # Additional flags
+ @ac_build_mak_vars@
 diff -ruN pjproject-2.10/third_party/build/os-darwinos.mak pjsip/third_party/build/os-darwinos.mak
 --- pjproject-2.10/third_party/build/os-darwinos.mak	2020-02-14 10:48:27.000000000 +0100
 +++ pjsip/third_party/build/os-darwinos.mak	2021-02-06 16:00:34.131596843 +0100
@@ -7488,4 +7561,201 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
  DIRS += resample
 +DIRS += zsrtp 
  
+ 
+--- pjproject-2.10/pjmedia/src/pjmedia-audiodev/audiodev.c	2021-02-04 11:19:25.357096871 +0100
++++ pjsip/pjmedia/src/pjmedia-audiodev/audiodev.c	2021-02-04 11:09:10.120174258 +0100
+@@ -143,6 +143,18 @@
+     aud_subsys->drv[aud_subsys->drv_cnt++].create = &pjmedia_null_audio_factory;
+ #endif
+ 
++    /* Initialize audio device observer objects */
++    pj_status_t st;
++    aud_subsys->dev_observer.pool = pj_pool_create(pf, "aud_dev_observer_pool", 512, 512, NULL);
++    if (!aud_subsys->dev_observer.pool) {
++        return PJ_ENOMEM;
++    }
++    st = pj_mutex_create_simple(aud_subsys->dev_observer.pool, "aud_dev_observer_lock", &aud_subsys->dev_observer.lock);
++    if (st != PJ_SUCCESS) {
++        return st;
++    }
++    aud_subsys->dev_observer.cb = NULL;
++
+     /* Initialize each factory and build the device ID list */
+     for (i=0; i<aud_subsys->drv_cnt; ++i) {
+ 	status = pjmedia_aud_driver_init(i, PJ_FALSE);
+@@ -229,6 +241,9 @@
+ 	    pjmedia_aud_driver_deinit(i);
+ 	}
+
++        pj_mutex_destroy(aud_subsys->dev_observer.lock);
++        pj_pool_release(aud_subsys->dev_observer.pool);
++
+ 	aud_subsys->pf = NULL;
+     }
+     return PJ_SUCCESS;
+--- pjproject-2.10/pjmedia/src/pjmedia/audiodev.c	2021-02-04 11:19:25.357096871 +0100
++++ pjsip/pjmedia/src/pjmedia/audiodev.c	2021-02-04 11:09:10.120174258 +0100
+@@ -74,6 +74,60 @@
+     return &aud_subsys;
+ }
+
++/* callback for device change operations */
++static void process_aud_dev_change_event(pjmedia_aud_dev_change_event event)
++{
++    pj_status_t status;
++
++    if (!pj_thread_is_registered()) {
++        status = pj_thread_register("aud_dev_observer", aud_subsys.dev_observer.thread_desc, &aud_subsys.dev_observer.thread);
++        if (status != PJ_SUCCESS) {
++            return;
++        }
++        PJ_LOG(5, (THIS_FILE, "Audio device change thread registered"));
++    }
++
++    status = pj_mutex_lock(aud_subsys.dev_observer.lock);
++    if (status != PJ_SUCCESS) {
++        PJ_LOG(5, (THIS_FILE, "Could not acquire audio device change lock"));
++        return;
++    }
++
++    if (!aud_subsys.dev_observer.cb) {
++        /* there is no registered callback to call */
++        goto end;
++    }
++
++    switch(event) {
++    case DEFAULT_INPUT_CHANGED:
++        PJ_LOG(5, (THIS_FILE, "Default input device changed"));
++        pjmedia_aud_dev_refresh();
++        (*aud_subsys.dev_observer.cb)(PJMEDIA_AUD_DEV_DEFAULT_INPUT_CHANGED);
++        break;
++    case DEFAULT_OUTPUT_CHANGED:
++        PJ_LOG(5, (THIS_FILE, "Default output device changed"));
++        pjmedia_aud_dev_refresh();
++        (*aud_subsys.dev_observer.cb)(PJMEDIA_AUD_DEV_DEFAULT_OUTPUT_CHANGED);
++        break;
++    case DEVICE_LIST_CHANGED:
++        PJ_LOG(5, (THIS_FILE, "Device list changed"));
++        (*aud_subsys.dev_observer.cb)(PJMEDIA_AUD_DEV_LIST_WILL_REFRESH);
++        pjmedia_aud_dev_refresh();
++        (*aud_subsys.dev_observer.cb)(PJMEDIA_AUD_DEV_LIST_DID_REFRESH);
++        break;
++    default:
++        PJ_LOG(5, (THIS_FILE, "Unknown event: %d", event));
++        break;
++    }
++
++end:
++    status = pj_mutex_unlock(aud_subsys.dev_observer.lock);
++    if (status != PJ_SUCCESS) {
++        PJ_LOG(5, (THIS_FILE, "Could not release audio device change lock"));
++    }
++
++}
++
+ /* API: init driver */
+ PJ_DEF(pj_status_t) pjmedia_aud_driver_init(unsigned drv_idx,
+ 					    pj_bool_t refresh)
+@@ -99,6 +152,11 @@
+ 	f = drv->f;
+     }
+ 
++    /* Register device change observer */
++    if (!refresh) {
++        f->op->set_dev_change_cb(f, &process_aud_dev_change_event);
++    }
++
+     if (!f)
+ 	return PJ_EUNKNOWN;
+ 
+@@ -123,8 +181,8 @@
+     */
+ 
+     /* Fill in default devices */
+-    drv->play_dev_idx = drv->rec_dev_idx =
+-			drv->dev_idx = PJMEDIA_AUD_INVALID_DEV;
++    drv->rec_dev_idx = f->op->get_default_rec_dev(f);
++    drv->play_dev_idx = f->op->get_default_play_dev(f);
+     for (i=0; i<dev_cnt; ++i) {
+ 	pjmedia_aud_dev_info info;
+ 
+@@ -148,15 +207,8 @@
+ 	    /* Set default capture device */
+ 	    drv->rec_dev_idx = i;
+ 	}
+-	if (drv->dev_idx < 0 && info.input_count &&
+-	    info.output_count)
+-	{
+-	    /* Set default capture and playback device */
+-	    drv->dev_idx = i;
+-	}
+ 
+-	if (drv->play_dev_idx >= 0 && drv->rec_dev_idx >= 0 && 
+-	    drv->dev_idx >= 0) 
++	if (drv->play_dev_idx >= 0 && drv->rec_dev_idx >= 0)
+ 	{
+ 	    /* Done. */
+ 	    break;
+@@ -183,13 +248,13 @@
+     pjmedia_aud_driver *drv = &aud_subsys.drv[drv_idx];
+ 
+     if (drv->f) {
++       drv->f->op->set_dev_change_cb(drv->f, NULL);
+ 	drv->f->op->destroy(drv->f);
+ 	drv->f = NULL;
+     }
+ 
+     pj_bzero(drv, sizeof(*drv));
+-    drv->play_dev_idx = drv->rec_dev_idx = 
+-			drv->dev_idx = PJMEDIA_AUD_INVALID_DEV;
++    drv->play_dev_idx = drv->rec_dev_idx = PJMEDIA_AUD_INVALID_DEV;
+ }
+ 
+ /* API: Initialize the audio subsystem. */
+@@ -374,11 +426,7 @@
+
+ 	for (i=0; i<aud_subsys.drv_cnt; ++i) {
+ 	    pjmedia_aud_driver *drv = &aud_subsys.drv[i];
+-	    if (drv->dev_idx >= 0) {
+-		id = drv->dev_idx;
+-		make_global_index(i, &id);
+-		break;
+-	    } else if (id==PJMEDIA_AUD_DEFAULT_CAPTURE_DEV && 
++	    if (id==PJMEDIA_AUD_DEFAULT_CAPTURE_DEV &&
+ 		drv->rec_dev_idx >= 0) 
+ 	    {
+ 		id = drv->rec_dev_idx;
+@@ -390,7 +455,7 @@
+ 		id = drv->play_dev_idx;
+ 		make_global_index(i, &id);
+ 		break;
+-	    }
++	    }
+ 	}
+
+ 	if (id < 0) {
+@@ -625,4 +590,24 @@
+     return strm->op->destroy(strm);
+ }
+ 
++/* API: Register device change observer. */
++PJ_DEF(pj_status_t) pjmedia_aud_dev_set_observer_cb(pjmedia_aud_dev_observer_callback cb)
++{
++    pj_status_t status;
++
++    status = pj_mutex_lock(aud_subsys.dev_observer.lock);
++    if (status != PJ_SUCCESS) {
++        PJ_LOG(5, (THIS_FILE, "Could not acquire audio device change lock"));
++        return status;
++    }
++
++    aud_subsys.dev_observer.cb = cb;
++
++    status = pj_mutex_unlock(aud_subsys.dev_observer.lock);
++    if (status != PJ_SUCCESS) {
++        PJ_LOG(5, (THIS_FILE, "Could not release audio device change lock"));
++    }
++
++    return status;
++}
  
