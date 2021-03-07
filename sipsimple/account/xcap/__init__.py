@@ -1768,9 +1768,33 @@ class XCAPManager(object):
                 notification_center.post_notification('XCAPDocumentsDidChange', sender=self, data=notification_data)
                 self.command_channel.send(Command('fetch', documents=set(self.document_names)))
             else:
+                changed_etags = {}
+                for child in xcap_diff:
+                    if isinstance(child, xcapdiff.Document):
+                        try:
+                            document = next(document for document in self.documents if document.application == child.selector.auid)
+                        except StopIteration:
+                            name = child.selector.auid
+                            url = child.selector.auid
+                        else:
+                            name = document.name
+                            url = document.url
+                    
+                        changed_etags[name] = {'new_etag': child.new_etag, 
+                                                   'previous_etag': child.previous_etag,
+                                                   'auid': child.selector.auid,
+                                                   'url': url
+                                                   }
+
                 applications = set(child.selector.auid for child in xcap_diff if isinstance(child, xcapdiff.Document))
-                documents = set(document.name for document in self.documents if document.application in applications)
-                self.command_channel.send(Command('fetch', documents=documents))
+                documents = set(document.name for document in self.documents if document.application in applications and document.etag != changed_etags[name]['new_etag'])
+
+                if documents:
+                    self.command_channel.send(Command('fetch', documents=documents))
+
+                notification_center = NotificationCenter()
+                notification_data = NotificationData(root=self.xcap_root, documents=documents, notified_etags=changed_etags)
+                notification_center.post_notification('XCAPDocumentsDidChange', sender=self, data=notification_data)
 
     def _load_data(self):
         addressbook = Addressbook.from_payload(self.resource_lists.content['sipsimple_addressbook'])
