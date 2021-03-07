@@ -115,12 +115,16 @@ class Document(object):
         self.dirty = False
 
     def fetch(self):
+        notification_center = NotificationCenter()
+
         try:
             document = self.manager.client.get(self.application, etagnot=self.etag, globaltree=self.global_tree, headers={'Accept': self.payload_type.content_type}, filename=self.filename)
             self.content = self.payload_type.parse(document)
             self.etag = document.etag
             self.__dict__['dirty'] = False
         except (BadStatusLine, ConnectionLost, URLError, socket.error) as e:
+            notification_data = NotificationData(method='GET', url=self.url, application=self.application, result='failure', reason=str(e), code=408, etag=self.etag)
+            notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
             raise XCAPError("failed to fetch %s document: %s" % (self.name, e))
         except HTTPError as e:
             if e.status == 404: # Not Found
@@ -128,12 +132,20 @@ class Document(object):
                     self.reset()
                     self.fetch_time = datetime.utcnow()
             elif e.status != 304: # Other than Not Modified:
+                notification_data = NotificationData(method='GET', url=self.url, application=self.application, result='failure', reason=str(e), code=e.status, etag=self.etag)
+                notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
                 raise XCAPError("failed to fetch %s document: %s" % (self.name, e))
-
+            elif e.status == 304:
+                notification_data = NotificationData(method='GET', url=self.url, application=self.application, result='success', reason='not_modified', code=304, etag=self.etag)
+                notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
         except ParserError as e:
+            notification_data = NotificationData(method='GET', url=self.url, application=self.application, result='failure', reason=str(e), code=500, etag=self.etag)
+            notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
             raise XCAPError("failed to parse %s document: %s" % (self.name, e))
         else:
             self.fetch_time = datetime.utcnow()
+            notification_data = NotificationData(method='GET', url=self.url, application=self.application, result='success', reason='changed', code=200, etag=self.etag, size=len(document))
+            notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
 
             if self.cached:
                 try:
@@ -141,14 +153,17 @@ class Document(object):
                     data += document.decode() if isinstance(document, bytes) else document
                     self.manager.storage.save(self.name, data)
                 except XCAPStorageError as e:
-                    pass
+                    notification_data = NotificationData(method='GET', url=self.url, application=self.application, result='failed', reason='storage failure: %s' % str(e), code=500, etag=self.etag, size=len(document))
+                    notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
 
     def update(self):
         if not self.dirty:
             return
 
+        notification_center = NotificationCenter()
         data = self.content.toxml() if self.content is not None else None
-        #print('XCAP document %s will be updated' % self.name)
+        method = 'PUT' if data is not None else 'DELETE'
+
         try:
             kw = dict(etag=self.etag) if self.etag is not None else dict(etagnot='*')
             if data is not None:
@@ -156,28 +171,39 @@ class Document(object):
             else:
                 response = self.manager.client.delete(self.application, data, globaltree=self.global_tree, filename=self.filename, **kw)
         except (BadStatusLine, ConnectionLost, URLError) as e:
+            notification_data = NotificationData(method=method, url=self.url, application=self.application, result='failure', reason=str(e), code=408, etag=self.etag)
+            notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
             raise XCAPError("failed to update %s document: %s" % (self.name, e))
         except HTTPError as e:
             if e.status == 412: # Precondition Failed
+                notification_data = NotificationData(method=method, url=self.url, application=self.application, result='failure', reason='document modified by others', code=e.status, etag=self.etag)
+                notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
                 raise FetchRequiredError("document %s was modified externally" % self.name)
             elif e.status == 404 and data is None: # attempted to delete a document that did't exist in the first place
-                pass
+                notification_data = NotificationData(method=method, url=self.url, application=self.application, result='failure', reason='non-existent document', code=e.status, etag=self.etag)
+                notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
             else:
+                notification_data = NotificationData(method=method, url=self.url, application=self.application, result='failure', reason=str(e), code=e.status, etag=self.etag)
+                notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
                 raise XCAPError("failed to update %s document: %s" % (self.name, e))
-        self.etag = response.etag if data is not None else None
 
-        #print('Updated %s to etag %s' % (self.name, response.etag))
+        self.etag = response.etag if data is not None else None
+        notification_data = NotificationData(method=method, url=self.url, application=self.application, result='success', reason='changed', code=200, etag=self.etag, size=len(data))
+        notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
 
         self.dirty = False
         self.update_time = datetime.utcnow()
         if self.cached:
             try:
                 if data is not None:
-                    self.manager.storage.save(self.name, self.etag + os.linesep + data.decode() if isinstance(data, bytes) else data)
+                    document = self.etag + os.linesep
+                    document += data.decode() if isinstance(data, bytes) else data
+                    self.manager.storage.save(self.name, document)
                 else:
                     self.manager.storage.delete(self.name)
-            except XCAPStorageError:
-                pass
+            except XCAPStorageError as e:
+                notification_data = NotificationData(method=method, url=self.url, application=self.application, result='failed', reason='storage failure: %s' % str(e), code=500, etag=self.etag, size=len(data))
+                notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
 
 
 class DialogRulesDocument(Document):
@@ -1734,7 +1760,12 @@ class XCAPManager(object):
         if notification.data.content_type == xcapdiff.XCAPDiffDocument.content_type:
             try:
                 xcap_diff = xcapdiff.XCAPDiffDocument.parse(notification.data.body.decode())
-            except ParserError:
+            except ParserError as e:
+                import traceback
+                traceback.print_exc()
+                notification_center = NotificationCenter()
+                notification_data = NotificationData(root=self.xcap_root, documents=['all'])
+                notification_center.post_notification('XCAPDocumentsDidChange', sender=self, data=notification_data)
                 self.command_channel.send(Command('fetch', documents=set(self.document_names)))
             else:
                 applications = set(child.selector.auid for child in xcap_diff if isinstance(child, xcapdiff.Document))
