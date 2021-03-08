@@ -1,3 +1,9 @@
+python3-sipsimple (4.0.2) unstable; urgency=medium
+
+  * Added more granular XCAP trace
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Mon, 08 Mar 2021 07:39:52 -0300
+
 python3-sipsimple (4.0.1) unstable; urgency=medium
 
   * Fixed accessing invitation.transport
