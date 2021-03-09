@@ -1,13 +1,16 @@
 #!/bin/bash
 
+
+
 #
 # Update PJSIP 
 #
 
 # Get latest stable release from github
-wget --no-check-certificate https://github.com/pjsip/pjproject/archive/2.10.tar.gz
+#rm 2.10.tar.gz
+#wget https://github.com/pjsip/pjproject/archive/2.10.tar.gz
 tar xzf 2.10.tar.gz
-rm 2.10.tar.gz
+#rm 2.10.tar.gz
 
 
 echo Copying old files

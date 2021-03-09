@@ -1,15 +1,42 @@
 diff -ruN setup_pjsip.py setup_pjsip.py
 --- setup_pjsip.py	2021-02-18 22:20:23.927865045 +0100
 +++ setup_pjsip.py	2021-02-06 20:08:25.900660619 +0100
-@@ -162,7 +162,7 @@
+@@ -161,7 +161,10 @@
              cmd = ["bash", "configure"]
          else:
              cmd = ["./configure"]
 -        cmd.extend(["--disable-g7221-codec"])
++        cmd.extend(["--enable-video"])
 +        cmd.extend(["--with-vpx"])
++        cmd.extend(["--with-openh264"])
++        cmd.extend(["--enable-g7221-codec"])
          ffmpeg_path = env.get("SIPSIMPLE_FFMPEG_PATH", None)
          if ffmpeg_path is not None:
              cmd.append("--with-ffmpeg=%s" % os.path.abspath(os.path.expanduser(ffmpeg_path)))
+diff -ruN sipsimple/configuration/settings.py sipsimple/configuration/settings.py 
+--- sipsimple/configuration/settings.py	2021-02-18 22:20:23.927865045 +0100
++++ sipsimple/configuration/settings.py	2021-02-06 20:08:25.900660619 +0100
+@@ -69,7 +69,7 @@
+     port_range = Setting(type=PortRange, default=PortRange(50000, 50500))
+     timeout = Setting(type=NonNegativeInteger, default=30)
+     audio_codec_list = Setting(type=AudioCodecList, default=AudioCodecList(('opus', 'G722', 'PCMU', 'PCMA')))
+-    video_codec_list = Setting(type=VideoCodecList, default=VideoCodecList(('H264', 'VP8')))
++    video_codec_list = Setting(type=VideoCodecList, default=VideoCodecList(('H263-1998', 'VP8', 'VP9')))
+
+
+ def sip_port_validator(port, sibling_port):
+diff -ruN sipsimple/configuration/datatypes.py sipsimple/configuration/datatypes.py 
+--- sipsimple/configuration/datatypes.py	2021-02-18 22:20:23.927865045 +0100
++++ sipsimple/configuration/datatypes.py	2021-02-06 20:08:25.900660619 +0100
+@@ -269,7 +269,7 @@
+
+
+ class VideoCodecList(CodecList):
+-    available_values = {'H264', 'VP8'}
++    available_values = {'H263-1998', 'VP8', 'VP9'}
+
+
+ # Address and transport datatypes
 diff -ruN sipsimple/core/_core.lib.pxi sipsimple/core/_core.lib.pxi
 --- sipsimple/core/_core.lib.pxi	2021-02-18 22:20:23.927865045 +0100
 +++ sipsimple/core/_core.lib.pxi	2021-02-06 20:08:25.900660619 +0100
@@ -39,6 +66,15 @@ diff -ruN sipsimple/core/_core.lib.pxi sipsimple/core/_core.lib.pxi
          cdef list retval
          cdef int status
          status = pjmedia_codec_mgr_enum_codecs(pjmedia_endpt_get_codec_mgr(self._obj), &count, info, prio)
+@@ -343,7 +342,7 @@
+         all_codecs = set(self._get_all_codecs())
+         codec_set = new_codecs.difference(all_codecs)
+         if len(codec_set) > 0:
+-            raise SIPCoreError("Unknown codec(s): %s" % ", ".join(codec_set))
++            raise SIPCoreError("Unknown codec(s): %s" % ", ".join(cdc.decode() for cdc in codec_set))
+         # reverse the codec data tuples so that we can easily sort on sample rate
+         # to make sure that bigger sample rates get higher priority
+         codecs = [list(reversed(codec_data)) for codec_data in self._get_codecs()]
 @@ -372,7 +371,6 @@
          cdef unsigned int count = PJMEDIA_VID_CODEC_MGR_MAX_CODECS
          cdef pjmedia_vid_codec_info info[PJMEDIA_VID_CODEC_MGR_MAX_CODECS]
@@ -47,6 +83,15 @@ diff -ruN sipsimple/core/_core.lib.pxi sipsimple/core/_core.lib.pxi
          cdef list retval
          cdef int status
          status = pjmedia_vid_codec_mgr_enum_codecs(NULL, &count, info, prio)
+@@ -415,7 +413,7 @@
+             raise ValueError("Requested video codec list contains doubles")
+         codec_set = new_codecs.difference(set(self._get_all_video_codecs()))
+         if len(codec_set) > 0:
+-            raise SIPCoreError("Unknown video codec(s): %s" % ", ".join(codec_set))
++            raise SIPCoreError("Unknown video codec(s): %s" % ", ".join(cdc.decode() for cdc in codec_set))
+         codecs = self._get_video_codecs()
+         codec_prio = list()
+         for codec in req_codecs:
 @@ -443,7 +441,6 @@
          cdef pjmedia_vid_codec_info info[PJMEDIA_VID_CODEC_MGR_MAX_CODECS]
          cdef pjmedia_vid_codec_param vparam
@@ -144,19 +189,6 @@ diff -ruN sipsimple/core/_core.sdp.pxi sipsimple/core/_core.sdp.pxi
 diff -ruN sipsimple/core/_core.ua.pxi sipsimple/core/_core.ua.pxi
 --- sipsimple/core/_core.ua.pxi	2021-02-18 22:20:24.003867185 +0100
 +++ sipsimple/core/_core.ua.pxi	2021-02-06 19:30:46.520008320 +0100
-@@ -103,8 +103,10 @@
-             raise PJSIPError("Could not initialize event queue mutex", status)
- 
-         self._ip_address = kwargs["ip_address"].encode() if kwargs["ip_address"] else None
--        self.codecs = list(codec.encode() for codec in kwargs["codecs"])
--        self.video_codecs = list(codec.encode() for codec in kwargs["video_codecs"])
-+        #TODO self.codecs = list(codec.encode() for codec in kwargs["codecs"])
-+        self.codecs = list(codec for codec in kwargs["codecs"])
-+        #TODO self.video_codecs = list(codec.encode() for codec in kwargs["video_codecs"])
-+        self.video_codecs = list(codec for codec in kwargs["video_codecs"])
- 
-         self._module_name = PJSTR(b"mod-core")
-         self._module.name = self._module_name.pj_str
 @@ -1075,8 +1075,6 @@
      cdef pjmedia_sdp_session *sdp
      cdef pjmedia_sdp_media *media

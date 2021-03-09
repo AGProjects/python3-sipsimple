@@ -91,7 +91,9 @@
 +        HMAC_CTX_free((HMAC_CTX*)ctx);
 +#endif
      }
- }
+-}
+\ No newline at end of file
++}
 --- pjsip_orig/third_party/zsrtp/zrtp/zrtp/crypto/openssl/hmac256.cpp
 +++ pjsip/third_party/zsrtp/zrtp/zrtp/crypto/openssl/hmac256.cpp
 @@ -32,13 +32,31 @@
@@ -281,7 +283,16 @@
  ###############################################################################
  # Gather all flags.
  #
-@@ -85,6 +91,7 @@
+@@ -22,7 +29,7 @@
+ 		   $(CC_CFLAGS) $(OS_CFLAGS) $(HOST_CFLAGS) $(M_CFLAGS) \
+ 		   $(CFLAGS)  -fno-strict-aliasing
+ export _CXXFLAGS:= $(_CFLAGS) $(CC_CXXFLAGS) $(OS_CXXFLAGS) $(M_CXXFLAGS) \
+-		   $(HOST_CXXFLAGS) $(CXXFLAGS)
++		   $(HOST_CXXFLAGS) $(CXXFLAGS) -std=c++11
+ export _LDFLAGS := $(CC_LDFLAGS) $(OS_LDFLAGS) $(M_LDFLAGS) $(HOST_LDFLAGS) \
+ 		   $(LDFLAGS) -lsqlite3 -lstdc++
+ 
+@@ -78,6 +85,7 @@
            zrtp/zrtp/ZrtpTextData.o \
            zrtp/zrtp/ZrtpConfigure.o \
            zrtp/zrtp/ZrtpCWrapper.o \
@@ -310,7 +321,7 @@
  	$(MAKE) -f $(RULES_MAK) APP=ZSRTP app=libzsrtp $@
 --- pjsip_orig/third_party/zsrtp/zrtp/zrtp/ZRtp.cpp
 +++ pjsip/third_party/zsrtp/zrtp/zrtp/ZRtp.cpp
-@@ -1283,7 +1291,7 @@
+@@ -1284,7 +1291,7 @@
      // - if not found 2 values and more data available try next value
      // - terminate loop if 2 values found or data exhausted
      for (int32_t i = 0; i < SHA256_DIGEST_LENGTH - 4 && found < 2; i++) {
