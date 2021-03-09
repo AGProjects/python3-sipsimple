@@ -2,9 +2,9 @@ TODO
 ----
 
  - Find a solution for DNS async in lookup.py for dnspython >= 2.1.0
- - Command line clients don't quit sometimes
- - An active account cannot be removed (try Blink)
- - Cannot retry a Transfer if failed (invitation._transfer_usage is not reset) 
+ - Use MacOS native video hardware acceleration
+   https://blog.pjsip.org/2017/09/26/pjsip-version-2-7-is-released-with-dtls-for-srtp-keying-support-and-ios-and-mac-native-h-264-videotoolbox-codec/
+ - Cannot retry a Transfer if it failed (invitation._transfer_usage is not reset) 
 
 
 TODO Python version 2
