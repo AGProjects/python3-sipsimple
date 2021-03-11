@@ -300,6 +300,23 @@
            zrtp/zrtp/Base32.o \
            zrtp/zrtp/zrtpB64Encode.o \
            zrtp/zrtp/zrtpB64Decode.o
+@@ -92,6 +100,7 @@
+ export ZSRTP_OBJS = $(zrtpobj) $(cryptobj) $(srtpobj) $(common)
+ export ZSRTP_CFLAGS = $(_CFLAGS)
+ export ZSRTP_CXXFLAGS = $(_CXXFLAGS)
++export ZSRTP_LDFLAGS = $(PJLIB_LDLIB) $(_LDFLAGS)
+ 
+ 
+ export CC_OUT CC AR RANLIB HOST_MV HOST_RM HOST_RMDIR HOST_MKDIR OBJEXT LD LDOUT
+@@ -100,7 +109,7 @@
+ #
+ # $(TARGET) is defined in os-$(OS_NAME).mak file in current directory.
+ #
+-TARGETS := libzsrtp
++TARGETS := $(ZSRTP_LIB) $(ZSRTP_SONAME)
+ 
+ all: $(TARGETS)
+ 
 @@ -112,8 +120,16 @@
  
  .PHONY: dep depend libzsrtp clean realclean distclean

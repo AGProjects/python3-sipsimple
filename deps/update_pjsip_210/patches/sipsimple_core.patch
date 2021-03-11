@@ -1,18 +1,26 @@
-diff -ruN setup_pjsip.py setup_pjsip.py
---- setup_pjsip.py	2021-02-18 22:20:23.927865045 +0100
-+++ setup_pjsip.py	2021-02-06 20:08:25.900660619 +0100
-@@ -161,7 +161,10 @@
-             cmd = ["bash", "configure"]
+diff -u setup_pjsip.py setup_pjsip.py
+--- setup_pjsip.py	2021-03-10 05:41:58.052700196 +0100
++++ setup_pjsip.py	2021-03-10 05:49:35.309917472 +0100
+@@ -162,12 +162,19 @@
          else:
              cmd = ["./configure"]
--        cmd.extend(["--disable-g7221-codec"])
+         cmd.extend(["--disable-g7221-codec"])
++        cmd.extend(["--disable-sdl"])
++        cmd.extend(["--disable-openh264"])
 +        cmd.extend(["--enable-video"])
-+        cmd.extend(["--with-vpx"])
-+        cmd.extend(["--with-openh264"])
-+        cmd.extend(["--enable-g7221-codec"])
          ffmpeg_path = env.get("SIPSIMPLE_FFMPEG_PATH", None)
          if ffmpeg_path is not None:
              cmd.append("--with-ffmpeg=%s" % os.path.abspath(os.path.expanduser(ffmpeg_path)))
++        else:
++            cmd.extend(["--with-ffmpeg"])
+         libvpx_path = env.get("SIPSIMPLE_LIBVPX_PATH", None)
+         if libvpx_path is not None:
+             cmd.append("--with-vpx=%s" % os.path.abspath(os.path.expanduser(libvpx_path)))
++        else:
++            cmd.extend(["--with-vpx"])
+         self.distutils_exec_process(cmd, silent=not self.pjsip_verbose_build, cwd=self.build_dir, env=env)
+         if "#define PJ_HAS_SSL_SOCK 1\n" not in open(os.path.join(self.build_dir, "pjlib", "include", "pj", "compat", "os_auto.h")).readlines():
+             os.remove(os.path.join(self.build_dir, "build.mak"))
 diff -ruN sipsimple/configuration/settings.py sipsimple/configuration/settings.py 
 --- sipsimple/configuration/settings.py	2021-02-18 22:20:23.927865045 +0100
 +++ sipsimple/configuration/settings.py	2021-02-06 20:08:25.900660619 +0100
@@ -21,7 +29,7 @@ diff -ruN sipsimple/configuration/settings.py sipsimple/configuration/settings.p
      timeout = Setting(type=NonNegativeInteger, default=30)
      audio_codec_list = Setting(type=AudioCodecList, default=AudioCodecList(('opus', 'G722', 'PCMU', 'PCMA')))
 -    video_codec_list = Setting(type=VideoCodecList, default=VideoCodecList(('H264', 'VP8')))
-+    video_codec_list = Setting(type=VideoCodecList, default=VideoCodecList(('H263-1998', 'VP8', 'VP9')))
++    video_codec_list = Setting(type=VideoCodecList, default=VideoCodecList(('H264', 'VP8', 'VP9')))
 
 
  def sip_port_validator(port, sibling_port):
@@ -33,7 +41,7 @@ diff -ruN sipsimple/configuration/datatypes.py sipsimple/configuration/datatypes
 
  class VideoCodecList(CodecList):
 -    available_values = {'H264', 'VP8'}
-+    available_values = {'H263-1998', 'VP8', 'VP9'}
++    available_values = {'H264', 'VP8', 'VP9'}
 
 
  # Address and transport datatypes

@@ -238,14 +238,13 @@ diff -ruN pjproject-2.10/pjlib/src/pj/os_core_unix.c pjsip/pjlib/src/pj/os_core_
      return PJ_SUCCESS;
 --- pjproject-2.10/pjmedia/include/pjmedia/config_auto.h.in	2021-02-05 09:00:45.241108718 +0100
 +++ pjsip/pjmedia/include/pjmedia/config_auto.h.in	2021-02-22 21:46:52.232215546 +0100
-@@ -36,6 +36,10 @@
+@@ -36,6 +36,9 @@
  #undef PJMEDIA_HAS_G711_CODEC
  #endif
 
 +#define PJMEDIA_HAS_VIDEO		1
 +#define PJMEDIA_HAS_OPUS_CODEC		1
 +#define PJMEDIA_HAS_VPX_CODEC_VP9	1
-+#define PJMEDIA_HAS_OPENH264_CODEC     1
 
  #endif  /* __PJMEDIA_CONFIG_AUTO_H_ */
 
@@ -7770,4 +7769,117 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
 +
 +    return status;
 +}
+ 
+--- pjsip_new/pjmedia/src/pjmedia/transport_zrtp.c	2021-02-05 12:38:15.913793992 +0100
++++ pjsip/pjmedia/src/pjmedia/transport_zrtp.c	2021-03-11 09:20:35.134754145 +0100
+@@ -78,6 +78,8 @@
+         pjmedia_dir dir,
+         unsigned pct_lost);
+ static pj_status_t transport_destroy(pjmedia_transport *tp);
++static pj_status_t transport_attach2(pjmedia_transport *tp,
++                           pjmedia_transport_attach_param *att_param);
+ 
+ 
+ /* The transport operations */
+@@ -94,7 +96,8 @@
+     &transport_media_start,
+     &transport_media_stop,
+     &transport_simulate_lost,
+-    &transport_destroy
++    &transport_destroy,
++    &transport_attach2
+ };
+ 
+ /* The transport zrtp instance */
+@@ -108,6 +111,7 @@
+     void (*stream_rtp_cb)(void *user_data,
+                           void *pkt,
+                           pj_ssize_t);
++    void (*stream_rtp_cb2)(pjmedia_tp_cb_param *param);
+     void (*stream_rtcp_cb)(void *user_data,
+                            void *pkt,
+                            pj_ssize_t);
+@@ -794,7 +798,7 @@
+     int32_t newLen = 0;
+     pj_status_t rc = PJ_SUCCESS;
+ 
+-    pj_assert(zrtp && zrtp->stream_rtcp_cb && pkt);
++    pj_assert(zrtp && zrtp->stream_rtp_cb && pkt);
+ 
+     // check if this could be a real RTP/SRTP packet.
+     if ((*buffer & 0xf0) != 0x10)
+@@ -876,6 +880,28 @@
+     }
+ }
+ 
++/* This is our RTP callback, that is called by the slave transport when it
++ * receives RTP packet.
++ */
++static void transport_rtp_cb2(pjmedia_tp_cb_param *param)
++{
++    struct tp_zrtp *zrtp = (struct tp_zrtp*)param->user_data;
++
++    pj_assert(zrtp->stream_rtp_cb != NULL ||
++              zrtp->stream_rtp_cb2 != NULL);
++
++    /* Call stream's callback */
++    if (zrtp->stream_rtp_cb2) {
++        pjmedia_tp_cb_param cbparam;
++
++        pj_memcpy(&cbparam, param, sizeof(cbparam));
++        cbparam.user_data = zrtp->stream_user_data;
++        zrtp->stream_rtp_cb2(&cbparam);
++    } else {
++        zrtp->stream_rtp_cb(zrtp->stream_user_data, param->pkt, param->size);
++    }
++}
++
+ 
+ /* This is our RTCP callback, that is called by the slave transport when it
+  * receives RTCP packet.
+@@ -1256,6 +1282,45 @@
+     return PJ_SUCCESS;
+ }
+ 
++/*
++ * attach2() is called by stream to register callbacks that we should
++ * call on receipt of RTP and RTCP packets.
++ */
++static pj_status_t transport_attach2(pjmedia_transport *tp,
++                                     pjmedia_transport_attach_param *att_param)
++{
++    struct tp_zrtp *zrtp = (struct tp_zrtp*)tp;
++    pj_status_t status;
++
++    /* In this example, we will save the stream information and callbacks
++     * to our structure, and we will register different RTP/RTCP callbacks
++     * instead.
++     */
++    pj_assert(zrtp->stream_user_data == NULL);
++    zrtp->stream_user_data = att_param->user_data;
++    if (att_param->rtp_cb2) {
++        zrtp->stream_rtp_cb2 = att_param->rtp_cb2;
++    } else {
++        zrtp->stream_rtp_cb = att_param->rtp_cb;
++    }
++    zrtp->stream_rtcp_cb = att_param->rtcp_cb;
++
++    att_param->rtp_cb2 = &transport_rtp_cb2;
++    att_param->rtp_cb = NULL;    
++    att_param->rtcp_cb = &transport_rtcp_cb;
++    att_param->user_data = zrtp;
++        
++    status = pjmedia_transport_attach2(zrtp->slave_tp, att_param);
++    if (status != PJ_SUCCESS) {
++	zrtp->stream_user_data = NULL;
++	zrtp->stream_rtp_cb = NULL;
++	zrtp->stream_rtp_cb2 = NULL;
++	zrtp->stream_rtcp_cb = NULL;
++	return status;
++    }
++
++    return PJ_SUCCESS;
++}
+ 
+ 
  
