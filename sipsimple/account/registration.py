@@ -112,20 +112,23 @@ class Registrar(object):
             self._registration_timer.cancel()
         self._registration_timer = None
 
-        # Initialize the registration
-        if self._registration is None:
-            duration = command.refresh_interval or self.account.sip.register_interval
-            self._registration = Registration(FromHeader(self.account.uri, self.account.display_name), 
-                                              credentials=self.account.credentials, 
-                                              duration=duration,
-                                              extra_headers=[Header('Supported', 'gruu')])
-
-            notification_center.add_observer(self, sender=self._registration)
-            notification_center.post_notification('SIPAccountWillRegister', sender=self.account)
-        else:
-            notification_center.post_notification('SIPAccountRegistrationWillRefresh', sender=self.account)
-
         try:
+            # Initialize the registration
+            if self._registration is None:
+                duration = command.refresh_interval or self.account.sip.register_interval
+                try:
+                    self._registration = Registration(FromHeader(self.account.uri, self.account.display_name), 
+                                                  credentials=self.account.credentials, 
+                                                  duration=duration,
+                                                  extra_headers=[Header('Supported', 'gruu')])
+                except Exception as e:
+                    raise RegistrationError('Cannot create registration: %s' % str(e), retry_after=120)
+
+                notification_center.add_observer(self, sender=self._registration)
+                notification_center.post_notification('SIPAccountWillRegister', sender=self.account)
+            else:
+                notification_center.post_notification('SIPAccountRegistrationWillRefresh', sender=self.account)
+
             # Lookup routes
             if self.account.sip.outbound_proxy is not None and self.account.sip.outbound_proxy.transport in settings.sip.transport_list:
                 uri = SIPURI(host=self.account.sip.outbound_proxy.host, port=self.account.sip.outbound_proxy.port, parameters={'transport': self.account.sip.outbound_proxy.transport})
