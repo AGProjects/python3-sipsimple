@@ -1,13 +1,14 @@
 diff -u setup_pjsip.py setup_pjsip.py
 --- setup_pjsip.py	2021-03-10 05:41:58.052700196 +0100
 +++ setup_pjsip.py	2021-03-10 05:49:35.309917472 +0100
-@@ -162,12 +162,19 @@
+@@ -162,12 +162,20 @@
          else:
              cmd = ["./configure"]
          cmd.extend(["--disable-g7221-codec"])
 +        cmd.extend(["--disable-sdl"])
 +        cmd.extend(["--disable-openh264"])
 +        cmd.extend(["--enable-video"])
++        cmd.extend(["--with-opus"])
          ffmpeg_path = env.get("SIPSIMPLE_FFMPEG_PATH", None)
          if ffmpeg_path is not None:
              cmd.append("--with-ffmpeg=%s" % os.path.abspath(os.path.expanduser(ffmpeg_path)))

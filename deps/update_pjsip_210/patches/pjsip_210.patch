@@ -7770,7 +7770,7 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
 +    return status;
 +}
  
---- pjsip_new/pjmedia/src/pjmedia/transport_zrtp.c	2021-02-05 12:38:15.913793992 +0100
+--- pjsip/pjmedia/src/pjmedia/transport_zrtp.c	2021-02-05 12:38:15.913793992 +0100
 +++ pjsip/pjmedia/src/pjmedia/transport_zrtp.c	2021-03-11 09:20:35.134754145 +0100
 @@ -78,6 +78,8 @@
          pjmedia_dir dir,
@@ -7808,7 +7808,7 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
  
      // check if this could be a real RTP/SRTP packet.
      if ((*buffer & 0xf0) != 0x10)
-@@ -876,6 +880,28 @@
+@@ -876,6 +880,106 @@
      }
  }
  
@@ -7818,26 +7818,104 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
 +static void transport_rtp_cb2(pjmedia_tp_cb_param *param)
 +{
 +    struct tp_zrtp *zrtp = (struct tp_zrtp*)param->user_data;
++    pj_uint8_t* buffer = (pj_uint8_t*)param->pkt;
++    int32_t newLen = 0;
++    pj_status_t rc = PJ_SUCCESS;
++    pjmedia_tp_cb_param cbparam;
++ 
++    pj_assert(zrtp && zrtp->stream_rtp_cb2 && param->pkt);
++ 
++    // check if this could be a real RTP/SRTP packet.
++    if ((*buffer & 0xf0) != 0x10)
++    {
++        //  Could be real RTP, check if we are in secure mode
++        if (zrtp->srtpReceive == NULL || param->size < 0)
++        {
++            pj_memcpy(&cbparam, param, sizeof(cbparam));
++            cbparam.user_data = zrtp->stream_user_data;
++            zrtp->stream_rtp_cb2(&cbparam);
++        }
++        else
++        {
++            rc = zsrtp_unprotect(zrtp->srtpReceive, param->pkt, param->size, &newLen);
++            if (rc == 1)
++            {
++                zrtp->unprotect++;
++               param->size = newLen;
++                pj_memcpy(&cbparam, param, sizeof(cbparam));
++                cbparam.user_data = zrtp->stream_user_data;
++                zrtp->stream_rtp_cb2(&cbparam);
++                //zrtp->stream_rtp_cb(zrtp->stream_user_data, pkt,
++                //                    newLen);
++                zrtp->unprotect_err = 0;
++            }
++            else
++            {
++                if (zrtp->cb.show_message)
++                {
++                    if (rc == -1)
++                        zrtp->cb.show_message(&zrtp->base, zrtp_Warning, zrtp_WarningSRTPauthError);
++                    else
++                        zrtp->cb.show_message(&zrtp->base, zrtp_Warning, zrtp_WarningSRTPreplayError);
++                }
++                zrtp->unprotect_err = rc;
++                /* We failed to decrypt the packet, but forward it regardless to the slave
++                 * transport, it might not have been encrypted after all */
++                pj_memcpy(&cbparam, param, sizeof(cbparam));
++                cbparam.user_data = zrtp->stream_user_data;
++                zrtp->stream_rtp_cb2(&cbparam);
++            }
++        }
++        if (!zrtp->started && zrtp->enableZrtp)
++            pjmedia_transport_zrtp_startZrtp((pjmedia_transport *)zrtp);
 +
-+    pj_assert(zrtp->stream_rtp_cb != NULL ||
-+              zrtp->stream_rtp_cb2 != NULL);
++        return;
++    }
 +
-+    /* Call stream's callback */
-+    if (zrtp->stream_rtp_cb2) {
-+        pjmedia_tp_cb_param cbparam;
++    // We assume all other packets are ZRTP packets here. Process
++    // if ZRTP processing is enabled. Because valid RTP packets are
++    // already handled we delete any packets here after processing.
++    if (zrtp->enableZrtp && zrtp->zrtpCtx != NULL)
++    {
++        // Get CRC value into crc (see above how to compute the offset)
++        pj_uint16_t temp = param->size - CRC_SIZE;
++        pj_uint32_t crc = *(uint32_t*)(buffer + temp);
++        crc = pj_ntohl(crc);
 +
-+        pj_memcpy(&cbparam, param, sizeof(cbparam));
-+        cbparam.user_data = zrtp->stream_user_data;
-+        zrtp->stream_rtp_cb2(&cbparam);
-+    } else {
-+        zrtp->stream_rtp_cb(zrtp->stream_user_data, param->pkt, param->size);
++        if (!zrtp_CheckCksum(buffer, temp, crc))
++        {
++            if (zrtp->cb.show_message)
++                zrtp->cb.show_message(&zrtp->base, zrtp_Warning, zrtp_WarningCRCmismatch);
++            return;
++        }
++
++        pj_uint32_t magic = *(pj_uint32_t*)(buffer + 4);
++        magic = pj_ntohl(magic);
++
++        // Check if it is really a ZRTP packet, return, no further processing
++        if (magic != ZRTP_MAGIC)
++            return;
++
++        // cover the case if the other party sends _only_ ZRTP packets at the
++        // beginning of a session. Start ZRTP in this case as well.
++        if (!zrtp->started)
++        {
++            pjmedia_transport_zrtp_startZrtp((pjmedia_transport *)zrtp);
++        }
++        // this now points beyond the undefined and length field.
++        // We need them, thus adjust
++        unsigned char* zrtpMsg = (buffer + 12);
++
++        // store peer's SSRC in host order, used when creating the CryptoContext
++        zrtp->peerSSRC = *(pj_uint32_t*)(buffer + 8);
++        zrtp->peerSSRC = pj_ntohl(zrtp->peerSSRC);
++        zrtp_processZrtpMessage(zrtp->zrtpCtx, zrtpMsg, zrtp->peerSSRC, param->size);
 +    }
 +}
-+
  
  /* This is our RTCP callback, that is called by the slave transport when it
   * receives RTCP packet.
-@@ -1256,6 +1282,45 @@
+@@ -1256,6 +1359,45 @@
      return PJ_SUCCESS;
  }
  
@@ -7882,4 +7960,4 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
 +}
  
  
- 
+
