@@ -48,6 +48,9 @@ if [ ! -d ZRTPCPP ]; then
     git clone https://github.com/wernerd/ZRTPCPP.git
     if [ $? -eq 0 ]; then
         echo "ZRTP downloaded"
+        cd ZRTPCPP
+        git checkout 6b3cd8e6783642292bad0c21e3e5e5ce45ff3e03
+        cd ..
     else
        echo Fail to download ZRTP
        exit 1
