@@ -1,4 +1,6 @@
  * Opus codec
+ * Allow build without video support --disable-video
  * Test Video calls
  * Mac compilation problem
  * Test Windows build
+
