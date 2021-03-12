@@ -105,7 +105,7 @@ class PJSIP_build_ext(build_ext):
             else:
                 raise
         if returncode != 0:
-            raise RuntimeError('Got return value %d while executing "%s", stderr output was:\n%s' % (returncode, " ".join(cmdline), stderr))
+            raise RuntimeError('Got return value %d while executing "%s", stderr output was:\n%s' % (returncode, " ".join(cmdline), stderr.decode()))
         return stdout.decode()
 
     @staticmethod
