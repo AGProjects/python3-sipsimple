@@ -172,8 +172,14 @@ class PJSIP_build_ext(build_ext):
         if libvpx_path is not None:
             cmd.append("--with-vpx=%s" % os.path.abspath(os.path.expanduser(libvpx_path)))
         env = os.environ.copy()
-        log.info("CFLAGS: %s" % env['CFLAGS'])
-        log.info("LDFLAGS: %s" % env['LDFLAGS'])
+        try:
+            log.info("CFLAGS: %s" % env['CFLAGS'])
+        except KeyError:
+            pass
+        try:
+            log.info("LDFLAGS: %s" % env['LDFLAGS'])
+        except KeyError:
+            pass
         log.info(" ".join(cmd))
         self.distutils_exec_process(cmd, silent=not self.pjsip_verbose_build, cwd=self.build_dir, env=env)
         if "#define PJ_HAS_SSL_SOCK 1\n" not in open(os.path.join(self.build_dir, "pjlib", "include", "pj", "compat", "os_auto.h")).readlines():
