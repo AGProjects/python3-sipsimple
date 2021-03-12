@@ -124,7 +124,7 @@ class PJSIP_build_ext(build_ext):
     @classmethod
     def get_makefile_variables(cls, makefile):
         """Returns all variables in a makefile as a dict"""
-        stdout = cls.distutils_exec_process([cls.get_make_cmd(), "-f", makefile, "-pR", makefile], silent=False)
+        stdout = cls.distutils_exec_process([cls.get_make_cmd(), "-f", makefile, "-pR", makefile], silent=True)
         return dict(tup for tup in re.findall("(^[a-zA-Z]\w+)\s*:?=\s*(.*)$", stdout, re.MULTILINE))
 
     @classmethod
