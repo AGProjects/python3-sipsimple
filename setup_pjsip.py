@@ -32,10 +32,13 @@ if sys_platform == "darwin":
     # SQLite (must be installed with Homebrew)
     sqlite_cflags = "-I/usr/local/opt/sqlite/include"
     sqlite_ldflags = "-L/usr/local/opt/sqlite/lib"
+    # Opus flags (must be installed with Homebrew)
+    opus_cflags = "-I/usr/local/opt/opus/include"
+    opus_ldflags = "-L/usr/local/opt/opus/lib"
     # Prepare final flags
     arch_flags =  "-arch x86_64 -mmacosx-version-min=%s" % min_osx_version
-    local_cflags = " %s %s %s -mmacosx-version-min=%s -isysroot %s" % (arch_flags, ossl_cflags, sqlite_cflags, min_osx_version, osx_sdk_path)
-    local_ldflags = " %s %s %s -isysroot %s" % (arch_flags, ossl_ldflags, sqlite_ldflags, osx_sdk_path)
+    local_cflags = " %s %s %s %s -mmacosx-version-min=%s -isysroot %s" % (arch_flags, ossl_cflags, sqlite_cflags, opus_cflags, min_osx_version, osx_sdk_path)
+    local_ldflags = " %s %s %s %s -isysroot %s" % (arch_flags, ossl_ldflags, sqlite_ldflags, opus_ldflags, osx_sdk_path)
     os.environ['CFLAGS'] = os.environ.get('CFLAGS', '') + local_cflags
     os.environ['LDFLAGS'] = os.environ.get('LDFLAGS', '') + local_ldflags
     os.environ['ARCHFLAGS'] = arch_flags
