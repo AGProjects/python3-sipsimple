@@ -171,23 +171,13 @@ class PJSIP_build_ext(build_ext):
         libvpx_path = env.get("SIPSIMPLE_LIBVPX_PATH", None)
         if libvpx_path is not None:
             cmd.append("--with-vpx=%s" % os.path.abspath(os.path.expanduser(libvpx_path)))
-        env = os.environ.copy()
-        try:
-            log.info("CFLAGS: %s" % env['CFLAGS'])
-        except KeyError:
-            pass
-        try:
-            log.info("LDFLAGS: %s" % env['LDFLAGS'])
-        except KeyError:
-            pass
-        log.info(" ".join(cmd))
         self.distutils_exec_process(cmd, silent=not self.pjsip_verbose_build, cwd=self.build_dir, env=env)
         if "#define PJ_HAS_SSL_SOCK 1\n" not in open(os.path.join(self.build_dir, "pjlib", "include", "pj", "compat", "os_auto.h")).readlines():
             os.remove(os.path.join(self.build_dir, "build.mak"))
             raise DistutilsError("PJSIP TLS support was disabled, OpenSSL development files probably not present on this system")
 
     def compile_pjsip(self):
-        log.info("Compiling PJSIP %s" % ('verbosely' if self.pjsip_verbose_build else 'silently'))
+        log.info("Compiling PJSIP")
         self.distutils_exec_process([self.get_make_cmd()], silent=not self.pjsip_verbose_build, cwd=self.build_dir)
 
     def clean_pjsip(self):
