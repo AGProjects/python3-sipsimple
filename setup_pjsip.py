@@ -218,9 +218,13 @@ class PJSIP_build_ext(build_ext):
             if self.pjsip_clean_compile:
                 self.clean_pjsip()
             copy_tree(self.pjsip_dir, self.build_dir, verbose=0)
-            if not os.path.exists(os.path.join(self.build_dir, "build.mak")):
-                self.configure_pjsip()
-            self.update_extension(extension)
-            self.compile_pjsip()
+            try:
+                if not os.path.exists(os.path.join(self.build_dir, "build.mak")):
+                    self.configure_pjsip()
+                self.update_extension(extension)
+                self.compile_pjsip()
+            except RuntimeError as e:
+                log.info("Error building %s: %s" % (extension.name, str(e)))
+                return None
         return build_ext.cython_sources(self, sources, extension)
 
