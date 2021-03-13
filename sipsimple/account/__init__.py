@@ -81,6 +81,7 @@ class XCAPSettings(SettingsGroup):
     enabled = Setting(type=bool, default=False)
     discovered = Setting(type=bool, default=False)
     xcap_root = Setting(type=XCAPRoot, default=None, nillable=True)
+    xcap_diff = Setting(type=bool, default=True)
 
 
 class PresenceSettings(SettingsGroup):

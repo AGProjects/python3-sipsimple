@@ -934,12 +934,13 @@ class XCAPManager(object):
             command.signal()
             return
         self.state = 'initializing'
-        self.xcap_subscriber = XCAPSubscriber(self.account)
         notification_center = NotificationCenter()
         notification_center.post_notification('XCAPManagerWillStart', sender=self)
-        notification_center.add_observer(self, sender=self.xcap_subscriber)
         notification_center.add_observer(self, sender=SIPSimpleSettings(), name='CFGSettingsObjectDidChange')
-        self.xcap_subscriber.start()
+        self.xcap_subscriber = XCAPSubscriber(self.account)
+        notification_center.add_observer(self, sender=self.xcap_subscriber)
+        if self.account.xcap.xcap_diff:
+            self.xcap_subscriber.start()
         self.command_channel.send(Command('initialize'))
         notification_center.post_notification('XCAPManagerDidStart', sender=self)
         command.signal()
@@ -1049,7 +1050,8 @@ class XCAPManager(object):
             self.state = 'initializing'
             self.command_channel.send(Command('initialize'))
         else:
-            self.xcap_subscriber.resubscribe()
+            if self.account.xcap.xcap_diff:
+                self.xcap_subscriber.resubscribe()
         command.signal()
 
     def _CH_fetch(self, command):
@@ -1743,6 +1745,11 @@ class XCAPManager(object):
                 self.start()
             else:
                 self.stop()
+        if self.account.enabled and 'xcap_diff' in notification.data.modified:
+            if self.account.xcap.xcap_diff:
+                self.xcap_subscriber.start()
+            else:
+                self.xcap_subscriber.stop()
 
     def _NH_CFGSettingsObjectWasDeleted(self, notification):
         notification.center.remove_observer(self, sender=self.account, name='CFGSettingsObjectDidChange')
