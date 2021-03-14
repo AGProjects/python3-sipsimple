@@ -151,6 +151,9 @@ class AnyURI(str):
 
     def __xmlbuild__(self):
         return urllib.parse.quote(self.encode('utf-8'))
+        
+    def __sqlrepr__(self, db):
+        return """'%s'""" % str(self)
 
 
 class SIPURI(AnyURI):
