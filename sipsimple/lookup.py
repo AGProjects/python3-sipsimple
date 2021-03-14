@@ -439,10 +439,12 @@ class DNSLookup(object):
             notification_center.post_notification('DNSLookupTrace', sender=self, data=NotificationData(query_type='NAPTR', query_name=str(domain), nameservers=resolver.nameservers, answer=None, error=e, **log_context))
         else:
             notification_center.post_notification('DNSLookupTrace', sender=self, data=NotificationData(query_type='NAPTR', query_name=str(domain), nameservers=resolver.nameservers, answer=answer, error=None, **log_context))
-            records = [r for r in answer.rrset if r.service.lower() in services]
+            records = [r for r in answer.rrset if r.service.decode().lower() in services]
             services = self._lookup_srv_records(resolver, [r.replacement.to_text() for r in records], answer.response.additional, log_context)
+
             for record in records:
-                pointers.extend(NAPTRResult(record.service.lower(), record.order, record.preference, r.priority, r.weight, r.port, r.address) for r in services.get(record.replacement.to_text(), ()))
+                pointers.extend(NAPTRResult(record.service.decode().lower(), record.order, record.preference, r.priority, r.weight, r.port, r.address) for r in services.get(record.replacement.to_text(), ()))
+
         pointers.sort(key=lambda result: (result.order, result.preference))
         return pointers
 
