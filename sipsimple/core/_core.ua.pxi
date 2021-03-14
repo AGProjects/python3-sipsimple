@@ -103,8 +103,8 @@ cdef class PJSIPUA:
             raise PJSIPError("Could not initialize event queue mutex", status)
 
         self._ip_address = kwargs["ip_address"].encode() if kwargs["ip_address"] else None
-        self.codecs = list(codec.encode() for codec in kwargs["codecs"])
-        self.video_codecs = list(codec.encode() for codec in kwargs["video_codecs"])
+        self.codecs = list(codec.encode() for codec in kwargs["codecs"] if codec in self.available_codecs)
+        self.video_codecs = list(codec.encode() for codec in kwargs["video_codecs"] if codec in self.available_video_codecs)
 
         self._module_name = PJSTR(b"mod-core")
         self._module.name = self._module_name.pj_str
