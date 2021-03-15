@@ -320,7 +320,7 @@ class RTPStream(object, metaclass=RTPStreamType):
 
     @property
     def codec(self):
-        return self._transport.codec.decode() if self._transport else None
+        return self._transport.codec.decode() if (self._transport and self._transport.codec) else None
 
     @property
     def sample_rate(self):
@@ -332,7 +332,7 @@ class RTPStream(object, metaclass=RTPStreamType):
 
     @property
     def local_rtp_address(self):
-        return self._rtp_transport.local_rtp_address.decode() if self._rtp_transport else None
+        return self._rtp_transport.local_rtp_address.decode() if (self._rtp_transport and self._rtp_transport.local_rtp_address) else None
 
     @property
     def local_rtp_port(self):
@@ -346,7 +346,7 @@ class RTPStream(object, metaclass=RTPStreamType):
     def remote_rtp_address(self):
         if self._ice_state == "IN_USE":
             return self._rtp_transport.remote_rtp_address if self._rtp_transport else None
-        return self._remote_rtp_address_sdp.decode() if self._rtp_transport else None
+        return self._remote_rtp_address_sdp.decode() if self._remote_rtp_address_sdp else None
 
     @property
     def remote_rtp_port(self):
