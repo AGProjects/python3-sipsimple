@@ -170,7 +170,7 @@ class Registrar(object):
                             if notification.name == 'SIPRegistrationDidSucceed':
                                 break
                             if notification.name == 'SIPRegistrationDidEnd':
-                                raise RegistrationError('Registration expired', retry_after=0)  # registration expired while we were trying to re-register
+                                raise RegistrationError('Registration expired', retry_after=random.uniform(60, 120))  # registration expired while we were trying to re-register
                     except SIPRegistrationDidFail as e:
                         notification_data = NotificationData(code=e.data.code, reason=e.data.reason, registration=self._registration, registrar=route)
                         notification_center.post_notification('SIPAccountRegistrationGotAnswer', sender=self.account, data=notification_data)
