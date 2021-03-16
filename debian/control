@@ -37,7 +37,7 @@ Depends: ${python3:Depends}, ${shlibs:Depends}, ${misc:Depends},
          python3-xcaplib
 Suggests: libavahi-compat-libdnssd1
 Provides: ${python3:Provides}
-Description: SIP SIMPLE SDK is a Software Development Kit for easy
- development of SIP clients and servers that support rich media like Audio,
- Video, Instant Messaging, File Transfers, Desktop Sharing and Presence. 
- Other media types can be easily added by using an extensible high-level API.
+Description: SIP SIMPLE SDK is a Python library for desktop operating
+ systems designed for the development of real time communications
+ applications based on SIP protocol and related media like audio, video,
+ messaging, file transfers, desktop sharing and presence.

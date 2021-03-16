@@ -9,10 +9,10 @@ https://ag-projects.com
 Description
 -----------
 
-SIP SIMPLE SDK is a Software Development Kit for easy development of SIP
-clients and servers that support rich media like Audio, Video, Instant
-Messaging, File Transfers, Desktop Sharing and Presence.  Other media types
-can be easily added by using an extensible high-level API.
+SIP SIMPLE SDK is a Python library for desktop operating systems designed
+for the development of real time communications applications based on SIP
+protocol and related media like audio, video, messaging, file transfers,
+desktop sharing and presence.
 
 
 Background
@@ -21,7 +21,7 @@ Background
 SIP stands for 'Sessions Initiation Protocol', an IETF standard described by
 RFC 3261. SIP is an application-layer control protocol that can establish,
 modify and terminate multimedia sessions such as Internet telephony calls
-(VoIP). Media can be added to (and removed from) an existing session.
+(VoIP). Media can be added to, and removed from, an existing session.
 
 SIP allows the endpoints to negotiate and combine any type of session they
 mutually understand like video, instant messaging (IM), file transfer,
@@ -60,7 +60,7 @@ General
 
 Supported media
 
- * Audio and Video (RTP/SRTP/ZRTP)
+ * Audio and Video (RTP)
  * Instant Messaging (MSRP and its relay extension)
  * File Transfer (MSRP and its relay extension)
  * Screen Sharing (VNC over MSRP)
@@ -115,7 +115,8 @@ Instant Messaging
  * Indication of Message Composition for Instant Messaging (RFC 3994)
  * Message Summary Event Package (RFC 3842)
  * File Transfer (RFC 5547)
- * OTR (Off-The-Record)
+ * OTR (Off-the-Record Messaging) a cryptographic protocol that provides
+   encryption for instant messaging conversations
 
 Screen Sharing
 
