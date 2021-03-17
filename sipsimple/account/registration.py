@@ -176,7 +176,10 @@ class Registrar(object):
                         notification_center.post_notification('SIPAccountRegistrationGotAnswer', sender=self.account, data=notification_data)
                         if e.data.code == 401:
                             # Authentication failed, so retry the registration in some time
-                            raise RegistrationError('Authentication failed', retry_after=random.uniform(60, 120))
+                            raise RegistrationError('Authentication failed', retry_after=int(random.uniform(60, 120)))
+                        elif e.data.code == 408:
+                            # Timeout
+                            raise RegistrationError('Request timeout', retry_after=int(random.uniform(60, 120)))
                         elif e.data.code == 423:
                             # Get the value of the Min-Expires header
                             if e.data.min_expires is not None and e.data.min_expires > self.account.sip.register_interval:
