@@ -138,7 +138,7 @@ class Registrar(object):
             try:
                 routes = lookup.lookup_sip_proxy(uri, settings.sip.transport_list).wait()
             except DNSLookupError as e:
-                retry_after = random.uniform(self._dns_wait, 2*self._dns_wait)
+                retry_after = int(random.uniform(self._dns_wait, 2*self._dns_wait))
                 self._dns_wait = limit(2*self._dns_wait, max=30)
                 raise RegistrationError('DNS lookup failed: %s' % e, retry_after=retry_after)
             else:
@@ -170,7 +170,7 @@ class Registrar(object):
                             if notification.name == 'SIPRegistrationDidSucceed':
                                 break
                             if notification.name == 'SIPRegistrationDidEnd':
-                                raise RegistrationError('Registration expired', retry_after=random.uniform(60, 120))  # registration expired while we were trying to re-register
+                                raise RegistrationError('Registration expired', retry_after=int(random.uniform(60, 120)))  # registration expired while we were trying to re-register
                     except SIPRegistrationDidFail as e:
                         notification_data = NotificationData(code=e.data.code, reason=e.data.reason, registration=self._registration, registrar=route)
                         notification_center.post_notification('SIPAccountRegistrationGotAnswer', sender=self.account, data=notification_data)
@@ -183,7 +183,7 @@ class Registrar(object):
                                 refresh_interval = e.data.min_expires
                             else:
                                 refresh_interval = None
-                            raise RegistrationError('Interval too short', retry_after=random.uniform(60, 120), refresh_interval=refresh_interval)
+                            raise RegistrationError('Interval too short', retry_after=int(random.uniform(60, 120)), refresh_interval=refresh_interval)
                         else:
                             # Otherwise just try the next route
                             #continue
@@ -218,7 +218,7 @@ class Registrar(object):
                         break
             else:
                 # There are no more routes to try, reschedule the registration
-                retry_after = random.uniform(self._register_wait, 2*self._register_wait)
+                retry_after = int(random.uniform(self._register_wait, 2*self._register_wait))
                 self._register_wait = limit(self._register_wait*2, max=30)
                 raise RegistrationError('No more routes to try', retry_after=retry_after)
         except RegistrationError as e:
