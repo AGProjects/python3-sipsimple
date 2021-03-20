@@ -1,27 +1,23 @@
 diff -u setup_pjsip.py setup_pjsip.py
 --- setup_pjsip.py	2021-03-10 05:41:58.052700196 +0100
 +++ setup_pjsip.py	2021-03-10 05:49:35.309917472 +0100
-@@ -162,12 +162,20 @@
+@@ -165,6 +165,7 @@
          else:
              cmd = ["./configure"]
-         cmd.extend(["--disable-g7221-codec"])
-+        cmd.extend(["--disable-sdl"])
-+        cmd.extend(["--disable-openh264"])
-+        cmd.extend(["--enable-video"])
-+        cmd.extend(["--with-opus"])
+         cmd.extend(["--disable-openh264", "--disable-l16-codec", "--disable-g7221-codec", "--disable-sdl", "--disable-speex-aec", "--disable-ilbc-codec", "--disable-silk", "--disable-libyuv"])
++        cmd.extend(["--disable-openh264", "--enable-video", "--with-opus"])
          ffmpeg_path = env.get("SIPSIMPLE_FFMPEG_PATH", None)
          if ffmpeg_path is not None:
              cmd.append("--with-ffmpeg=%s" % os.path.abspath(os.path.expanduser(ffmpeg_path)))
-+        else:
-+            cmd.extend(["--with-ffmpeg"])
-         libvpx_path = env.get("SIPSIMPLE_LIBVPX_PATH", None)
-         if libvpx_path is not None:
-             cmd.append("--with-vpx=%s" % os.path.abspath(os.path.expanduser(libvpx_path)))
-+        else:
-+            cmd.extend(["--with-vpx"])
-         self.distutils_exec_process(cmd, silent=not self.pjsip_verbose_build, cwd=self.build_dir, env=env)
-         if "#define PJ_HAS_SSL_SOCK 1\n" not in open(os.path.join(self.build_dir, "pjlib", "include", "pj", "compat", "os_auto.h")).readlines():
-             os.remove(os.path.join(self.build_dir, "build.mak"))
+@@ -196,7 +197,7 @@
+         extension.libraries = self.get_opts_from_string(build_mak_vars["PJ_LDLIBS"], "-l")
+         extension.define_macros = [tuple(define.split("=", 1)) for define in self.get_opts_from_string(build_mak_vars["PJ_CFLAGS"], "-D")]
+         extension.define_macros.append(("PJ_SVN_REVISION", open(os.path.join(self.build_dir, "base_rev"), "r").read().strip()))
+-        extension.define_macros.append(("__PYX_FORCE_INIT_THREADS", 1))
++        #extension.define_macros.append(("__PYX_FORCE_INIT_THREADS", 1))
+         extension.extra_compile_args.append("-Wno-unused-function")    # silence warning
+ 
+         if sys_platform == "darwin":
 diff -ruN sipsimple/configuration/settings.py sipsimple/configuration/settings.py 
 --- sipsimple/configuration/settings.py	2021-02-18 22:20:23.927865045 +0100
 +++ sipsimple/configuration/settings.py	2021-02-06 20:08:25.900660619 +0100
@@ -219,3 +215,25 @@ diff -ruN sipsimple/core/_core.util.pxi sipsimple/core/_core.util.pxi
      headers = {}
      header = <pjsip_hdr *> (<pj_list *> &msg.hdr).next
      while header != &msg.hdr:
+--- sipsimple/core/_core.pyx	2021-03-19 03:05:47.796725137 +0100
++++ sipsimple/core/_core.pyx	2021-03-11 10:29:24.029286901 +0100
+@@ -21,7 +21,7 @@
+ 
+ PJ_VERSION = pj_get_version()
+ PJ_SVN_REVISION = int(PJ_SVN_REV)
+-CORE_REVISION = 183
++CORE_REVISION = 210 
+ 
+ # exports
+ 
+--- sipsimple/core/__init__.py	2021-03-19 02:52:29.930211280 +0100
++++ sipsimple/core/__init__.py	2021-03-11 10:29:24.021286694 +0100
+@@ -4,7 +4,7 @@
+ from sipsimple.core._helpers import *
+ from sipsimple.core._primitives import *
+ 
+-required_revision = 183
++required_revision = 210
+ if CORE_REVISION != required_revision:
+     raise ImportError("Wrong SIP core revision %d (expected %d)" % (CORE_REVISION, required_revision))
+ del required_revision

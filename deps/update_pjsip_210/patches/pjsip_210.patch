@@ -2,7 +2,7 @@ diff -ruN pjproject-2.10/base_rev pjsip/base_rev
 --- pjproject-2.10/base_rev	1970-01-01 01:00:00.000000000 +0100
 +++ pjsip/base_rev	2021-02-07 00:21:58.163902742 +0100
 @@ -0,0 +1 @@
-+2.10
++210
 diff -ruN pjproject-2.10/pjlib/src/pj/os_core_unix.c pjsip/pjlib/src/pj/os_core_unix.c
 --- pjproject-2.10/pjlib/src/pj/os_core_unix.c	2020-02-14 10:48:27.000000000 +0100
 +++ pjsip/pjlib/src/pj/os_core_unix.c	2021-02-06 23:59:38.145916811 +0100
@@ -238,16 +238,24 @@ diff -ruN pjproject-2.10/pjlib/src/pj/os_core_unix.c pjsip/pjlib/src/pj/os_core_
      return PJ_SUCCESS;
 --- pjproject-2.10/pjmedia/include/pjmedia/config_auto.h.in	2021-02-05 09:00:45.241108718 +0100
 +++ pjsip/pjmedia/include/pjmedia/config_auto.h.in	2021-02-22 21:46:52.232215546 +0100
-@@ -36,6 +36,9 @@
+@@ -36,6 +36,17 @@
  #undef PJMEDIA_HAS_G711_CODEC
  #endif
-
+ 
 +#define PJMEDIA_HAS_VIDEO		1
 +#define PJMEDIA_HAS_OPUS_CODEC		1
 +#define PJMEDIA_HAS_VPX_CODEC_VP9	1
-
- #endif  /* __PJMEDIA_CONFIG_AUTO_H_ */
-
++#define PJMEDIA_HAS_FFMPEG_VID_CODEC	1
++#define PJMEDIA_HAS_LIBWEBRTC		1
++#define PJMEDIA_HAS_WEBRTC_AEC		1
++#define PJMEDIA_HAS_SILK_CODEC		1
++
++#ifdef PJMEDIA_USE_OLD_FFMPEG
++#undef PJMEDIA_USE_OLD_FFMPEG
++#endif
+ 
+ #endif	/* __PJMEDIA_CONFIG_AUTO_H_ */
+ 
 diff -ruN pjproject-2.10/pjmedia/build/Makefile pjproject-2.10/pjmedia/build/Makefile
 --- pjproject-2.10/pjmedia/build/Makefile	2021-02-05 09:00:45.241108718 +0100
 +++ pjsip/pjmedia/build/Makefile	2021-02-22 21:46:52.232215546 +0100
@@ -2062,6 +2070,28 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/endpoint.c pjsip/pjmedia/src/pjmedi
  
      *p_m = m;
      return PJ_SUCCESS;
+--- pjproject-2.10/pjmedia/src/pjmedia/ffmpeg_util.h	2021-03-19 16:51:27.589562664 +0100
++++ pjsip/pjmedia/src/pjmedia/ffmpeg_util.h	2021-03-19 17:00:32.821251088 +0100
+@@ -38,13 +38,13 @@
+ #include <libavcodec/avcodec.h>
+ 
+ 
+-#ifdef PJMEDIA_USE_OLD_FFMPEG
+-#   define AVPixelFormat	PixelFormat
+-#   define AV(str)		str
+-#   define PIX_FMT_GBRP 	PIX_FMT_GBR24P
+-#else
++//#ifdef PJMEDIA_USE_OLD_FFMPEG
++//#   define AVPixelFormat	PixelFormat
++//#   define AV(str)		str
++//#   define PIX_FMT_GBRP 	PIX_FMT_GBR24P
++//#else
+ #   define AV(str)		AV_ ## str
+-#endif
++//#endif
+ 					 
+ 
+ void pjmedia_ffmpeg_add_ref();
 diff -ruN pjproject-2.10/pjmedia/src/pjmedia/ffmpeg_util.c pjsip/pjmedia/src/pjmedia/ffmpeg_util.c
 --- pjproject-2.10/pjmedia/src/pjmedia/ffmpeg_util.c	2020-02-14 10:48:27.000000000 +0100
 +++ pjsip/pjmedia/src/pjmedia/ffmpeg_util.c	2021-02-06 20:25:00.472499296 +0100
@@ -4864,6 +4894,17 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-audiodev/wmme_dev.c pjsip/pjmedia/s
  /* API: Get stream info. */
  static pj_status_t stream_get_param(pjmedia_aud_stream *s,
  				    pjmedia_aud_param *pi)
+--- pjproject-2.10/pjmedia/src/pjmedia-codec/opus.c	2021-03-19 04:55:21.491267756 +0100
++++ pjsip/pjmedia/src/pjmedia-codec/opus.c	2021-03-19 05:48:19.457507442 +0100
+@@ -152,7 +152,7 @@
+ static pjmedia_codec_opus_config opus_cfg =
+ {
+     PJMEDIA_CODEC_OPUS_DEFAULT_SAMPLE_RATE,     /* Sample rate		*/
+-    1,						/* Channel count	*/
++    2,						/* Channel count	*/
+     PTIME,					/* Frame time 		*/			
+     PJMEDIA_CODEC_OPUS_DEFAULT_BIT_RATE,	/* Bit rate             */
+     5,						/* Expected packet loss */
 diff -ruN pjproject-2.10/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c pjsip/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c
 --- pjproject-2.10/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c	2020-02-14 10:48:27.000000000 +0100
 +++ pjsip/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c	2021-02-06 22:51:16.641714862 +0100
@@ -4918,6 +4959,40 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c pjsip/pjm
  	}
      }
  
+@@ -1425,12 +1420,12 @@
+     /* Check if encoder has been opened */
+     PJ_ASSERT_RETURN(ff->enc_ctx, PJ_EINVALIDOP);
+ 
+-#ifdef PJMEDIA_USE_OLD_FFMPEG
+-    avcodec_get_frame_defaults(&avframe);
+-#else
++//#ifdef PJMEDIA_USE_OLD_FFMPEG
++//    avcodec_get_frame_defaults(&avframe);
++//#else
+     pj_bzero(&avframe, sizeof(avframe));
+     av_frame_unref(&avframe);
+-#endif
++//#endif
+ 
+     // Let ffmpeg manage the timestamps
+     /*
+@@ -1687,12 +1682,12 @@
+      * whole decoding session, and seems to be freed when the codec context
+      * closed).
+      */
+-#ifdef PJMEDIA_USE_OLD_FFMPEG
+-    avcodec_get_frame_defaults(&avframe);
+-#else
++//#ifdef PJMEDIA_USE_OLD_FFMPEG
++//    avcodec_get_frame_defaults(&avframe);
++//#else
+     pj_bzero(&avframe, sizeof(avframe));
+     av_frame_unref(&avframe);
+-#endif
++//#endif
+ 
+     /* Init packet, the container of the encoded data */
+     av_init_packet(&avpacket);
 @@ -1705,12 +1700,12 @@
      avpacket.size = (int)input->size;
  
@@ -7511,10 +7586,11 @@ diff -ruN pjproject-2.10/pjsip/src/pjsip-ua/sip_inv.c pjsip/pjsip/src/pjsip-ua/s
 diff -ruN pjproject-2.10/third_party/build/os-auto.mak.in pjsip/third_party/build/os-auto.mak.in
 --- pjproject-2.10/third_party/build/os-auto.mak.in	2020-02-14 10:48:27.000000000 +0100
 +++ pjsip/third_party/build/os-auto.mak.in	2021-02-06 16:09:49.029693848 +0100
-@@ -73,6 +73,8 @@
+@@ -73,6 +73,9 @@
  endif
  endif
- 
+
++export PJMEDIA_VIDEODEV_OBJS += avf_dev.o
 +DIRS += zsrtp
 +
  ifneq (@ac_no_webrtc@,1)
@@ -7959,5 +8035,19 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
 +    return PJ_SUCCESS;
 +}
  
- 
 
+ 
+--- pjsip/pjmedia/src/pjmedia-videodev/ffmpeg_dev.c	2021-03-19 17:02:04.749861806 +0100
++++ pjsip/pjmedia/src/pjmedia-videodev/ffmpeg_dev.c	2021-03-19 17:03:03.618376942 +0100
+@@ -58,9 +58,9 @@
+ 
+ #define MAX_DEV_CNT     8
+ 
+-#ifndef PJMEDIA_USE_OLD_FFMPEG
++//#ifndef PJMEDIA_USE_OLD_FFMPEG
+ #  define av_close_input_stream(ctx) avformat_close_input(&ctx)
+-#endif
++//#endif
+ 
+ 
+ typedef struct ffmpeg_dev_info
