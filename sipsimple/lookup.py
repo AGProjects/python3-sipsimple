@@ -13,36 +13,12 @@ from itertools import chain
 from time import time
 from urllib.parse import urlparse
 
-# patch dns.entropy module which is not thread-safe
-import dns
-import sys
-from functools import partial
-from random import randint, randrange
-
-dns.entropy = dns.__class__('dns.entropy')
-dns.entropy.__file__ = dns.__file__.replace('__init__.py', 'entropy.py')
-dns.entropy.__builtins__ = dns.__builtins__
-dns.entropy.random_16 = partial(randrange, 2**16)
-dns.entropy.between = randint
-
-sys.modules['dns.entropy'] = dns.entropy
-
-del partial, randint, randrange, sys
-
 # replace standard select and socket modules with versions from eventlib
 from eventlib import coros, proc
-from eventlib.green import select
-from eventlib.green import socket
 import dns.name
-import dns.resolver
 import dns.query
-dns.resolver.socket = socket
-dns.query.socket = socket
-dns.query.select = select
-
-#TODO3: dnspython newer than 0.20 has a new API
-if ('_set_polling_backend' in dir(dns.query)):
-    dns.query._set_polling_backend(dns.query._select_for)
+from gevent.resolver.dnspython import resolver
+from dns.resolver import Timeout
 
 from application.notification import IObserver, NotificationCenter, NotificationData
 from application.python import Null, limit
@@ -112,7 +88,7 @@ class DNSCache(object):
             self.data = {}
 
 
-class InternalResolver(dns.resolver.Resolver):
+class InternalResolver(resolver.Resolver):
     def __init__(self, *args, **kw):
         super(InternalResolver, self).__init__(*args, **kw)
         if self.domain.to_text().endswith('local.'):
@@ -120,7 +96,7 @@ class InternalResolver(dns.resolver.Resolver):
         self.search = [item for item in self.search if not item.to_text().endswith('local.')]
 
 
-class DNSResolver(dns.resolver.Resolver):
+class DNSResolver(resolver.Resolver):
     """
     The resolver used by DNSLookup.
 
@@ -130,7 +106,7 @@ class DNSResolver(dns.resolver.Resolver):
     """
 
     def __init__(self):
-        dns.resolver.Resolver.__init__(self, configure=False)
+        resolver.Resolver.__init__(self, configure=False)
         dns_manager = DNSManager()
         self.search = dns_manager.search
         self.domain = dns_manager.domain
@@ -139,7 +115,7 @@ class DNSResolver(dns.resolver.Resolver):
     def query(self, *args, **kw):
         start_time = time()
         try:
-            return dns.resolver.Resolver.query(self, *args, **kw)
+            return resolver.Resolver.query(self, *args, **kw)
         finally:
             self.lifetime -= min(self.lifetime, time()-start_time)
 
@@ -215,7 +191,7 @@ class DNSLookup(object):
                 addresses = self._lookup_a_records(resolver, [uri.host.decode()], log_context=log_context)
                 if addresses[uri.host.decode()]:
                     return [(addr, service_port) for addr in addresses[uri.host.decode()]]
-        except dns.resolver.Timeout:
+        except Timeout:
             raise DNSLookupError('Timeout in lookup for %s servers for domain %s' % (service, uri.host.decode()))
         else:
             raise DNSLookupError('No %s servers found for domain %s' % (service, uri.host.decode()))
@@ -307,7 +283,7 @@ class DNSLookup(object):
                 naptr_services = [service for service, transport in list(naptr_service_transport_map.items()) if transport in supported_transports]
                 try:
                     pointers = self._lookup_naptr_record(resolver, uri.host.decode(), naptr_services, log_context=log_context)
-                except dns.resolver.Timeout:
+                except Timeout:
                     pointers = []
                 if pointers:
                     return [Route(address=result.address, port=result.port, transport=naptr_service_transport_map[result.service], tls_name=uri.host) for result in pointers]
@@ -318,7 +294,7 @@ class DNSLookup(object):
                         record_name = '%s.%s' % (transport_service_map[transport], uri.host.decode())
                         try:
                             services = self._lookup_srv_records(resolver, [record_name], log_context=log_context)
-                        except dns.resolver.Timeout:
+                        except Timeout:
                             continue
                         if services[record_name]:
                             routes.extend(Route(address=result.address, port=result.port, transport=transport, tls_name=uri.host) for result in services[record_name])
@@ -332,7 +308,7 @@ class DNSLookup(object):
                             port = 5061 if transport=='tls' else 5060
                             if addresses[uri.host.decode()]:
                                 return [Route(address=addr, port=port, transport=transport, tls_name=uri.host) for addr in addresses[uri.host.decode()]]
-        except dns.resolver.Timeout:
+        except Timeout:
             raise DNSLookupError("Timeout in lookup for routes for SIP URI %s" % uri)
         else:
             raise DNSLookupError("No routes found for SIP URI %s" % uri)
@@ -361,7 +337,7 @@ class DNSLookup(object):
             results = []
             try:
                 answer = resolver.query(record_name, rdatatype.TXT)
-            except dns.resolver.Timeout as e:
+            except Timeout as e:
                 notification_center.post_notification('DNSLookupTrace', sender=self, data=NotificationData(query_type='TXT', query_name=str(record_name), nameservers=resolver.nameservers, answer=None, error=e, **log_context))
                 raise
             except exception.DNSException as e:
@@ -375,7 +351,7 @@ class DNSLookup(object):
             if not results:
                 raise DNSLookupError('No XCAP servers found for domain %s' % uri.host.decode())
             return results
-        except dns.resolver.Timeout:
+        except Timeout:
             raise DNSLookupError('Timeout in lookup for XCAP servers for domain %s' % uri.host.decode())
 
 
@@ -389,7 +365,7 @@ class DNSLookup(object):
             else:
                 try:
                     answer = resolver.query(hostname, rdatatype.A)
-                except dns.resolver.Timeout as e:
+                except Timeout as e:
                     notification_center.post_notification('DNSLookupTrace', sender=self, data=NotificationData(query_type='A', query_name=str(hostname), nameservers=resolver.nameservers, answer=None, error=e, **log_context))
                     raise
                 except exception.DNSException as e:
@@ -414,7 +390,7 @@ class DNSLookup(object):
             else:
                 try:
                     answer = resolver.query(srv_name, rdatatype.SRV)
-                except dns.resolver.Timeout as e:
+                except Timeout as e:
                     notification_center.post_notification('DNSLookupTrace', sender=self, data=NotificationData(query_type='SRV', query_name=str(srv_name), nameservers=resolver.nameservers, answer=None, error=e, **log_context))
                     raise
                 except exception.DNSException as e:
@@ -433,7 +409,7 @@ class DNSLookup(object):
         pointers = []
         try:
             answer = resolver.query(domain, rdatatype.NAPTR)
-        except dns.resolver.Timeout as e:
+        except Timeout as e:
             notification_center.post_notification('DNSLookupTrace', sender=self, data=NotificationData(query_type='NAPTR', query_name=str(domain), nameservers=resolver.nameservers, answer=None, error=e, **log_context))
             raise
         except exception.DNSException as e:
@@ -456,7 +432,7 @@ class DNSManager(object, metaclass=Singleton):
     def __init__(self):
         try:
             default_resolver = InternalResolver()
-        except dns.resolver.NoResolverConfiguration:
+        except resolver.NoResolverConfiguration:
             default_resolver = Null
             
         self.search = default_resolver.search
@@ -516,7 +492,7 @@ class DNSManager(object, metaclass=Singleton):
 
         try:
             resolver = InternalResolver()
-        except dns.resolver.NoResolverConfiguration as e:
+        except resolver.NoResolverConfiguration as e:
             self._timer = reactor.callLater(15, self._channel.send, Command('probe_dns'))
             return
         
@@ -533,7 +509,7 @@ class DNSManager(object, metaclass=Singleton):
             answer = resolver.query("_sip._udp.%s" % self.probed_domain, rdatatype.SRV)
             if not any(record.rdtype == rdatatype.SRV for record in answer.rrset):
                 raise exception.DNSException("No SRV records found")
-        except (dns.resolver.Timeout, exception.DNSException):
+        except (Timeout, exception.DNSException):
             pass
         else:
             self.nameservers = resolver.nameservers
@@ -546,7 +522,7 @@ class DNSManager(object, metaclass=Singleton):
             answer = resolver.query(self.probed_domain, rdatatype.NAPTR)
             if not any(record.rdtype == rdatatype.NAPTR for record in answer.rrset):
                 raise exception.DNSException("No NAPTR records found")
-        except (dns.resolver.Timeout, exception.DNSException):
+        except (Timeout, exception.DNSException):
             pass
         else:
             self.nameservers = resolver.nameservers
