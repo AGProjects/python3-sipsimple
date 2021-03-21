@@ -1,10 +1,24 @@
 TODO
 ----
 
- - Find a solution for DNS async in lookup.py for dnspython >= 2.1.0
- - Use MacOS native video hardware acceleration
-   https://blog.pjsip.org/2017/09/26/pjsip-version-2-7-is-released-with-dtls-for-srtp-keying-support-and-ios-and-mac-native-h-264-videotoolbox-codec/
- - Cannot retry a Transfer if it failed (invitation._transfer_usage is not reset) 
+ - Use individual TCP/TLS transport per SIP account
+ - Use individual TLS settings per account (CA, list, certificate and verify server)
+ - Use MacOS native video hardware acceleration https://trac.pjsip.org/repos/ticket/2022
+ - Fix TLS verify server https://github.com/AGProjects/python-sipsimple/pull/7
+ - After ICE neg is completed we must send re-INVITE with the chosen RTP candidates
+ - Cannot retry a Call Transfer if it failed (invitation._transfer_usage is not reset) 
+ - Modify Invitation/Request/Subscription to reset transport on request_uri
+ - Application.py subscribes to notifications but doesn't remove them when it stops
+ - Send notifications when local/remote party becomes focus
+   SIPSessionLocalPartyIsFocus, SIPSessionRemotePartyIsFocus
+
+
+Migrate from eventlib to gevent
+-------------------------------
+
+ * http://sdiehl.github.io/gevent-tutorial/
+ * https://blog.gevent.org/2010/02/27/why-gevent/
+ * http://groups.google.com/group/gevent/browse_thread/thread/7fca7230db0509f6
 
 
 TODO Python version 2
@@ -48,11 +62,6 @@ TODO Python version 2
 
 - allow deleting transport on SIPURI
 
-- modify Invitation/Request/Subscription to reset transport on request_uri
-
-- in application.py it subscribes to notifications but doesn't remove them
-  when it stops
-
 - End a session while in accepting state (requires session serialization)
 
 - Model file transfer after desktop sharing (use handlers on termination)
@@ -61,44 +70,19 @@ TODO Python version 2
 - Use an ordered dict for keeping accounts in the AccountManager ?!?
   see http://code.activestate.com/recipes/576693/
 
-- send notifications when local/remote party becomes focus
-  SIPSessionLocalPartyIsFocus, SIPSessionRemotePartyIsFocus
-
 - have higher level notifications on conference events
-
-
-To fix this exception:
-
-sip:nwpsefvl@10.0.0.1:52067 52067
-sip:nwpsefvl@10.0.0.1:52067 52067
-sip:nwpsefvl@10.0.0.1;transport=tcp None
-Traceback (most recent call last):
-  File "/usr/lib/python2.5/site-packages/twisted/internet/base.py", line 778, in runUntilCurrent
-    call.func(*call.args, **call.kw)
-  File "/usr/lib/pymodules/python2.5/eventlet/hubs/twistedr.py", line 158, in call_if_greenlet_alive
-    return func(*args1, **kwargs1)
-  File "/usr/lib/pymodules/python2.5/eventlet/proc.py", line 571, in _run
-    result = function(*args, **kwargs)
-  File "/home/dan/work/voip/python-sipsimple/sipsimple/account.py", line 683, in _handle_commands
-    handler(command)
-  File "/home/dan/work/voip/python-sipsimple/sipsimple/account.py", line 720, in _CH_register
-    txtRecord=bonjour.TXTRecord(items=txtdata))
-  File "/home/dan/work/voip/blink-qt/sipsimple/bonjour.py", line 1125, in DNSServiceRegister
-TypeError: an integer is required
 
 - Notification from SIPApplication when a transport is added/removed to the
   engine.
+
 - SIPApplication should provide a list of supported transports that need to
   be used instead of the ones from settings because not everything enabled
   in settings may actually be available at runtime on the engine
-- Build contacts on above notification instead of building them on the fly
 
-- Use OpenH264 implementation
-    - We need the binaries?!
+- Build contacts on above notification instead of building them on the fly
 
 - Ability to start stream deactivated / on-hold
     - VideoStream(direction='sendrecv') like MSRP?
     - Review stream API, s/deactivate/shutdown/ ?
 
 - Open the camera at its native framerate
-
