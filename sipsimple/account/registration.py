@@ -101,6 +101,7 @@ class Registrar(object):
     def _run(self):
         while True:
             command = self._command_channel.wait()
+            #print('Registrar for %s got command %s' % (self.account.id, command.name))
             handler = getattr(self, '_CH_%s' % command.name)
             handler(command)
 
@@ -226,7 +227,7 @@ class Registrar(object):
                 raise RegistrationError('No more routes to try', retry_after=retry_after)
         except RegistrationError as e:
             self.registered = False
-            notification_center.remove_observer(self, sender=self._registration)
+            notification_center.discard_observer(self, sender=self._registration)
             notification_center.post_notification('SIPAccountRegistrationDidFail', sender=self.account, data=NotificationData(error=e.error, retry_after=e.retry_after))
             def register(e):
                 if self.active:
