@@ -10,6 +10,7 @@ import os
 import random
 import socket
 import weakref
+import gevent
 
 from io import StringIO
 from collections import OrderedDict
@@ -23,7 +24,7 @@ from application.python import Null
 from eventlib import api, coros, proc
 from eventlib.green.httplib import BadStatusLine
 from twisted.internet.error import ConnectionLost
-from xcaplib.green import XCAPClient
+from xcaplib.client import XCAPClient
 from xcaplib.error import HTTPError
 from zope.interface import implementer
 
@@ -37,7 +38,7 @@ from sipsimple.payloads import ParserError, IterateTypes, IterateIDs, IterateIte
 from sipsimple.payloads import addressbook, commonpolicy, dialogrules, omapolicy, pidf, prescontent, presrules, resourcelists, rlsservices, xcapcaps, xcapdiff
 from sipsimple.payloads import rpid; del rpid  # needs to be imported to register its namespace
 from sipsimple.threading import run_in_twisted_thread
-from sipsimple.threading.green import Command, Worker, run_in_green_thread
+from sipsimple.threading.green import Command, run_in_green_thread
 
 import traceback
 
@@ -118,6 +119,8 @@ class Document(object):
         notification_center = NotificationCenter()
 
         try:
+            notification_data = NotificationData(method='GET', url=self.url, application=self.application, etag=self.etag, result='fetch')
+            notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
             document = self.manager.client.get(self.application, etagnot=self.etag, globaltree=self.global_tree, headers={'Accept': self.payload_type.content_type}, filename=self.filename)
             self.content = self.payload_type.parse(document)
             self.etag = document.etag
@@ -1831,14 +1834,8 @@ class XCAPManager(object):
         NotificationCenter().post_notification('XCAPManagerDidReloadData', sender=self, data=data)
 
     def _fetch_documents(self, documents):
-        workers = [Worker.spawn(document.fetch) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
-        try:
-            while workers:
-                worker = workers.pop()
-                worker.wait()
-        finally:
-            for worker in workers:
-                worker.wait_ex()
+        jobs = [gevent.spawn(document.fetch) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
+        gevent.joinall(jobs, timeout=15)
 
     def _save_journal(self):
         try:
