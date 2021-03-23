@@ -9,6 +9,7 @@ from time import time
 
 from application.notification import IObserver, NotificationCenter, NotificationData
 from application.python import Null, limit
+from application.system import host as Host
 from eventlib import coros, proc
 from twisted.internet import reactor
 from zope.interface import implementer
@@ -114,6 +115,9 @@ class Registrar(object):
         self._registration_timer = None
 
         try:
+            if Host.default_ip is None:
+                raise RegistrationError('No IP address', retry_after=60)
+
             # Initialize the registration
             if self._registration is None:
                 duration = command.refresh_interval or self.account.sip.register_interval
@@ -180,7 +184,7 @@ class Registrar(object):
                             raise RegistrationError('Authentication failed', retry_after=int(random.uniform(60, 120)))
                         elif e.data.code == 408:
                             # Timeout
-                            raise RegistrationError('Request timeout', retry_after=int(random.uniform(60, 120)))
+                            raise RegistrationError('Request timeout', retry_after=int(random.uniform(15, 40)))
                         elif e.data.code == 423:
                             # Get the value of the Min-Expires header
                             if e.data.min_expires is not None and e.data.min_expires > self.account.sip.register_interval:

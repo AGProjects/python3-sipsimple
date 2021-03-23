@@ -210,7 +210,7 @@ class BonjourServices(object):
             self._select_proc.kill(RestartSelect)
             file.close()
             if self._register_timer is None:
-                self._register_timer = reactor.callLater(1, self._command_channel.send, Command('register'))
+                self._register_timer = reactor.callLater(10, self._command_channel.send, Command('register'))
 
     def _browse_cb(self, file, flags, interface_index, error_code, service_name, regtype, reply_domain):
         notification_center = NotificationCenter()
@@ -226,7 +226,7 @@ class BonjourServices(object):
             for f in removed_files:
                 f.close()
             if self._discover_timer is None:
-                self._discover_timer = reactor.callLater(1, self._command_channel.send, Command('discover'))
+                self._discover_timer = reactor.callLater(5, self._command_channel.send, Command('discover'))
             return
         if reply_domain != 'local.':
             return
@@ -365,7 +365,7 @@ class BonjourServices(object):
         if added_transports:
             self._select_proc.kill(RestartSelect)
         if added_transports != missing_transports:
-            self._register_timer = reactor.callLater(1, self._command_channel.send, Command('register', command.event))
+            self._register_timer = reactor.callLater(10, self._command_channel.send, Command('register', command.event))
         else:
             command.signal()
 
@@ -436,7 +436,7 @@ class BonjourServices(object):
         if added_transports:
             self._select_proc.kill(RestartSelect)
         if added_transports != missing_transports:
-            self._discover_timer = reactor.callLater(1, self._command_channel.send, Command('discover', command.event))
+            self._discover_timer = reactor.callLater(5, self._command_channel.send, Command('discover', command.event))
         else:
             command.signal()
 

@@ -10,6 +10,7 @@ from time import time
 
 from application.notification import IObserver, NotificationCenter, NotificationData
 from application.python import Null, limit
+from application.system import host as Host
 from eventlib import coros, proc
 from twisted.internet import reactor
 from zope.interface import implementer
@@ -180,6 +181,9 @@ class Subscriber(object, metaclass=ABCMeta):
         valid_transports = self.__transports__.intersection(settings.sip.transport_list)
 
         try:
+            if Host.default_ip is None:
+                raise SubscriptionError('No IP address', retry_after=60)
+
             # Lookup routes
             if self.account.sip.outbound_proxy is not None and self.account.sip.outbound_proxy.transport in valid_transports:
                 uri = SIPURI(host=self.account.sip.outbound_proxy.host, port=self.account.sip.outbound_proxy.port, parameters={'transport': self.account.sip.outbound_proxy.transport})
@@ -187,6 +191,7 @@ class Subscriber(object, metaclass=ABCMeta):
                 uri = SIPURI(host=self.account.id.domain)
             else:
                 uri = SIPURI(host=subscription_uri.domain)
+
             lookup = DNSLookup()
             try:
                 routes = lookup.lookup_sip_proxy(uri, valid_transports).wait()
@@ -198,6 +203,9 @@ class Subscriber(object, metaclass=ABCMeta):
 
             timeout = time() + 30
             for route in routes:
+                if Host.default_ip is None:
+                    raise SubscriptionError('No IP address', retry_after=60)
+
                 remaining_time = timeout - time()
                 if remaining_time > 0:
                     try:
