@@ -125,7 +125,7 @@ class Document(object):
             self.content = self.payload_type.parse(document)
             self.etag = document.etag
             self.__dict__['dirty'] = False
-        except (BadStatusLine, ConnectionLost, URLError, socket.error) as e:
+        except (BadStatusLine, ConnectionLost, URLError, TimeoutError, socket.error) as e:
             notification_data = NotificationData(method='GET', url=self.url, application=self.application, result='failure', reason=str(e), code=408, etag=self.etag)
             notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
             raise XCAPError("failed to fetch %s document: %s" % (self.name, e))
