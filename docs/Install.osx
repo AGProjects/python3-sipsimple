@@ -31,11 +31,11 @@ A. Install the C dependencies
 
 Install some building tools:
 
-port install darcs pkg-config yasm 
+sudo port install darcs pkg-config yasm 
 
 Install the dynamic libraries required by sipsimple:
 
-sudo port install x264 gnutls openssl sqlite gnutls ffmpeg mpfr libmpc libvpx
+sudo port install x264 gnutls openssl sqlite3 gnutls ffmpeg mpfr libmpc libvpx
 
 If building for the Mac Store or a notarized version a lot more attention is
 required to build all dependencies.  All dynamic libraries must:
