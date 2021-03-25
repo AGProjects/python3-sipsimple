@@ -1335,7 +1335,9 @@ class Session(object):
 
             remote_sdp = self._invitation.sdp.proposed_remote
             sdp_connection = remote_sdp.connection or next((media.connection for media in remote_sdp.media if media.connection is not None))
-            local_ip = host.outgoing_ip_for(sdp_connection.address) if sdp_connection.address != '0.0.0.0' else sdp_connection.address
+            
+            sdp_ip = sdp_connection.address.decode() if isinstance(sdp_connection.address, bytes) else sdp_connection.address
+            local_ip = host.outgoing_ip_for(sdp_ip) if sdp_ip != '0.0.0.0' else sdp_ip
             if local_ip is None:
                 for stream in self.proposed_streams:
                     notification_center.remove_observer(self, sender=stream)
