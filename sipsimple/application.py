@@ -15,6 +15,7 @@ from application.notification import IObserver, NotificationCenter, Notification
 from application.python import Null
 from application.python.descriptor import classproperty
 from application.python.types import Singleton
+from application.system import host as Host
 from eventlib import proc
 from operator import attrgetter
 from threading import RLock, Thread
@@ -54,6 +55,7 @@ class ApplicationAttribute(object):
 @implementer(IObserver)
 class SIPApplication(object, metaclass=Singleton):
 
+    default_ip = None
     storage = ApplicationAttribute(value=None)
     engine = ApplicationAttribute(value=None)
     thread = ApplicationAttribute(value=None)
@@ -324,7 +326,12 @@ class SIPApplication(object, metaclass=Singleton):
                     if 'tls' in settings.sip.transport_list:
                         self._initialize_tls()
                     notification_center = NotificationCenter()
-                    notification_center.post_notification('NetworkConditionsDidChange', sender=self)
+                    _changed = []
+                    if self.default_ip != Host.default_ip:
+                        _changed.append('ip')
+                    data = NotificationData(changed=_changed)
+                    notification_center.post_notification('NetworkConditionsDidChange', sender=self, data=data)
+                    self.default_ip = Host.default_ip
                 self._timer = None
             self._timer = reactor.callLater(5, notify)
 
@@ -517,7 +524,8 @@ class SIPApplication(object, metaclass=Singleton):
     def _NH_DNSNameserversDidChange(self, notification):
         if self.running:
             self.engine.set_nameservers(notification.data.nameservers)
-            notification.center.post_notification('NetworkConditionsDidChange', sender=self)
+            notification_center = NotificationCenter()
+            notification_center.post_notification('NetworkConditionsDidChange', sender=self, data=NotificationData(changed=['dns']))
 
     def _NH_SystemIPAddressDidChange(self, notification):
         self._network_conditions_changed()
