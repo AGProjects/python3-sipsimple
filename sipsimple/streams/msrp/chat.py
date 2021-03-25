@@ -786,7 +786,7 @@ class CPIMPayload(object):
 
     @classmethod
     def decode(cls, message):
-
+        message = message.decode() if isinstance(message, bytes) else message
         headers, separator, body = message.partition('\r\n\r\n')
         if not separator:
             raise CPIMParserError('Invalid CPIM message')
@@ -858,7 +858,7 @@ class CPIMPayload(object):
             content = content[0].get_payload()
         charset = mime_message.get_content_charset()
 
-        return cls(content, content_type, charset, sender, recipients, courtesy_recipients, subject, timestamp, required, additional_headers)
+        return cls(content.encode(), content_type, charset, sender, recipients, courtesy_recipients, subject, timestamp, required, additional_headers)
 
 
 class CPIMParserError(Exception): pass
