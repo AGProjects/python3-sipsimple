@@ -238,7 +238,7 @@ diff -ruN pjproject-2.10/pjlib/src/pj/os_core_unix.c pjsip/pjlib/src/pj/os_core_
      return PJ_SUCCESS;
 --- pjproject-2.10/pjmedia/include/pjmedia/config_auto.h.in	2021-02-05 09:00:45.241108718 +0100
 +++ pjsip/pjmedia/include/pjmedia/config_auto.h.in	2021-02-22 21:46:52.232215546 +0100
-@@ -36,6 +36,17 @@
+@@ -36,6 +36,22 @@
  #undef PJMEDIA_HAS_G711_CODEC
  #endif
  
@@ -248,14 +248,19 @@ diff -ruN pjproject-2.10/pjlib/src/pj/os_core_unix.c pjsip/pjlib/src/pj/os_core_
 +#define PJMEDIA_HAS_FFMPEG_VID_CODEC	1
 +#define PJMEDIA_HAS_LIBWEBRTC		1
 +#define PJMEDIA_HAS_WEBRTC_AEC		1
-+#define PJMEDIA_HAS_SILK_CODEC		1
++
++#if defined(PJMEDIA_VIDEO_DEV_HAS_DARWIN) && (PJMEDIA_VIDEO_DEV_HAS_DARWIN != 0)
++#define PJMEDIA_VIDEO_DEV_HAS_AVF	1
++#define PJMEDIA_VIDEO_HAS_VTOOLBOX	1
++#define PJMEDIA_HAS_VID_TOOLBOX_CODEC	1
++#endif
 +
 +#ifdef PJMEDIA_USE_OLD_FFMPEG
 +#undef PJMEDIA_USE_OLD_FFMPEG
 +#endif
  
  #endif	/* __PJMEDIA_CONFIG_AUTO_H_ */
- 
+
 diff -ruN pjproject-2.10/pjmedia/build/Makefile pjproject-2.10/pjmedia/build/Makefile
 --- pjproject-2.10/pjmedia/build/Makefile	2021-02-05 09:00:45.241108718 +0100
 +++ pjsip/pjmedia/build/Makefile	2021-02-22 21:46:52.232215546 +0100
@@ -7586,11 +7591,10 @@ diff -ruN pjproject-2.10/pjsip/src/pjsip-ua/sip_inv.c pjsip/pjsip/src/pjsip-ua/s
 diff -ruN pjproject-2.10/third_party/build/os-auto.mak.in pjsip/third_party/build/os-auto.mak.in
 --- pjproject-2.10/third_party/build/os-auto.mak.in	2020-02-14 10:48:27.000000000 +0100
 +++ pjsip/third_party/build/os-auto.mak.in	2021-02-06 16:09:49.029693848 +0100
-@@ -73,6 +73,9 @@
+@@ -73,6 +73,8 @@
  endif
  endif
 
-+export PJMEDIA_VIDEODEV_OBJS += avf_dev.o
 +DIRS += zsrtp
 +
  ifneq (@ac_no_webrtc@,1)
@@ -8051,3 +8055,23 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
  
  
  typedef struct ffmpeg_dev_info
+--- pjsip/pjmedia/build/os-darwinos.mak	2021-03-22 07:33:02.058097009 +0100
++++ pjsip/pjmedia/build/os-darwinos.mak	2021-03-22 07:48:59.147298176 +0100
+@@ -139,4 +139,5 @@
+ export CFLAGS += -DPJMEDIA_SOUND_IMPLEMENTATION=PJMEDIA_SOUND_NULL_SOUND
+ endif
+ 
++export PJMEDIA_VIDEODEV_OBJS += avf_dev.o
+
+--- pjsip/pjmedia/build/os-auto.mak.in	2021-03-26 22:08:01.739146366 +0100
++++ pjsip/pjmedia/build/os-auto.mak.in	2021-03-26 22:07:16.701862482 +0100
+@@ -302,7 +302,8 @@
+ #
+ ifneq (,$(filter $(AC_PJMEDIA_VIDEO),darwin_os))
+ # Mac and iPhone OS specific, use obj-c
+-export PJMEDIA_VIDEODEV_OBJS += sdl_dev_m.o
++export PJMEDIA_VIDEODEV_OBJS += sdl_dev_m.o avf_dev.o
++export CFLAGS += -DPJMEDIA_VIDEO_DEV_HAS_AVF=1 -DPJMEDIA_VIDEO_HAS_VTOOLBOX=1 -DPJMEDIA_HAS_VID_TOOLBOX_CODEC=1 -DPJMEDIA_USE_OLD_FFMPEG=0
+ else
+ # Other platforms, compile .c
+ export PJMEDIA_VIDEODEV_OBJS += sdl_dev.o
