@@ -432,7 +432,8 @@ class ChatStream(MSRPStreamBase):
             private = False
 
         try:
-            message.content = self.encryption.otr_session.handle_input(message.content.encode(), message.content_type)
+            content = message.content if isinstance(message.content, bytes) else message.content.encode()
+            message.content = self.encryption.otr_session.handle_input(content, message.content_type)
         except IgnoreMessage:
             self.msrp_session.send_report(chunk, 200, 'OK')
             return
