@@ -26,23 +26,32 @@ if sys_platform == "darwin":
         osx_sdk_path = subprocess.check_output(["xcodebuild", "-version", "-sdk", "macosx", "Path"]).decode().strip()
     except subprocess.CalledProcessError as e:
         raise RuntimeError("Could not locate SDK path: %s" % str(e))
-    # OpenSSL (must be installed with Homebrew)
+
+    # OpenSSL (installed with Homebrew)
     ossl_cflags = "-I/usr/local/opt/openssl/include"
     ossl_ldflags = "-L/usr/local/opt/openssl/lib"
-    # SQLite (must be installed with Homebrew)
+
+    # SQLite (installed with Homebrew)
     sqlite_cflags = "-I/usr/local/opt/sqlite/include"
     sqlite_ldflags = "-L/usr/local/opt/sqlite/lib"
-    # Opus flags (must be installed with Homebrew)
+
+    # Opus flags (installed with Homebrew)
     opus_cflags = "-I/usr/local/opt/opus/include"
     opus_ldflags = "-L/usr/local/opt/opus/lib"
+
+    # VPX (installed with Homebrew)
+    vpx_cflags = "-I/usr/local/opt/libvpx/include"
+    vpx_ldflags = "-L/usr/local/opt/libvpx/lib"
+    
     # Prepare final flags
     arch_flags =  "-arch x86_64 -mmacosx-version-min=%s" % min_osx_version
-    local_cflags = " %s %s %s %s -mmacosx-version-min=%s -isysroot %s" % (arch_flags, ossl_cflags, sqlite_cflags, opus_cflags, min_osx_version, osx_sdk_path)
-    local_ldflags = " %s %s %s %s -isysroot %s" % (arch_flags, ossl_ldflags, sqlite_ldflags, opus_ldflags, osx_sdk_path)
+    local_cflags = " %s %s %s %s %s -mmacosx-version-min=%s -isysroot %s" % (arch_flags, ossl_cflags, sqlite_cflags, opus_cflags, vpx_cflags, min_osx_version, osx_sdk_path)
+    local_ldflags = " %s %s %s %s %s -isysroot %s" % (arch_flags, ossl_ldflags, sqlite_ldflags, opus_ldflags, vpx_ldflags, osx_sdk_path)
     os.environ['CFLAGS'] = os.environ.get('CFLAGS', '') + local_cflags
     os.environ['LDFLAGS'] = os.environ.get('LDFLAGS', '') + local_ldflags
     os.environ['ARCHFLAGS'] = arch_flags
     os.environ['MACOSX_DEPLOYMENT_TARGET'] = min_osx_version
+
 
 from distutils import log
 from distutils.dir_util import copy_tree
@@ -84,12 +93,11 @@ class PJSIP_build_ext(build_ext):
 
     user_options = build_ext.user_options
     user_options.extend([
-        ("pjsip-clean-compile", None, "Clean PJSIP tree before compilation"),
-        ("pjsip-disable-assertions", None, "Disable assertion checks within PJSIP"),
-        ("pjsip-verbose-build", None, "Print output of PJSIP compilation process")
+        ("clean", None, "Clean PJSIP tree before compilation"),
+        ("verbose", None, "Print output of PJSIP compilation process")
         ])
     boolean_options = build_ext.boolean_options
-    boolean_options.extend(["pjsip-clean-compile", "pjsip-disable-assertions", "pjsip-verbose-build"])
+    boolean_options.extend(["clean", "verbose"])
 
     @staticmethod
     def distutils_exec_process(cmdline, silent=True, input=None, **kwargs):
@@ -125,9 +133,9 @@ class PJSIP_build_ext(build_ext):
         return [chunk[len(prefix):] for chunk in chunks if chunk.startswith(prefix)]
 
     @classmethod
-    def get_makefile_variables(cls, makefile):
+    def get_makefile_variables(cls, makefile, silent=True):
         """Returns all variables in a makefile as a dict"""
-        stdout = cls.distutils_exec_process([cls.get_make_cmd(), "-f", makefile, "-pR", makefile], silent=True)
+        stdout = cls.distutils_exec_process([cls.get_make_cmd(), "-f", makefile, "-pR", makefile], silent=silent)
         return dict(tup for tup in re.findall("(^[a-zA-Z]\w+)\s*:?=\s*(.*)$", stdout, re.MULTILINE))
 
     @classmethod
@@ -141,11 +149,11 @@ class PJSIP_build_ext(build_ext):
 
     def initialize_options(self):
         build_ext.initialize_options(self)
-        self.pjsip_clean_compile = 0
-        self.pjsip_verbose_build = 0
+        self.clean = 0
+        self.verbose = 0
         self.pjsip_dir = os.path.join(os.path.dirname(__file__), "deps", "pjsip")
 
-    def configure_pjsip(self):
+    def configure_pjsip(self, silent=True):
         path = os.path.join(self.build_dir, "pjlib", "include", "pj", "config_site.h")
         log.info("Configuring PJSIP in %s" % path)
         with open(path, "w") as f:
@@ -164,21 +172,27 @@ class PJSIP_build_ext(build_ext):
             cmd = ["bash", "configure"]
         else:
             cmd = ["./configure"]
-        cmd.extend(["--disable-openh264", "--disable-l16-codec", "--disable-g7221-codec", "--disable-sdl", "--disable-speex-aec", "--disable-ilbc-codec", "--disable-silk", "--disable-libyuv"])
+        cmd.extend(["--disable-openh264", "--disable-l16-codec", "--disable-g7221-codec", "--disable-sdl", "--disable-ilbc-codec", "--disable-silk"])
+        
         ffmpeg_path = env.get("SIPSIMPLE_FFMPEG_PATH", None)
         if ffmpeg_path is not None:
             cmd.append("--with-ffmpeg=%s" % os.path.abspath(os.path.expanduser(ffmpeg_path)))
         libvpx_path = env.get("SIPSIMPLE_LIBVPX_PATH", None)
         if libvpx_path is not None:
             cmd.append("--with-vpx=%s" % os.path.abspath(os.path.expanduser(libvpx_path)))
-        self.distutils_exec_process(cmd, silent=not self.pjsip_verbose_build, cwd=self.build_dir, env=env)
+        if self.verbose:
+            log.info(" ".join(cmd))
+        self.distutils_exec_process(cmd, silent=not self.verbose, cwd=self.build_dir, env=env)
         if "#define PJ_HAS_SSL_SOCK 1\n" not in open(os.path.join(self.build_dir, "pjlib", "include", "pj", "compat", "os_auto.h")).readlines():
             os.remove(os.path.join(self.build_dir, "build.mak"))
             raise DistutilsError("PJSIP TLS support was disabled, OpenSSL development files probably not present on this system")
 
     def compile_pjsip(self):
         log.info("Compiling PJSIP")
-        self.distutils_exec_process([self.get_make_cmd()], silent=not self.pjsip_verbose_build, cwd=self.build_dir)
+        if self.verbose and sys_platform == "darwin":
+            log.info(os.environ['CFLAGS'])
+            log.info(os.environ['LDFLAGS'])
+        self.distutils_exec_process([self.get_make_cmd()], silent=not self.verbose, cwd=self.build_dir)
 
     def clean_pjsip(self):
         log.info("Cleaning PJSIP")
@@ -189,14 +203,14 @@ class PJSIP_build_ext(build_ext):
                 return
             raise
 
-    def update_extension(self, extension):
+    def update_extension(self, extension, silent=True):
         build_mak_vars = self.get_makefile_variables(os.path.join(self.build_dir, "build.mak"))
         extension.include_dirs = self.get_opts_from_string(build_mak_vars["PJ_CFLAGS"], "-I")
         extension.library_dirs = self.get_opts_from_string(build_mak_vars["PJ_LDFLAGS"], "-L")
         extension.libraries = self.get_opts_from_string(build_mak_vars["PJ_LDLIBS"], "-l")
         extension.define_macros = [tuple(define.split("=", 1)) for define in self.get_opts_from_string(build_mak_vars["PJ_CFLAGS"], "-D")]
         extension.define_macros.append(("PJ_SVN_REVISION", open(os.path.join(self.build_dir, "base_rev"), "r").read().strip()))
-        extension.define_macros.append(("__PYX_FORCE_INIT_THREADS", 1))
+        #extension.define_macros.append(("__PYX_FORCE_INIT_THREADS", 1))
         extension.extra_compile_args.append("-Wno-unused-function")    # silence warning
 
         if sys_platform == "darwin":
@@ -211,20 +225,19 @@ class PJSIP_build_ext(build_ext):
         extension.depends = build_mak_vars["PJ_LIB_FILES"].split()
         self.libraries = extension.depends[:]
 
-    def cython_sources(self, sources, extension):
+    def cython_sources(self, sources, extension, silent=True):
         log.info("Compiling Cython extension %s" % extension.name)
         if extension.name == "sipsimple.core._core":
             self.build_dir = os.path.join(self.build_temp, "pjsip")
-            if self.pjsip_clean_compile:
+            if self.clean:
                 self.clean_pjsip()
             copy_tree(self.pjsip_dir, self.build_dir, verbose=0)
             try:
                 if not os.path.exists(os.path.join(self.build_dir, "build.mak")):
-                    self.configure_pjsip()
-                self.update_extension(extension)
+                    self.configure_pjsip(silent=silent)
+                self.update_extension(extension, silent=silent)
                 self.compile_pjsip()
             except RuntimeError as e:
                 log.info("Error building %s: %s" % (extension.name, str(e)))
                 return None
         return build_ext.cython_sources(self, sources, extension)
-
