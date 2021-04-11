@@ -1,15 +1,3 @@
-diff -u setup_pjsip.py setup_pjsip.py
---- setup_pjsip.py	2021-03-10 05:41:58.052700196 +0100
-+++ setup_pjsip.py	2021-03-10 05:49:35.309917472 +0100
-@@ -196,7 +196,7 @@
-         extension.libraries = self.get_opts_from_string(build_mak_vars["PJ_LDLIBS"], "-l")
-         extension.define_macros = [tuple(define.split("=", 1)) for define in self.get_opts_from_string(build_mak_vars["PJ_CFLAGS"], "-D")]
-         extension.define_macros.append(("PJ_SVN_REVISION", open(os.path.join(self.build_dir, "base_rev"), "r").read().strip()))
--        extension.define_macros.append(("__PYX_FORCE_INIT_THREADS", 1))
-+        #extension.define_macros.append(("__PYX_FORCE_INIT_THREADS", 1))
-         extension.extra_compile_args.append("-Wno-unused-function")    # silence warning
- 
-         if sys_platform == "darwin":
 diff -ruN sipsimple/configuration/settings.py sipsimple/configuration/settings.py 
 --- sipsimple/configuration/settings.py	2021-02-18 22:20:23.927865045 +0100
 +++ sipsimple/configuration/settings.py	2021-02-06 20:08:25.900660619 +0100
@@ -207,6 +195,18 @@ diff -ruN sipsimple/core/_core.util.pxi sipsimple/core/_core.util.pxi
      headers = {}
      header = <pjsip_hdr *> (<pj_list *> &msg.hdr).next
      while header != &msg.hdr:
+@@ -229,8 +229,9 @@
+         if header_name in ("Accept", "Allow", "Require", "Supported", "Unsupported", "Allow-Events"):
+             array_header = <pjsip_generic_array_hdr *> header
+             header_data = []
+-            for i from 0 <= i < array_header.count:
+-                header_data.append(_pj_str_to_bytes(array_header.values[i]))
++            if array_header.count < 128:
++                for i from 0 <= i < array_header.count:
++                    header_data.append(_pj_str_to_bytes(array_header.values[i]))
+         elif header_name == "Contact":
+             multi_header = True
+             header_data = FrozenContactHeader_create(<pjsip_contact_hdr *> header)
 --- sipsimple/core/_core.pyx	2021-03-19 03:05:47.796725137 +0100
 +++ sipsimple/core/_core.pyx	2021-03-11 10:29:24.029286901 +0100
 @@ -21,7 +21,7 @@
@@ -240,3 +240,116 @@ diff -ruN sipsimple/core/_core.util.pxi sipsimple/core/_core.util.pxi
  
  __author__ = "AG Projects"
  __email__ = "support@ag-projects.com"
+--- sipsimple/core/_core.lib.pxi
++++ sipsimple/core/_core.lib.pxi
+@@ -146,7 +146,7 @@ cdef class PJSIPEndpoint:
+         self._make_local_addr(&local_addr, self._local_ip_used, port)
+         pjsip_tls_setting_default(&tls_setting)
+         # The following value needs to be reasonably low, as TLS negotiation hogs the PJSIP polling loop
+-        tls_setting.timeout.sec = self._tls_timeout / 1000
++        tls_setting.timeout.sec = <long>(self._tls_timeout / 1000)
+         tls_setting.timeout.msec = self._tls_timeout % 1000
+         if self._tls_ca_file is not None:
+             tls_setting.ca_list_file = self._tls_ca_file.pj_str
+--- sipsimple/core/_core.pxd
++++ sipsimple/core/_core.pxd
+@@ -1,4 +1,4 @@
+-# cython: language_level=2
++# cython: language_level=3
+ 
+ cdef extern from *:
+     ctypedef char *char_ptr_const "const char *"
+--- sipsimple/core/_core.sound.pxi
++++ sipsimple/core/_core.sound.pxi
+@@ -48,12 +48,12 @@ cdef class AudioMixer:
+         self._snd_pool = snd_pool
+         with nogil:
+             status = pjmedia_conf_create(conf_pool, slot_count+1, sample_rate, 1,
+-                                         sample_rate / 50, 16, PJMEDIA_CONF_NO_DEVICE, conf_bridge_address)
++                                         <int>(sample_rate / 50), 16, PJMEDIA_CONF_NO_DEVICE, conf_bridge_address)
+         if status != 0:
+             raise PJSIPError("Could not create audio mixer", status)
+         with nogil:
+             status = pjmedia_null_port_create(conf_pool, sample_rate, 1,
+-                                              sample_rate / 50, 16, null_port_address)
++                                              <unsigned int>(sample_rate / 50), 16, null_port_address)
+         if status != 0:
+             raise PJSIPError("Could not create null audio port", status)
+         self._start_sound_device(ua, input_device, output_device, ec_tail_length)
+@@ -377,7 +377,7 @@ cdef class AudioMixer:
+                     port_param.base.rec_id = input_device_i
+                 port_param.base.channel_count = 1
+                 port_param.base.clock_rate = sample_rate
+-                port_param.base.samples_per_frame = sample_rate / 50
++                port_param.base.samples_per_frame = <int>(sample_rate / 50)
+                 port_param.base.bits_per_sample = 16
+                 port_param.base.flags |= (PJMEDIA_AUD_DEV_CAP_EC | PJMEDIA_AUD_DEV_CAP_EC_TAIL)
+                 port_param.base.ec_enabled = 1
+@@ -672,7 +672,7 @@ cdef class ToneGenerator:
+         self.mixer = mixer
+         with nogil:
+             status = pjmedia_tonegen_create(pool, sample_rate, 1,
+-                                            sample_rate / 50, 16, 0, port_address)
++                                            <unsigned int>(sample_rate / 50), 16, 0, port_address)
+         if status != 0:
+             raise PJSIPError("Could not create tone generator", status)
+ 
+@@ -949,7 +949,7 @@ cdef class RecordingWaveFile:
+                 with nogil:
+                     status = pjmedia_wav_writer_port_create(pool, filename,
+                                                             sample_rate, 1,
+-                                                            sample_rate / 50, 16,
++                                                            <unsigned int>(sample_rate / 50), 16,
+                                                             PJMEDIA_FILE_WRITE_PCM, 0, port_address)
+                 if status != 0:
+                     raise PJSIPError("Could not create WAV file", status)
+@@ -1290,7 +1290,7 @@ cdef class MixerPort:
+             self._pool = pool
+             try:
+                 with nogil:
+-                    status = pjmedia_mixer_port_create(pool, sample_rate, 1, sample_rate / 50, 16, port_address)
++                    status = pjmedia_mixer_port_create(pool, sample_rate, 1, <unsigned int>(sample_rate / 50), 16, port_address)
+                 if status != 0:
+                     raise PJSIPError("Could not create WAV file", status)
+                 self._slot = self.mixer._add_port(ua, self._pool, self._port)
+--- sipsimple/core/_core.ua.pxi
++++ sipsimple/core/_core.ua.pxi
+@@ -1131,10 +1131,10 @@ cdef int _cb_opus_fix_rx(pjsip_rx_data *rdata) with gil:
+                 if pos1 != -1:
+                     pos2 = body_str.find("opus/48000/2")
+                     if pos2 != -1:
+-                        memcpy(body_ptr + pos2 + 11, '1', 1)
++                        memcpy(body_ptr + pos2 + 11, b'1', 1)
+                     else:
+                         # old opus, we must make it fail
+-                        memcpy(body_ptr + pos1 + 5, 'XXXXX', 5)
++                        memcpy(body_ptr + pos1 + 5, b'XXXXX', 5)
+     except:
+         ua._handle_exception(0)
+     return 0
+--- sipsimple/util/_sha1.pyx
++++ sipsimple/util/_sha1.pyx
+@@ -1,4 +1,4 @@
+-# cython: language_level=2
++# cython: language_level=3
+ 
+ __all__ = ['sha1']
+ 
+@@ -17,7 +17,7 @@ cdef extern from "_sha1.h":
+         SHA1_DIGEST_SIZE = 20
+ 
+     ctypedef struct sha1_context:
+-        uint32_t state[SHA1_DIGEST_SIZE/4]  # state variables
++        uint32_t state[<int>(SHA1_DIGEST_SIZE/4)]  # state variables
+         uint64_t count                      # 64-bit block count
+         uint8_t  block[SHA1_BLOCK_SIZE]     # data block buffer
+         uint32_t index                      # index into buffer
+@@ -49,7 +49,7 @@ cdef class sha1(object):
+             return SHA1_DIGEST_SIZE
+ 
+     def __reduce__(self):
+-        state_variables = [self.context.state[i] for i in range(sizeof(self.context.state)/4)]
++        state_variables = [self.context.state[<int>i] for i in range(sizeof(self.context.state)/4)]
+         block = PyBytes_FromStringAndSize(<char*>self.context.block, self.context.index)
+         return self.__class__, (), (state_variables, self.context.count, block)
+ 
