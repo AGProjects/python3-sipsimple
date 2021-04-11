@@ -7752,9 +7752,9 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
      }
  
 +    /* Register device change observer */
-+    if (!refresh) {
-+        f->op->set_dev_change_cb(f, &process_aud_dev_change_event);
-+    }
++    //if (!refresh) {
++    //    f->op->set_dev_change_cb(f, &process_aud_dev_change_event);
++    //}
 +
      if (!f)
  	return PJ_EUNKNOWN;
