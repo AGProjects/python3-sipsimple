@@ -151,7 +151,9 @@ class Registrar(object):
 
             # Register by trying each route in turn
             register_timeout = time() + 30
+            i = 0
             for route in routes:
+                i += 1
                 remaining_time = register_timeout-time()
                 if remaining_time > 0:
                     try:
@@ -193,9 +195,11 @@ class Registrar(object):
                                 refresh_interval = None
                             raise RegistrationError('Interval too short', retry_after=int(random.uniform(60, 120)), refresh_interval=refresh_interval)
                         else:
-                            # Otherwise just try the next route
-                            #continue
-                            break
+                            if i == len(routes):
+                                raise RegistrationError(e.data.reason, retry_after=int(random.uniform(15, 40)))
+                            else:
+                                # Otherwise just try the next route
+                                continue
                     else:
                         notification_data = NotificationData(code=notification.data.code, reason=notification.data.reason, registration=self._registration, registrar=route)
                         notification_center.post_notification('SIPAccountRegistrationGotAnswer', sender=self.account, data=notification_data)
