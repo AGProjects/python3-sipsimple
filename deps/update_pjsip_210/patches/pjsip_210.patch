@@ -4901,15 +4901,15 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-audiodev/wmme_dev.c pjsip/pjmedia/s
  				    pjmedia_aud_param *pi)
 --- pjproject-2.10/pjmedia/src/pjmedia-codec/opus.c	2021-03-19 04:55:21.491267756 +0100
 +++ pjsip/pjmedia/src/pjmedia-codec/opus.c	2021-03-19 05:48:19.457507442 +0100
-@@ -152,7 +152,7 @@
- static pjmedia_codec_opus_config opus_cfg =
- {
-     PJMEDIA_CODEC_OPUS_DEFAULT_SAMPLE_RATE,     /* Sample rate		*/
--    1,						/* Channel count	*/
-+    2,						/* Channel count	*/
-     PTIME,					/* Frame time 		*/			
-     PJMEDIA_CODEC_OPUS_DEFAULT_BIT_RATE,	/* Bit rate             */
-     5,						/* Expected packet loss */
+@@ -542,7 +542,7 @@ static pj_status_t factory_enum_codecs( pjmedia_codec_factory *factory,
+         */    
+ 	codecs[0].encoding_name = pj_str("opus");
+ 	codecs[0].clock_rate    = 48000;
+-	codecs[0].channel_cnt   = 2;
++	codecs[0].channel_cnt   = 1;
+ 	*count = 1;
+     }
+
 diff -ruN pjproject-2.10/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c pjsip/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c
 --- pjproject-2.10/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c	2020-02-14 10:48:27.000000000 +0100
 +++ pjsip/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c	2021-02-06 22:51:16.641714862 +0100
@@ -7751,7 +7751,7 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
  	f = drv->f;
      }
  
-+    /* Register device change observer */
++    /* TODO Does device change observer still need to be registered? */
 +    //if (!refresh) {
 +    //    f->op->set_dev_change_cb(f, &process_aud_dev_change_event);
 +    //}

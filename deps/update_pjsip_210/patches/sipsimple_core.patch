@@ -1,15 +1,7 @@
 diff -u setup_pjsip.py setup_pjsip.py
 --- setup_pjsip.py	2021-03-10 05:41:58.052700196 +0100
 +++ setup_pjsip.py	2021-03-10 05:49:35.309917472 +0100
-@@ -165,6 +165,7 @@
-         else:
-             cmd = ["./configure"]
-         cmd.extend(["--disable-openh264", "--disable-l16-codec", "--disable-g7221-codec", "--disable-sdl", "--disable-speex-aec", "--disable-ilbc-codec", "--disable-silk", "--disable-libyuv"])
-+        cmd.extend(["--disable-openh264", "--enable-video", "--with-opus"])
-         ffmpeg_path = env.get("SIPSIMPLE_FFMPEG_PATH", None)
-         if ffmpeg_path is not None:
-             cmd.append("--with-ffmpeg=%s" % os.path.abspath(os.path.expanduser(ffmpeg_path)))
-@@ -196,7 +197,7 @@
+@@ -196,7 +196,7 @@
          extension.libraries = self.get_opts_from_string(build_mak_vars["PJ_LDLIBS"], "-l")
          extension.define_macros = [tuple(define.split("=", 1)) for define in self.get_opts_from_string(build_mak_vars["PJ_CFLAGS"], "-D")]
          extension.define_macros.append(("PJ_SVN_REVISION", open(os.path.join(self.build_dir, "base_rev"), "r").read().strip()))
@@ -237,3 +229,14 @@ diff -ruN sipsimple/core/_core.util.pxi sipsimple/core/_core.util.pxi
  if CORE_REVISION != required_revision:
      raise ImportError("Wrong SIP core revision %d (expected %d)" % (CORE_REVISION, required_revision))
  del required_revision
+--- sipsimple/__info__.py	2021-04-10 16:18:54.429724067 +0200
++++ sipsimple/__info__.py	2021-04-10 16:19:16.690349803 +0200
+@@ -5,7 +5,7 @@
+ __summary__ = "SIP SIMPLE implementation for Python"
+ __webpage__ = "https://sipsimpleclient.org"
+ 
+-__version__ = "4.0.2"
++__version__ = "5.0.0"
+ 
+ __author__ = "AG Projects"
+ __email__ = "support@ag-projects.com"
