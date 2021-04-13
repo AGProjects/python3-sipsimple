@@ -206,7 +206,8 @@ class ReferralHandler(object):
                 uri = SIPURI.new(self.session.remote_identity.uri)
             lookup = DNSLookup()
             try:
-                routes = lookup.lookup_sip_proxy(uri, settings.sip.transport_list).wait()
+                tls_name = account.sip.tls_name if account is not BonjourAccount() else None
+                routes = lookup.lookup_sip_proxy(uri, settings.sip.transport_list, tls_name=tls_name).wait()
             except DNSLookupError as e:
                 timeout = random.uniform(15, 30)
                 raise ReferralError(error='DNS lookup failed: %s' % e)
@@ -460,7 +461,8 @@ class ConferenceHandler(object):
                 uri = SIPURI.new(self.session.remote_identity.uri)
             lookup = DNSLookup()
             try:
-                routes = lookup.lookup_sip_proxy(uri, settings.sip.transport_list).wait()
+                tls_name = account.sip.tls_name if account is not BonjourAccount() else None
+                routes = lookup.lookup_sip_proxy(uri, settings.sip.transport_list, tls_name=tls_name).wait()
             except DNSLookupError as e:
                 timeout = random.uniform(15, 30)
                 raise SubscriptionError(error='DNS lookup failed: %s' % e, timeout=timeout)
@@ -714,7 +716,8 @@ class TransferHandler(object):
                 uri = target
             lookup = DNSLookup()
             try:
-                routes = lookup.lookup_sip_proxy(uri, settings.sip.transport_list).wait()
+                tls_name = account.sip.tls_name if account is not BonjourAccount() else None
+                routes = lookup.lookup_sip_proxy(uri, settings.sip.transport_list, tls_name=tls_name).wait()
             except DNSLookupError as e:
                 self.state = 'failed'
                 notification_center.post_notification('SIPSessionTransferDidFail', sender=self.session, data=NotificationData(code=0, reason="DNS lookup failed: {}".format(e)))

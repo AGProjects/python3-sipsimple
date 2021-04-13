@@ -207,7 +207,7 @@ class Publisher(object, metaclass=ABCMeta):
 
             lookup = DNSLookup()
             try:
-                routes = lookup.lookup_sip_proxy(uri, valid_transports).wait()
+                routes = lookup.lookup_sip_proxy(uri, valid_transports, tls_name=self.account.sip.tls_name).wait()
             except DNSLookupError as e:
                 retry_after = random.uniform(self._dns_wait, 2*self._dns_wait)
                 self._dns_wait = limit(2*self._dns_wait, max=30)

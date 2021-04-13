@@ -194,7 +194,7 @@ class Subscriber(object, metaclass=ABCMeta):
 
             lookup = DNSLookup()
             try:
-                routes = lookup.lookup_sip_proxy(uri, valid_transports).wait()
+                routes = lookup.lookup_sip_proxy(uri, valid_transports, tls_name=self.account.sip.tls_name).wait()
             except DNSLookupError as e:
                 raise SubscriptionError('DNS lookup failed: %s' % e, retry_after=random.uniform(15, 30))
 

@@ -141,7 +141,7 @@ class Registrar(object):
                 uri = SIPURI(host=self.account.id.domain)
             lookup = DNSLookup()
             try:
-                routes = lookup.lookup_sip_proxy(uri, settings.sip.transport_list).wait()
+                routes = lookup.lookup_sip_proxy(uri, settings.sip.transport_list, tls_name=self.account.sip.tls_name).wait()
             except DNSLookupError as e:
                 retry_after = int(random.uniform(self._dns_wait, 2*self._dns_wait))
                 self._dns_wait = limit(2*self._dns_wait, max=30)

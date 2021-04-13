@@ -52,6 +52,7 @@ class SIPSettings(SettingsGroup):
     register_interval = Setting(type=NonNegativeInteger, default=600)
     subscribe_interval = Setting(type=NonNegativeInteger, default=600)
     publish_interval = Setting(type=NonNegativeInteger, default=600)
+    tls_name = Setting(type=str, default=None, nillable=True)
 
 
 class SRTPEncryptionSettings(SettingsGroup):
