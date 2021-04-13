@@ -8075,3 +8075,113 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
  else
  # Other platforms, compile .c
  export PJMEDIA_VIDEODEV_OBJS += sdl_dev.o
+--- pjsip/pjsip/src/pjsip/sip_transport_tls.c
++++ pjsip/pjsip/src/pjsip/sip_transport_tls.c
+@@ -88,6 +88,7 @@ struct tls_transport
+     pjsip_transport	     base;
+     pj_bool_t		     is_server;
+     pj_str_t		     remote_name;
++    pj_str_t		     tls_name;
+ 
+     pj_bool_t		     is_registered;
+     pj_bool_t		     is_closing;
+@@ -162,6 +163,7 @@ static pj_status_t tls_create(struct tls_listener *listener,
+ 			      const pj_sockaddr *local,
+ 			      const pj_sockaddr *remote,
+ 			      const pj_str_t *remote_name,
++			      const pj_str_t *tls_name,
+ 			      pj_grp_lock_t *glock,
+ 			      struct tls_transport **p_tls);
+ 
+@@ -796,6 +798,7 @@ static pj_status_t tls_create( struct tls_listener *listener,
+ 			       const pj_sockaddr *local,
+ 			       const pj_sockaddr *remote,
+ 			       const pj_str_t *remote_name,
++			       const pj_str_t *tls_name,
+ 			       pj_grp_lock_t *glock,
+ 			       struct tls_transport **p_tls)
+ {
+@@ -839,6 +842,9 @@ static pj_status_t tls_create( struct tls_listener *listener,
+     if (remote_name)
+ 	pj_strdup(pool, &tls->remote_name, remote_name);
+ 
++    if (tls_name)
++	pj_strdup(pool, &tls->tls_name, tls_name);
++
+     tls->base.key.type = listener->factory.type;
+     pj_sockaddr_cp(&tls->base.key.rem_addr, remote);
+     tls->base.type_name = (char*)pjsip_transport_get_type_name(
+@@ -1142,7 +1148,11 @@ static pj_status_t lis_create_transport(pjsip_tpfactory *factory,
+     pj_ssl_sock_param ssock_param;
+     pj_sockaddr local_addr;
+     pj_str_t remote_name;
++    pj_str_t tls_name;
+     pj_status_t status;
++    pjsip_param *p;
++    pjsip_sip_uri *sip_uri;
++    pjsip_route_hdr *route_hdr;
+ 
+     /* Sanity checks */
+     PJ_ASSERT_RETURN(factory && mgr && endpt && rem_addr &&
+@@ -1162,8 +1172,27 @@ static pj_status_t lis_create_transport(pjsip_tpfactory *factory,
+     PJ_ASSERT_RETURN(pool != NULL, PJ_ENOMEM);
+ 
+     /* Get remote host name from tdata */
+-    if (tdata)
+-	remote_name = tdata->dest_info.name;
++    if (tdata) {
++        remote_name = tdata->dest_info.name;
++
++        /* Get tls_name from sip route if defined */
++        route_hdr = (pjsip_route_hdr*)pjsip_msg_find_hdr(tdata->msg, PJSIP_H_ROUTE, NULL);
++        if (route_hdr != NULL) {
++	    if (PJSIP_URI_SCHEME_IS_SIPS(route_hdr->name_addr.uri) ||
++                PJSIP_URI_SCHEME_IS_SIP(route_hdr->name_addr.uri)) {
++                sip_uri = (pjsip_sip_uri*) pjsip_uri_get_uri(route_hdr->name_addr.uri);
++                p = sip_uri->other_param.next;
++                while (p != &sip_uri->other_param) {
++                    const pj_str_t st_name = {"tls_name", 8};
++                    if (pj_stricmp(&p->name, &st_name) == 0) {
++	                pj_strdup(pool, &tls_name, &p->value);
++                        break;
++                    }
++                    p = p->next;
++                }
++            }
++	}
++    }
+     else
+ 	pj_bzero(&remote_name, sizeof(remote_name));
+ 
+@@ -1237,7 +1266,7 @@ static pj_status_t lis_create_transport(pjsip_tpfactory *factory,
+ 
+     /* Create the transport descriptor */
+     status = tls_create(listener, pool, ssock, PJ_FALSE, &local_addr, 
+-			rem_addr, &remote_name, glock, &tls);
++			rem_addr, &remote_name, &tls_name, glock, &tls);
+     if (status != PJ_SUCCESS)
+ 	return status;
+ 
+@@ -1398,7 +1427,7 @@ static pj_bool_t on_accept_complete2(pj_ssl_sock_t *ssock,
+      */
+     status = tls_create( listener, NULL, new_ssock, PJ_TRUE,
+ 			 &ssl_info.local_addr, &tmp_src_addr, NULL,
+-			 ssl_info.grp_lock, &tls);
++			 NULL, ssl_info.grp_lock, &tls);
+     
+     if (status != PJ_SUCCESS) {
+ 	if (listener->tls_setting.on_accept_fail_cb) {
+@@ -1821,8 +1850,11 @@ static pj_bool_t on_connect_complete(pj_ssl_sock_t *ssock,
+ 	pj_bool_t matched = PJ_FALSE;
+ 	unsigned i;
+ 
+-	/* Remote name may be hostname or IP address */
+-	if (tls->remote_name.slen)
++	/* Remote name may be hostname or IP address 
++	 * but might as well be defined in tls_name */
++	if (tls->tls_name.slen)
++	    remote_name = &tls->tls_name;
++	else if (tls->remote_name.slen)
+ 	    remote_name = &tls->remote_name;
+ 	else
+ 	    remote_name = &tls->base.remote_name.host;
