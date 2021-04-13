@@ -1173,7 +1173,7 @@ diff -ruN pjproject-2.10/pjmedia/include/pjmedia/vid_stream.h pjsip/pjmedia/incl
   * @}
 --- pjproject-2.10/pjmedia/include/pjmedia/audiodev.h	2020-02-14 10:48:27.000000000 +0100
 +++ pjsip/pjmedia/include/pjmedia/audiodev.h	2021-02-06 16:53:28.395408793 +0100
-@@ -29,6 +29,7 @@
+@@ -24,6 +24,7 @@
   * @file audiodev.h
   * @brief Audio device API.
   */
@@ -1221,8 +1221,8 @@ diff -ruN pjproject-2.10/pjmedia/include/pjmedia/vid_stream.h pjsip/pjmedia/incl
  /* Audio driver structure */
  typedef struct pjmedia_aud_driver
 @@ -120,6 +150,8 @@
-     unsigned        dev_cnt;           /* Total number of devices.         */
-     pj_uint32_t             dev_list[PJMEDIA_AUD_MAX_DEVS];/* Array of device IDs.             */
+     unsigned	     	dev_cnt;	/* Total number of devices.	    */
+     pj_uint32_t	     	dev_list[PJMEDIA_AUD_MAX_DEVS];/* Array of dev IDs. */
 
 +    pjmedia_aud_dev_observer  dev_observer;
 +
@@ -1298,7 +1298,7 @@ diff -ruN pjproject-2.10/pjmedia/include/pjmedia.h pjsip/pjmedia/include/pjmedia
  #include <pjmedia/transport_udp.h>
  #include <pjmedia/vid_codec.h>
  #include <pjmedia/vid_conf.h>
-@@ -74,7 +76,7 @@
+@@ -72,7 +74,7 @@
  #include <pjmedia/vid_conf.h>
  #include <pjmedia/vid_port.h>
  #include <pjmedia/vid_stream.h>
@@ -3742,8 +3742,8 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/vid_stream.c pjsip/pjmedia/src/pjme
  	case PJMEDIA_EVENT_KEYFRAME_MISSING:
  	    /* Republish this event later from get_frame(). */
  	    pj_memcpy(&stream->miss_keyframe_event, event, sizeof(*event));
-@@ -534,7 +541,7 @@
-                                pkt_len);
+@@ -523,7 +534,7 @@
+ 			       pkt_len);
 
      /* Send RTCP */
 -    send_rtcp(stream, PJ_TRUE, PJ_FALSE);
@@ -4902,7 +4902,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-audiodev/wmme_dev.c pjsip/pjmedia/s
 --- pjproject-2.10/pjmedia/src/pjmedia-codec/opus.c	2021-03-19 04:55:21.491267756 +0100
 +++ pjsip/pjmedia/src/pjmedia-codec/opus.c	2021-03-19 05:48:19.457507442 +0100
 @@ -542,7 +542,7 @@ static pj_status_t factory_enum_codecs( pjmedia_codec_factory *factory,
-         */    
+          */	
  	codecs[0].encoding_name = pj_str("opus");
  	codecs[0].clock_rate    = 48000;
 -	codecs[0].channel_cnt   = 2;
@@ -4964,7 +4964,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c pjsip/pjm
  	}
      }
  
-@@ -1425,12 +1420,12 @@
+@@ -1430,12 +1425,12 @@
      /* Check if encoder has been opened */
      PJ_ASSERT_RETURN(ff->enc_ctx, PJ_EINVALIDOP);
  
@@ -4981,7 +4981,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c pjsip/pjm
  
      // Let ffmpeg manage the timestamps
      /*
-@@ -1687,12 +1682,12 @@
+@@ -1692,12 +1687,12 @@
       * whole decoding session, and seems to be freed when the codec context
       * closed).
       */
@@ -7789,20 +7789,20 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
  	    break;
 @@ -183,13 +248,13 @@
      pjmedia_aud_driver *drv = &aud_subsys.drv[drv_idx];
- 
+
      if (drv->f) {
-+       drv->f->op->set_dev_change_cb(drv->f, NULL);
++	drv->f->op->set_dev_change_cb(drv->f, NULL);
  	drv->f->op->destroy(drv->f);
  	drv->f = NULL;
      }
- 
+
      pj_bzero(drv, sizeof(*drv));
 -    drv->play_dev_idx = drv->rec_dev_idx = 
 -			drv->dev_idx = PJMEDIA_AUD_INVALID_DEV;
 +    drv->play_dev_idx = drv->rec_dev_idx = PJMEDIA_AUD_INVALID_DEV;
  }
- 
- /* API: Initialize the audio subsystem. */
+
+ /* API: get capability name/info */
 @@ -374,11 +426,7 @@
 
  	for (i=0; i<aud_subsys.drv_cnt; ++i) {
