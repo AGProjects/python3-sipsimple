@@ -8171,10 +8171,21 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
      
      if (status != PJ_SUCCESS) {
  	if (listener->tls_setting.on_accept_fail_cb) {
-@@ -1821,8 +1850,11 @@ static pj_bool_t on_connect_complete(pj_ssl_sock_t *ssock,
+@@ -1821,8 +1850,22 @@ static pj_bool_t on_connect_complete(pj_ssl_sock_t *ssock,
  	pj_bool_t matched = PJ_FALSE;
  	unsigned i;
- 
+
++    /* TODO Quick fix - treat ssl server verify error 2 
++     * (unable to get issuer certificate) as warning,
++     * continue with verification and fail if any other error
++     * */
++    if (ssl_info.verify_status == 2) {
++	ssl_info.verify_status = 0;
++	PJ_LOG(1,(tls->base.obj_name, 
++	    "TLS verify_server: Unable to get issuer certificate."));
++	printf("\nTLS verify_server: Unable to get issuer certificate.\n");
++    }
++ 
 -	/* Remote name may be hostname or IP address */
 -	if (tls->remote_name.slen)
 +	/* Remote name may be hostname or IP address 
@@ -8185,3 +8196,22 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
  	    remote_name = &tls->remote_name;
  	else
  	    remote_name = &tls->base.remote_name.host;
+@@ -1833,6 +1875,9 @@
+ 	for (i = 0; i < serv_cert->subj_alt_name.cnt && !matched; ++i) {
+ 	    pj_str_t *cert_name = &serv_cert->subj_alt_name.entry[i].name;
+
++	    PJ_LOG(1,(tls->base.obj_name, 
++	        "TLS server cert ALT name: %s", cert_name->ptr));
++
+ 	    switch (serv_cert->subj_alt_name.entry[i].type) {
+ 	    case PJ_SSL_CERT_NAME_DNS:
+ 	    case PJ_SSL_CERT_NAME_IP:
+@@ -1860,6 +1906,8 @@
+ 	 * certificate, try with Common Name of Subject field.
+ 	 */
+ 	if (!matched) {
++	    PJ_LOG(1,(tls->base.obj_name, 
++	        "TLS cert CN name: %s", serv_cert->subject.cn.ptr));
+ 	    matched = !pj_stricmp(remote_name, &serv_cert->subject.cn);
+ 	}
+
