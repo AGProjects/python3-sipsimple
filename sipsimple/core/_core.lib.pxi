@@ -343,7 +343,7 @@ cdef class PJMEDIAEndpoint:
         all_codecs = set(self._get_all_codecs())
         codec_set = new_codecs.difference(all_codecs)
         if len(codec_set) > 0:
-            raise SIPCoreError("Unknown codec(s): %s" % ", ".join(codec_set))
+            raise SIPCoreError("Unknown audio codecs: %s" % codec_set)
         # reverse the codec data tuples so that we can easily sort on sample rate
         # to make sure that bigger sample rates get higher priority
         codecs = [list(reversed(codec_data)) for codec_data in self._get_codecs()]
@@ -415,7 +415,7 @@ cdef class PJMEDIAEndpoint:
             raise ValueError("Requested video codec list contains doubles")
         codec_set = new_codecs.difference(set(self._get_all_video_codecs()))
         if len(codec_set) > 0:
-            raise SIPCoreError("Unknown video codec(s): %s" % ", ".join(codec_set))
+            raise SIPCoreError("Unknown video codecs: %s" % codec_set)
         codecs = self._get_video_codecs()
         codec_prio = list()
         for codec in req_codecs:
