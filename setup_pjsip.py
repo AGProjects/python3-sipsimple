@@ -172,7 +172,7 @@ class PJSIP_build_ext(build_ext):
             cmd = ["bash", "configure"]
         else:
             cmd = ["./configure"]
-        cmd.extend(["--disable-openh264", "--disable-l16-codec", "--disable-g7221-codec", "--disable-sdl", "--disable-ilbc-codec", "--disable-silk"])
+        cmd.extend(["--disable-openh264", "--disable-l16-codec", "--disable-g7221-codec", "--disable-sdl"])
         
         ffmpeg_path = env.get("SIPSIMPLE_FFMPEG_PATH", None)
         if ffmpeg_path is not None:
