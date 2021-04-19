@@ -29,7 +29,7 @@ from sipsimple.addressbook import AddressbookManager
 from sipsimple.audio import AudioDevice, RootAudioBridge
 from sipsimple.configuration import ConfigurationManager
 from sipsimple.configuration.settings import SIPSimpleSettings
-from sipsimple.core import AudioMixer, Engine
+from sipsimple.core import AudioMixer, Engine, SIPCoreError, PJSIPError
 from sipsimple.lookup import DNSManager
 from sipsimple.session import SessionManager
 from sipsimple.storage import ISIPSimpleStorage, ISIPSimpleApplicationDataStorage
@@ -372,35 +372,12 @@ class SIPApplication(object, metaclass=Singleton):
         settings = SIPSimpleSettings()
         account_manager = AccountManager()
 
-        if notification.sender is settings:
-            if 'audio.sample_rate' in notification.data.modified:
-                alert_device = settings.audio.alert_device
-                if alert_device not in (None, 'system_default') and alert_device not in self.engine.output_devices:
-                    alert_device = 'system_default'
-                input_device = settings.audio.input_device
-                if input_device not in (None, 'system_default') and input_device not in self.engine.input_devices:
-                    input_device = 'system_default'
-                output_device = settings.audio.output_device
-                if output_device not in (None, 'system_default') and output_device not in self.engine.output_devices:
-                    output_device = 'system_default'
-                tail_length = settings.audio.echo_canceller.tail_length if settings.audio.echo_canceller.enabled else 0
-                voice_mixer = AudioMixer(input_device, output_device, settings.audio.sample_rate, tail_length)
-                voice_mixer.muted = settings.audio.muted
-                self.voice_audio_device = AudioDevice(voice_mixer)
-                self.voice_audio_bridge = RootAudioBridge(voice_mixer)
-                self.voice_audio_bridge.add(self.voice_audio_device)
-                alert_mixer = AudioMixer(None, alert_device, settings.audio.sample_rate, 0)
-                self.alert_audio_device = AudioDevice(alert_mixer)
-                self.alert_audio_bridge = RootAudioBridge(alert_mixer)
-                self.alert_audio_bridge.add(self.alert_audio_device)
-                if settings.audio.silent:
-                    alert_mixer.output_volume = 0
-                settings.audio.input_device = voice_mixer.input_device
-                settings.audio.output_device = voice_mixer.output_device
-                settings.audio.alert_device = alert_mixer.output_device
-                settings.save()
-            else:
-                if {'audio.input_device', 'audio.output_device', 'audio.alert_device', 'audio.echo_canceller.enabled', 'audio.echo_canceller.tail_length'}.intersection(notification.data.modified):
+        try:
+            if notification.sender is settings:
+                if 'audio.sample_rate' in notification.data.modified:
+                    alert_device = settings.audio.alert_device
+                    if alert_device not in (None, 'system_default') and alert_device not in self.engine.output_devices:
+                        alert_device = 'system_default'
                     input_device = settings.audio.input_device
                     if input_device not in (None, 'system_default') and input_device not in self.engine.input_devices:
                         input_device = 'system_default'
@@ -408,56 +385,87 @@ class SIPApplication(object, metaclass=Singleton):
                     if output_device not in (None, 'system_default') and output_device not in self.engine.output_devices:
                         output_device = 'system_default'
                     tail_length = settings.audio.echo_canceller.tail_length if settings.audio.echo_canceller.enabled else 0
-                    if (input_device, output_device, tail_length) != attrgetter('input_device', 'output_device', 'ec_tail_length')(self.voice_audio_bridge.mixer):
-                        self.voice_audio_bridge.mixer.set_sound_devices(input_device, output_device, tail_length)
-                        settings.audio.input_device = self.voice_audio_bridge.mixer.input_device
-                        settings.audio.output_device = self.voice_audio_bridge.mixer.output_device
-                        settings.save()
-                    alert_device = settings.audio.alert_device
-                    if alert_device not in (None, 'system_default') and alert_device not in self.engine.output_devices:
-                        alert_device = 'system_default'
-                    if alert_device != self.alert_audio_bridge.mixer.output_device:
-                        self.alert_audio_bridge.mixer.set_sound_devices(None, alert_device, 0)
-                        settings.audio.alert_device = self.alert_audio_bridge.mixer.output_device
-                        settings.save()
-                if 'audio.muted' in notification.data.modified:
-                    self.voice_audio_bridge.mixer.muted = settings.audio.muted
-                if 'audio.silent' in notification.data.modified:
+                    voice_mixer = AudioMixer(input_device, output_device, settings.audio.sample_rate, tail_length)
+                    voice_mixer.muted = settings.audio.muted
+                    self.voice_audio_device = AudioDevice(voice_mixer)
+                    self.voice_audio_bridge = RootAudioBridge(voice_mixer)
+                    self.voice_audio_bridge.add(self.voice_audio_device)
+                    alert_mixer = AudioMixer(None, alert_device, settings.audio.sample_rate, 0)
+                    self.alert_audio_device = AudioDevice(alert_mixer)
+                    self.alert_audio_bridge = RootAudioBridge(alert_mixer)
+                    self.alert_audio_bridge.add(self.alert_audio_device)
                     if settings.audio.silent:
-                        self.alert_audio_bridge.mixer.output_volume = 0
-                    else:
-                        self.alert_audio_bridge.mixer.output_volume = 100
-            if 'video.muted' in notification.data.modified:
-                self.video_device.muted = settings.video.muted
-            if {'video.h264.profile', 'video.h264.level'}.intersection(notification.data.modified):
-                self.engine.set_h264_options(settings.video.h264.profile, settings.video.h264.level)
-            if {'video.device', 'video.resolution', 'video.framerate', 'video.max_bitrate'}.intersection(notification.data.modified):
-                if {'video.device', 'video.resolution', 'video.framerate'}.intersection(notification.data.modified) or settings.video.device != self.video_device.name:
-                    self.video_device.set_camera(settings.video.device, settings.video.resolution, settings.video.framerate)
-                    settings.video.device = self.video_device.name
+                        alert_mixer.output_volume = 0
+                    settings.audio.input_device = voice_mixer.input_device
+                    settings.audio.output_device = voice_mixer.output_device
+                    settings.audio.alert_device = alert_mixer.output_device
                     settings.save()
-                self.engine.set_video_options(settings.video.resolution,
-                                              settings.video.framerate,
-                                              settings.video.max_bitrate)
-            if 'user_agent' in notification.data.modified:
-                self.engine.user_agent = settings.user_agent
-            if 'sip.udp_port' in notification.data.modified:
-                self.engine.set_udp_port(settings.sip.udp_port)
-            if 'sip.tcp_port' in notification.data.modified:
-                self.engine.set_tcp_port(settings.sip.tcp_port)
-            if {'sip.tls_port', 'tls.ca_list', 'default_account'}.intersection(notification.data.modified):
-                self._initialize_tls()
-            if 'rtp.port_range' in notification.data.modified:
-                self.engine.rtp_port_range = (settings.rtp.port_range.start, settings.rtp.port_range.end)
-            if 'rtp.audio_codec_list' in notification.data.modified:
-                self.engine.codecs = list(settings.rtp.audio_codec_list)
-            if 'logs.trace_sip' in notification.data.modified:
-                self.engine.trace_sip = settings.logs.trace_sip
-            if {'logs.trace_pjsip', 'logs.pjsip_level'}.intersection(notification.data.modified):
-                self.engine.log_level = settings.logs.pjsip_level if settings.logs.trace_pjsip else 0
-        elif notification.sender is account_manager.default_account:
-            if {'tls.verify_server', 'tls.certificate'}.intersection(notification.data.modified):
-                self._initialize_tls()
+                else:
+                    if {'audio.input_device', 'audio.output_device', 'audio.alert_device', 'audio.echo_canceller.enabled', 'audio.echo_canceller.tail_length'}.intersection(notification.data.modified):
+                        input_device = settings.audio.input_device
+                        if input_device not in (None, 'system_default') and input_device not in self.engine.input_devices:
+                            input_device = 'system_default'
+                        output_device = settings.audio.output_device
+                        if output_device not in (None, 'system_default') and output_device not in self.engine.output_devices:
+                            output_device = 'system_default'
+                        tail_length = settings.audio.echo_canceller.tail_length if settings.audio.echo_canceller.enabled else 0
+                        if (input_device, output_device, tail_length) != attrgetter('input_device', 'output_device', 'ec_tail_length')(self.voice_audio_bridge.mixer):
+                            self.voice_audio_bridge.mixer.set_sound_devices(input_device, output_device, tail_length)
+                            settings.audio.input_device = self.voice_audio_bridge.mixer.input_device
+                            settings.audio.output_device = self.voice_audio_bridge.mixer.output_device
+                            settings.save()
+                        alert_device = settings.audio.alert_device
+                        if alert_device not in (None, 'system_default') and alert_device not in self.engine.output_devices:
+                            alert_device = 'system_default'
+                        if alert_device != self.alert_audio_bridge.mixer.output_device:
+                            self.alert_audio_bridge.mixer.set_sound_devices(None, alert_device, 0)
+                            settings.audio.alert_device = self.alert_audio_bridge.mixer.output_device
+                            settings.save()
+                    if 'audio.muted' in notification.data.modified:
+                        self.voice_audio_bridge.mixer.muted = settings.audio.muted
+                    if 'audio.silent' in notification.data.modified:
+                        if settings.audio.silent:
+                            self.alert_audio_bridge.mixer.output_volume = 0
+                        else:
+                            self.alert_audio_bridge.mixer.output_volume = 100
+                if 'video.muted' in notification.data.modified:
+                    self.video_device.muted = settings.video.muted
+                if {'video.h264.profile', 'video.h264.level'}.intersection(notification.data.modified):
+                    self.engine.set_h264_options(settings.video.h264.profile, settings.video.h264.level)
+                if {'video.device', 'video.resolution', 'video.framerate', 'video.max_bitrate'}.intersection(notification.data.modified):
+                    if {'video.device', 'video.resolution', 'video.framerate'}.intersection(notification.data.modified) or settings.video.device != self.video_device.name:
+                        self.video_device.set_camera(settings.video.device, settings.video.resolution, settings.video.framerate)
+                        settings.video.device = self.video_device.name
+                        settings.save()
+                    self.engine.set_video_options(settings.video.resolution,
+                                                  settings.video.framerate,
+                                                  settings.video.max_bitrate)
+                if 'user_agent' in notification.data.modified:
+                    self.engine.user_agent = settings.user_agent
+                if 'sip.udp_port' in notification.data.modified:
+                    self.engine.set_udp_port(settings.sip.udp_port)
+                if 'sip.tcp_port' in notification.data.modified:
+                    self.engine.set_tcp_port(settings.sip.tcp_port)
+                if {'sip.tls_port', 'tls.ca_list', 'default_account'}.intersection(notification.data.modified):
+                    self._initialize_tls()
+                if 'rtp.port_range' in notification.data.modified:
+                    self.engine.rtp_port_range = (settings.rtp.port_range.start, settings.rtp.port_range.end)
+                if 'rtp.audio_codec_list' in notification.data.modified:
+                    print(settings.rtp.audio_codec_list)
+                    self.engine.codecs = list(codec.encode() for codec in settings.rtp.audio_codec_list)
+                if 'rtp.video_codec_list' in notification.data.modified:
+                    print(settings.rtp.video_codec_list)
+                    self.engine.video_codecs = list(codec.encode() for codec in settings.rtp.video_codec_list)
+                if 'logs.trace_sip' in notification.data.modified:
+                    self.engine.trace_sip = settings.logs.trace_sip
+                if {'logs.trace_pjsip', 'logs.pjsip_level'}.intersection(notification.data.modified):
+                    self.engine.log_level = settings.logs.pjsip_level if settings.logs.trace_pjsip else 0
+            elif notification.sender is account_manager.default_account:
+                if {'tls.verify_server', 'tls.certificate'}.intersection(notification.data.modified):
+                    self._initialize_tls()
+        except (SIPCoreError, PJSIPError) as e:
+            print('Error setting core option: %s' % str(e))
+
 
     @run_in_thread('device-io')
     def _NH_DefaultAudioDeviceDidChange(self, notification):
