@@ -8196,4 +8196,46 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
  
  		        LIBS="$LIBS -framework Security"
  	  	        { $as_echo "$as_me:${as_lineno-$LINENO}: result: Checking if Darwin SSL is available... yes" >&5
-
+--- pjsip/pjlib/src/pj/ssl_sock_ossl.c
++++ pjsip/pjlib/src/pj/ssl_sock_ossl.c
+@@ -1527,6 +1527,7 @@ static void get_cert_info(pj_pool_t *pool, pj_ssl_cert_info *ci, X509 *x,
+     const pj_uint8_t *q;
+     unsigned len;
+     GENERAL_NAMES *names = NULL;
++    pj_parsed_time v;
+ 
+     pj_assert(pool && ci && x);
+ 
+@@ -1572,6 +1573,10 @@ static void get_cert_info(pj_pool_t *pool, pj_ssl_cert_info *ci, X509 *x,
+     parse_ossl_asn1_time(&ci->validity.end, &ci->validity.gmt,
+ 			 X509_get_notAfter(x));
+ 
++    pj_time_decode(&ci->validity.end, &v);
++
++    PJ_LOG(1, (THIS_FILE, "[certificate info] subject:%s | issuer:%s | validity:%d-%d-%d %d:%d:%d.%d\n", ci->subject.info.ptr, ci->issuer.info.ptr, v.year, v.mon, v.day, v.hour, v.min, v.sec, v.msec));
++
+     /* Subject Alternative Name extension */
+     if (ci->version >= 3) {
+ 	names = (GENERAL_NAMES*) X509_get_ext_d2i(x, NID_subject_alt_name,
+@@ -1766,6 +1771,7 @@ static void ssl_set_peer_name(pj_ssl_sock_t *ssock)
+     /* Set server name to connect */
+     if (ssock->param.server_name.slen) {
+ 	/* Server name is null terminated already */
++	PJ_LOG(1,(ssock->pool->obj_name, "[SSL_set_tlsext_host_name] server_name:%s", ssock->param.server_name.ptr));
+ 	if (!SSL_set_tlsext_host_name(ossock->ossl_ssl, 
+ 				      ssock->param.server_name.ptr))
+ 	{
+--- pjsip/pjsip/src/pjsip/sip_transport_tls.c
++++ pjsip/pjsip/src/pjsip/sip_transport_tls.c
+@@ -1206,7 +1206,10 @@ static pj_status_t lis_create_transport(pjsip_tpfactory *factory,
+     ssock_param.async_cnt = 1;
+     ssock_param.ioqueue = pjsip_endpt_get_ioqueue(listener->endpt);
+     ssock_param.timer_heap = pjsip_endpt_get_timer_heap(listener->endpt);
+-    ssock_param.server_name = remote_name;
++    if (tls_name.slen)
++        ssock_param.server_name = tls_name;
++    else
++        ssock_param.server_name = remote_name;
+     ssock_param.timeout = listener->tls_setting.timeout;
+     ssock_param.user_data = NULL; /* pending, must be set later */
+     ssock_param.verify_peer = PJ_FALSE; /* avoid SSL socket closing the socket
