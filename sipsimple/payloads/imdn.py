@@ -116,9 +116,9 @@ class Status(XMLElement):
 
     def __init__(self, status):
         XMLElement.__init__(self)
-        if isinstance(status, basestring) and status not in ('delivered', 'failed', 'displayed', 'processed', 'stored', 'forbidden', 'error'):
+        if isinstance(status, str) and status not in ('delivered', 'failed', 'displayed', 'processed', 'stored', 'forbidden', 'error'):
             raise ValueError("illegal value for status")
-        self.status = status if not isinstance(status, basestring) else eval(status.title())()
+        self.status = status if not isinstance(status, str) else eval(status.title())()
 
     def __repr__(self):
         return "%s(%r)" % (self.__class__.__name__, self.status)
