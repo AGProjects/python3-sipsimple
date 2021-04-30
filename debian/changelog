@@ -1,3 +1,13 @@
+python3-sipsimple (4.0.3) unstable; urgency=medium
+
+  * IMDN payloads fixes
+  * Fix multiple definition of `PJ_ATTR_MAY_ALIAS' with GCC-10
+  * Re-enable iLBC codec
+  * Fixed reporting non-existing codecs
+  * Capture Core exceptions when setting core settings
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Fri, 30 Apr 2021 10:04:05 -0300
+
 python3-sipsimple (4.0.2) unstable; urgency=medium
 
   * Added more granular XCAP trace
