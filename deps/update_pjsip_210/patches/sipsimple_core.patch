@@ -25,6 +25,15 @@ diff -ruN sipsimple/configuration/datatypes.py sipsimple/configuration/datatypes
 diff -ruN sipsimple/core/_core.lib.pxi sipsimple/core/_core.lib.pxi
 --- sipsimple/core/_core.lib.pxi	2021-02-18 22:20:23.927865045 +0100
 +++ sipsimple/core/_core.lib.pxi	2021-02-06 20:08:25.900660619 +0100
+@@ -146,7 +146,7 @@ cdef class PJSIPEndpoint:
+         self._make_local_addr(&local_addr, self._local_ip_used, port)
+         pjsip_tls_setting_default(&tls_setting)
+         # The following value needs to be reasonably low, as TLS negotiation hogs the PJSIP polling loop
+-        tls_setting.timeout.sec = self._tls_timeout / 1000
++        tls_setting.timeout.sec = <long>(self._tls_timeout / 1000)
+         tls_setting.timeout.msec = self._tls_timeout % 1000
+         if self._tls_ca_file is not None:
+             tls_setting.ca_list_file = self._tls_ca_file.pj_str
 @@ -269,7 +269,7 @@
          if status != 0:
              raise PJSIPError("Could not initialize ffmpeg video codecs", status)
@@ -55,8 +64,8 @@ diff -ruN sipsimple/core/_core.lib.pxi sipsimple/core/_core.lib.pxi
          all_codecs = set(self._get_all_codecs())
          codec_set = new_codecs.difference(all_codecs)
          if len(codec_set) > 0:
--            raise SIPCoreError("Unknown codec(s): %s" % ", ".join(codec_set))
-+            raise SIPCoreError("Unknown codec(s): %s" % ", ".join(cdc.decode() for cdc in codec_set))
+-            raise SIPCoreError("Unknown audio codecs: %s" % codec_set)
++            raise SIPCoreError("Unknown audio codecs: %s" % ", ".join(cdc.decode() for cdc in codec_set))
          # reverse the codec data tuples so that we can easily sort on sample rate
          # to make sure that bigger sample rates get higher priority
          codecs = [list(reversed(codec_data)) for codec_data in self._get_codecs()]
@@ -72,8 +81,8 @@ diff -ruN sipsimple/core/_core.lib.pxi sipsimple/core/_core.lib.pxi
              raise ValueError("Requested video codec list contains doubles")
          codec_set = new_codecs.difference(set(self._get_all_video_codecs()))
          if len(codec_set) > 0:
--            raise SIPCoreError("Unknown video codec(s): %s" % ", ".join(codec_set))
-+            raise SIPCoreError("Unknown video codec(s): %s" % ", ".join(cdc.decode() for cdc in codec_set))
+-            raise SIPCoreError("Unknown video codecs: %s" % codec_set)
++            raise SIPCoreError("Unknown video codecs: %s" % ", ".join(cdc.decode() for cdc in codec_set))
          codecs = self._get_video_codecs()
          codec_prio = list()
          for codec in req_codecs:
@@ -125,6 +134,12 @@ diff -ruN sipsimple/core/_core.mediatransport.pxi sipsimple/core/_core.mediatran
 diff -ruN sipsimple/core/_core.pxd sipsimple/core/_core.pxd
 --- sipsimple/core/_core.pxd	2021-02-18 22:20:23.935865270 +0100
 +++ sipsimple/core/_core.pxd	2021-02-06 20:02:57.495316125 +0100
+@@ -1,4 +1,4 @@
+-# cython: language_level=2
++# cython: language_level=3
+ 
+ cdef extern from *:
+     ctypedef char *char_ptr_const "const char *"
 @@ -906,8 +906,8 @@
      int pjmedia_codec_register_audio_codecs(pjmedia_endpt *endpt, const pjmedia_audio_codec_config *c) nogil
      int pjmedia_codec_ffmpeg_vid_init(pjmedia_vid_codec_mgr *mgr, pj_pool_factory *pf) nogil
@@ -183,6 +198,19 @@ diff -ruN sipsimple/core/_core.ua.pxi sipsimple/core/_core.ua.pxi
      cdef pj_str_t new_value
      try:
          ua = _get_ua()
+@@ -1133,10 +1131,10 @@ cdef int _cb_opus_fix_rx(pjsip_rx_data *rdata) with gil:
+                 if pos1 != -1:
+                     pos2 = body_str.find("opus/48000/2")
+                     if pos2 != -1:
+-                        memcpy(body_ptr + pos2 + 11, '1', 1)
++                        memcpy(body_ptr + pos2 + 11, b'1', 1)
+                     else:
+                         # old opus, we must make it fail
+-                        memcpy(body_ptr + pos1 + 5, 'XXXXX', 5)
++                        memcpy(body_ptr + pos1 + 5, b'XXXXX', 5)
+     except:
+         ua._handle_exception(0)
+     return 0
 diff -ruN sipsimple/core/_core.util.pxi sipsimple/core/_core.util.pxi
 --- sipsimple/core/_core.util.pxi	2021-02-18 22:20:24.051868537 +0100
 +++ sipsimple/core/_core.util.pxi	2021-02-06 20:14:30.530825814 +0100
@@ -218,47 +246,6 @@ diff -ruN sipsimple/core/_core.util.pxi sipsimple/core/_core.util.pxi
  
  # exports
  
---- sipsimple/core/__init__.py	2021-03-19 02:52:29.930211280 +0100
-+++ sipsimple/core/__init__.py	2021-03-11 10:29:24.021286694 +0100
-@@ -4,7 +4,7 @@
- from sipsimple.core._helpers import *
- from sipsimple.core._primitives import *
- 
--required_revision = 183
-+required_revision = 210
- if CORE_REVISION != required_revision:
-     raise ImportError("Wrong SIP core revision %d (expected %d)" % (CORE_REVISION, required_revision))
- del required_revision
---- sipsimple/__info__.py	2021-04-10 16:18:54.429724067 +0200
-+++ sipsimple/__info__.py	2021-04-10 16:19:16.690349803 +0200
-@@ -5,7 +5,7 @@
- __summary__ = "SIP SIMPLE implementation for Python"
- __webpage__ = "https://sipsimpleclient.org"
- 
--__version__ = "4.0.2"
-+__version__ = "5.0.0"
- 
- __author__ = "AG Projects"
- __email__ = "support@ag-projects.com"
---- sipsimple/core/_core.lib.pxi
-+++ sipsimple/core/_core.lib.pxi
-@@ -146,7 +146,7 @@ cdef class PJSIPEndpoint:
-         self._make_local_addr(&local_addr, self._local_ip_used, port)
-         pjsip_tls_setting_default(&tls_setting)
-         # The following value needs to be reasonably low, as TLS negotiation hogs the PJSIP polling loop
--        tls_setting.timeout.sec = self._tls_timeout / 1000
-+        tls_setting.timeout.sec = <long>(self._tls_timeout / 1000)
-         tls_setting.timeout.msec = self._tls_timeout % 1000
-         if self._tls_ca_file is not None:
-             tls_setting.ca_list_file = self._tls_ca_file.pj_str
---- sipsimple/core/_core.pxd
-+++ sipsimple/core/_core.pxd
-@@ -1,4 +1,4 @@
--# cython: language_level=2
-+# cython: language_level=3
- 
- cdef extern from *:
-     ctypedef char *char_ptr_const "const char *"
 --- sipsimple/core/_core.sound.pxi
 +++ sipsimple/core/_core.sound.pxi
 @@ -48,12 +48,12 @@ cdef class AudioMixer:
@@ -312,21 +299,17 @@ diff -ruN sipsimple/core/_core.util.pxi sipsimple/core/_core.util.pxi
                  if status != 0:
                      raise PJSIPError("Could not create WAV file", status)
                  self._slot = self.mixer._add_port(ua, self._pool, self._port)
---- sipsimple/core/_core.ua.pxi
-+++ sipsimple/core/_core.ua.pxi
-@@ -1131,10 +1131,10 @@ cdef int _cb_opus_fix_rx(pjsip_rx_data *rdata) with gil:
-                 if pos1 != -1:
-                     pos2 = body_str.find("opus/48000/2")
-                     if pos2 != -1:
--                        memcpy(body_ptr + pos2 + 11, '1', 1)
-+                        memcpy(body_ptr + pos2 + 11, b'1', 1)
-                     else:
-                         # old opus, we must make it fail
--                        memcpy(body_ptr + pos1 + 5, 'XXXXX', 5)
-+                        memcpy(body_ptr + pos1 + 5, b'XXXXX', 5)
-     except:
-         ua._handle_exception(0)
-     return 0
+--- sipsimple/core/__init__.py	2021-03-19 02:52:29.930211280 +0100
++++ sipsimple/core/__init__.py	2021-03-11 10:29:24.021286694 +0100
+@@ -4,7 +4,7 @@
+ from sipsimple.core._helpers import *
+ from sipsimple.core._primitives import *
+ 
+-required_revision = 183
++required_revision = 210
+ if CORE_REVISION != required_revision:
+     raise ImportError("Wrong SIP core revision %d (expected %d)" % (CORE_REVISION, required_revision))
+ del required_revision
 --- sipsimple/util/_sha1.pyx
 +++ sipsimple/util/_sha1.pyx
 @@ -1,4 +1,4 @@
@@ -353,3 +336,14 @@ diff -ruN sipsimple/core/_core.util.pxi sipsimple/core/_core.util.pxi
          block = PyBytes_FromStringAndSize(<char*>self.context.block, self.context.index)
          return self.__class__, (), (state_variables, self.context.count, block)
  
+--- sipsimple/__info__.py	2021-04-10 16:18:54.429724067 +0200
++++ sipsimple/__info__.py	2021-04-10 16:19:16.690349803 +0200
+@@ -5,7 +5,7 @@
+ __summary__ = "SIP SIMPLE implementation for Python"
+ __webpage__ = "https://sipsimpleclient.org"
+ 
+-__version__ = "4.0.3"
++__version__ = "5.0.2"
+ 
+ __author__ = "AG Projects"
+ __email__ = "support@ag-projects.com"

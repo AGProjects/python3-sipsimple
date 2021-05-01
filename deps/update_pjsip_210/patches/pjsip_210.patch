@@ -8117,9 +8117,9 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
      pj_str_t remote_name;
 +    pj_str_t tls_name;
      pj_status_t status;
-+    pjsip_param *p;
-+    pjsip_sip_uri *sip_uri;
-+    pjsip_route_hdr *route_hdr;
++    pjsip_param *p = NULL;
++    pjsip_sip_uri *sip_uri = NULL;
++    pjsip_route_hdr *route_hdr = NULL;
  
      /* Sanity checks */
      PJ_ASSERT_RETURN(factory && mgr && endpt && rem_addr &&
@@ -8130,24 +8130,24 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
 -    if (tdata)
 -	remote_name = tdata->dest_info.name;
 +    if (tdata) {
-+        remote_name = tdata->dest_info.name;
-+
-+        /* Get tls_name from sip route if defined */
-+        route_hdr = (pjsip_route_hdr*)pjsip_msg_find_hdr(tdata->msg, PJSIP_H_ROUTE, NULL);
-+        if (route_hdr != NULL) {
++	remote_name = tdata->dest_info.name;
++	/* Get tls_name from sip route if defined */
++	route_hdr = (pjsip_route_hdr*)pjsip_msg_find_hdr(tdata->msg, PJSIP_H_ROUTE, NULL);
++	if (route_hdr != NULL) {
 +	    if (PJSIP_URI_SCHEME_IS_SIPS(route_hdr->name_addr.uri) ||
-+                PJSIP_URI_SCHEME_IS_SIP(route_hdr->name_addr.uri)) {
-+                sip_uri = (pjsip_sip_uri*) pjsip_uri_get_uri(route_hdr->name_addr.uri);
-+                p = sip_uri->other_param.next;
-+                while (p != &sip_uri->other_param) {
-+                    const pj_str_t st_name = {"tls_name", 8};
-+                    if (pj_stricmp(&p->name, &st_name) == 0) {
-+	                pj_strdup(pool, &tls_name, &p->value);
-+                        break;
-+                    }
-+                    p = p->next;
-+                }
-+            }
++		PJSIP_URI_SCHEME_IS_SIP(route_hdr->name_addr.uri)) {
++		sip_uri = (pjsip_sip_uri*) pjsip_uri_get_uri(route_hdr->name_addr.uri);
++		p = sip_uri->other_param.next;
++		while (p != &sip_uri->other_param) {
++		    const pj_str_t st_name = {"tls_name", 8};
++		    if (pj_stricmp(&p->name, &st_name) == 0) {
++			pj_strdup(pool, &tls_name, &p->value);
++			tls_name.ptr[tls_name.slen] = '\x00';
++			break;
++		    }
++		p = p->next;
++		}
++	    }
 +	}
 +    }
      else
@@ -8196,35 +8196,6 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
  
  		        LIBS="$LIBS -framework Security"
  	  	        { $as_echo "$as_me:${as_lineno-$LINENO}: result: Checking if Darwin SSL is available... yes" >&5
---- pjsip/pjlib/src/pj/ssl_sock_ossl.c
-+++ pjsip/pjlib/src/pj/ssl_sock_ossl.c
-@@ -1527,6 +1527,7 @@ static void get_cert_info(pj_pool_t *pool, pj_ssl_cert_info *ci, X509 *x,
-     const pj_uint8_t *q;
-     unsigned len;
-     GENERAL_NAMES *names = NULL;
-+    pj_parsed_time v;
- 
-     pj_assert(pool && ci && x);
- 
-@@ -1572,6 +1573,10 @@ static void get_cert_info(pj_pool_t *pool, pj_ssl_cert_info *ci, X509 *x,
-     parse_ossl_asn1_time(&ci->validity.end, &ci->validity.gmt,
- 			 X509_get_notAfter(x));
- 
-+    pj_time_decode(&ci->validity.end, &v);
-+
-+    PJ_LOG(1, (THIS_FILE, "[certificate info] subject:%s | issuer:%s | validity:%d-%d-%d %d:%d:%d.%d\n", ci->subject.info.ptr, ci->issuer.info.ptr, v.year, v.mon, v.day, v.hour, v.min, v.sec, v.msec));
-+
-     /* Subject Alternative Name extension */
-     if (ci->version >= 3) {
- 	names = (GENERAL_NAMES*) X509_get_ext_d2i(x, NID_subject_alt_name,
-@@ -1766,6 +1771,7 @@ static void ssl_set_peer_name(pj_ssl_sock_t *ssock)
-     /* Set server name to connect */
-     if (ssock->param.server_name.slen) {
- 	/* Server name is null terminated already */
-+	PJ_LOG(1,(ssock->pool->obj_name, "[SSL_set_tlsext_host_name] server_name:%s", ssock->param.server_name.ptr));
- 	if (!SSL_set_tlsext_host_name(ossock->ossl_ssl, 
- 				      ssock->param.server_name.ptr))
- 	{
 --- pjsip/pjsip/src/pjsip/sip_transport_tls.c
 +++ pjsip/pjsip/src/pjsip/sip_transport_tls.c
 @@ -1206,7 +1206,10 @@ static pj_status_t lis_create_transport(pjsip_tpfactory *factory,
@@ -8239,3 +8210,49 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
      ssock_param.timeout = listener->tls_setting.timeout;
      ssock_param.user_data = NULL; /* pending, must be set later */
      ssock_param.verify_peer = PJ_FALSE; /* avoid SSL socket closing the socket
+--- pjsip/pjlib/src/pj/ssl_sock_ossl.c
++++ pjsip/pjlib/src/pj/ssl_sock_ossl.c
+@@ -1702,6 +1702,9 @@
+     ossl_sock_t *ossock = (ossl_sock_t *)ssock;
+     X509 *x;
+     STACK_OF(X509) *chain;
++    pj_parsed_time v;
++    pj_time_val end;
++    pj_bool_t gmt;
+ 
+     pj_assert(ssock->ssl_state == SSL_STATE_ESTABLISHED);
+ 
+@@ -1709,6 +1712,12 @@
+     x = SSL_get_certificate(ossock->ossl_ssl);
+     if (x) {
+ 	get_cert_info(ssock->pool, &ssock->local_cert_info, x, PJ_FALSE);
++	parse_ossl_asn1_time(&end, &gmt, X509_get_notAfter(x));
++
++	pj_time_decode(&end, &v);
++
++	PJ_LOG(1, (THIS_FILE, "[local TLS certificate] subject:%s | issuer:%s | valid until:%d-%d-%d", ssock->local_cert_info.subject.info.ptr, ssock->local_cert_info.issuer.info.ptr, v.year, v.mon, v.day));
++
+ 	/* Don't free local's X509! */
+     } else {
+ 	pj_bzero(&ssock->local_cert_info, sizeof(pj_ssl_cert_info));
+@@ -1718,6 +1727,12 @@
+     x = SSL_get_peer_certificate(ossock->ossl_ssl);
+     if (x) {
+ 	get_cert_info(ssock->pool, &ssock->remote_cert_info, x, PJ_TRUE);
++	parse_ossl_asn1_time(&end, &gmt, X509_get_notAfter(x));
++
++	pj_time_decode(&end, &v);
++
++	PJ_LOG(1, (THIS_FILE, "[remote TLS certificate] subject:%s | issuer:%s | valid until:%d-%d-%d | host:%s:%d", ssock->remote_cert_info.subject.info.ptr, ssock->remote_cert_info.issuer.info.ptr, v.year, v.mon, v.day, pj_inet_ntoa(ssock->rem_addr.ipv4.sin_addr), ssock->rem_addr.ipv4.sin_port));
++
+ 	/* Free peer's X509 */
+ 	X509_free(x);
+     } else {
+@@ -1766,6 +1770,7 @@ static void ssl_set_peer_name(pj_ssl_sock_t *ssock)
+     /* Set server name to connect */
+     if (ssock->param.server_name.slen) {
+ 	/* Server name is null terminated already */
++	PJ_LOG(1,(ssock->pool->obj_name, "[SSL_set_tlsext_host_name] server_name:%s", ssock->param.server_name.ptr));
+ 	if (!SSL_set_tlsext_host_name(ossock->ossl_ssl, 
+ 				      ssock->param.server_name.ptr))
+ 	{
