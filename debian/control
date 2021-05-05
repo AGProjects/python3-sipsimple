@@ -16,6 +16,7 @@ Build-Depends: debhelper (>= 11), python3,
                libswscale-dev,
                libx264-dev,
                libvpx-dev,
+               libopus-dev,
                libsqlite3-dev,
                pkg-config,
                uuid-dev
