@@ -219,7 +219,7 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
     cdef pjsip_ctype_hdr *ctype_header
     cdef pjsip_cseq_hdr *cseq_header
     cdef char *buf
-    cdef int buf_len, i, status
+    cdef int buf_len, status
     headers = {}
     header = <pjsip_hdr *> (<pj_list *> &msg.hdr).next
     while header != &msg.hdr:
@@ -229,8 +229,9 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
         if header_name in ("Accept", "Allow", "Require", "Supported", "Unsupported", "Allow-Events"):
             array_header = <pjsip_generic_array_hdr *> header
             header_data = []
-            for i from 0 <= i < array_header.count:
-                header_data.append(_pj_str_to_bytes(array_header.values[i]))
+            if array_header.count < 128:
+                for i from 0 <= i < array_header.count:
+                    header_data.append(_pj_str_to_bytes(array_header.values[i]))
         elif header_name == "Contact":
             multi_header = True
             header_data = FrozenContactHeader_create(<pjsip_contact_hdr *> header)

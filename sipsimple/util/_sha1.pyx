@@ -1,4 +1,4 @@
-# cython: language_level=2
+# cython: language_level=3
 
 __all__ = ['sha1']
 
@@ -17,7 +17,7 @@ cdef extern from "_sha1.h":
         SHA1_DIGEST_SIZE = 20
 
     ctypedef struct sha1_context:
-        uint32_t state[SHA1_DIGEST_SIZE/4]  # state variables
+        uint32_t state[<int>(SHA1_DIGEST_SIZE/4)]  # state variables
         uint64_t count                      # 64-bit block count
         uint8_t  block[SHA1_BLOCK_SIZE]     # data block buffer
         uint32_t index                      # index into buffer
@@ -49,7 +49,7 @@ cdef class sha1(object):
             return SHA1_DIGEST_SIZE
 
     def __reduce__(self):
-        state_variables = [self.context.state[i] for i in range(sizeof(self.context.state)/4)]
+        state_variables = [self.context.state[<int>i] for i in range(sizeof(self.context.state)/4)]
         block = PyBytes_FromStringAndSize(<char*>self.context.block, self.context.index)
         return self.__class__, (), (state_variables, self.context.count, block)
 

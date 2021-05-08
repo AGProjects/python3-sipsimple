@@ -1075,8 +1075,6 @@ cdef int _cb_opus_fix_tx(pjsip_tx_data *tdata) with gil:
     cdef pjmedia_sdp_session *sdp
     cdef pjmedia_sdp_media *media
     cdef pjmedia_sdp_attr *attr
-    cdef int i
-    cdef int j
     cdef pj_str_t new_value
     try:
         ua = _get_ua()
@@ -1133,10 +1131,10 @@ cdef int _cb_opus_fix_rx(pjsip_rx_data *rdata) with gil:
                 if pos1 != -1:
                     pos2 = body_str.find("opus/48000/2")
                     if pos2 != -1:
-                        memcpy(body_ptr + pos2 + 11, '1', 1)
+                        memcpy(body_ptr + pos2 + 11, b'1', 1)
                     else:
                         # old opus, we must make it fail
-                        memcpy(body_ptr + pos1 + 5, 'XXXXX', 5)
+                        memcpy(body_ptr + pos1 + 5, b'XXXXX', 5)
     except:
         ua._handle_exception(0)
     return 0

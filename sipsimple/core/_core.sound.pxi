@@ -48,12 +48,12 @@ cdef class AudioMixer:
         self._snd_pool = snd_pool
         with nogil:
             status = pjmedia_conf_create(conf_pool, slot_count+1, sample_rate, 1,
-                                         sample_rate / 50, 16, PJMEDIA_CONF_NO_DEVICE, conf_bridge_address)
+                                         <int>(sample_rate / 50), 16, PJMEDIA_CONF_NO_DEVICE, conf_bridge_address)
         if status != 0:
             raise PJSIPError("Could not create audio mixer", status)
         with nogil:
             status = pjmedia_null_port_create(conf_pool, sample_rate, 1,
-                                              sample_rate / 50, 16, null_port_address)
+                                              <unsigned int>(sample_rate / 50), 16, null_port_address)
         if status != 0:
             raise PJSIPError("Could not create null audio port", status)
         self._start_sound_device(ua, input_device, output_device, ec_tail_length)
@@ -377,7 +377,7 @@ cdef class AudioMixer:
                     port_param.base.rec_id = input_device_i
                 port_param.base.channel_count = 1
                 port_param.base.clock_rate = sample_rate
-                port_param.base.samples_per_frame = sample_rate / 50
+                port_param.base.samples_per_frame = <int>(sample_rate / 50)
                 port_param.base.bits_per_sample = 16
                 port_param.base.flags |= (PJMEDIA_AUD_DEV_CAP_EC | PJMEDIA_AUD_DEV_CAP_EC_TAIL)
                 port_param.base.ec_enabled = 1
@@ -672,7 +672,7 @@ cdef class ToneGenerator:
         self.mixer = mixer
         with nogil:
             status = pjmedia_tonegen_create(pool, sample_rate, 1,
-                                            sample_rate / 50, 16, 0, port_address)
+                                            <unsigned int>(sample_rate / 50), 16, 0, port_address)
         if status != 0:
             raise PJSIPError("Could not create tone generator", status)
 
@@ -949,7 +949,7 @@ cdef class RecordingWaveFile:
                 with nogil:
                     status = pjmedia_wav_writer_port_create(pool, filename,
                                                             sample_rate, 1,
-                                                            sample_rate / 50, 16,
+                                                            <unsigned int>(sample_rate / 50), 16,
                                                             PJMEDIA_FILE_WRITE_PCM, 0, port_address)
                 if status != 0:
                     raise PJSIPError("Could not create WAV file", status)
@@ -1290,7 +1290,7 @@ cdef class MixerPort:
             self._pool = pool
             try:
                 with nogil:
-                    status = pjmedia_mixer_port_create(pool, sample_rate, 1, sample_rate / 50, 16, port_address)
+                    status = pjmedia_mixer_port_create(pool, sample_rate, 1, <unsigned int>(sample_rate / 50), 16, port_address)
                 if status != 0:
                     raise PJSIPError("Could not create WAV file", status)
                 self._slot = self.mixer._add_port(ua, self._pool, self._port)

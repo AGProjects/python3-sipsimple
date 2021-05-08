@@ -397,7 +397,7 @@ cdef class RTPTransport:
             pj_remote_sdp = NULL
         if sdp_index < 0:
             raise ValueError("sdp_index argument cannot be negative")
-        if sdp_index >= pj_local_sdp.media_count:
+        if sdp_index >= <int>pj_local_sdp.media_count:
             raise ValueError("sdp_index argument out of range")
         with nogil:
             status = pjmedia_transport_media_create(transport, pool, 0, pj_remote_sdp, sdp_index)
@@ -488,7 +488,6 @@ cdef class RTPTransport:
     def set_INIT(self):
         global _ice_cb
         cdef int af
-        cdef int i
         cdef int status
         cdef int port
         cdef pj_caching_pool *caching_pool
@@ -882,7 +881,7 @@ cdef class RTPTransport:
             pj_remote_sdp = NULL
         if sdp_index < 0:
             raise ValueError("sdp_index argument cannot be negative")
-        if sdp_index >= pj_local_sdp.media_count:
+        if sdp_index >= <int>pj_local_sdp.media_count:
             raise ValueError("sdp_index argument out of range")
         # Remove ICE and SRTP/ZRTP related attributes from SDP, they will be added by pjmedia_transport_encode_sdp
         local_media = local_sdp.media[sdp_index]

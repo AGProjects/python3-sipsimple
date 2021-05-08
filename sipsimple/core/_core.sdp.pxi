@@ -966,7 +966,6 @@ cdef class FrozenSDPBandwidthInfo(BaseSDPBandwidthInfo):
 
 cdef SDPSession SDPSession_create(pjmedia_sdp_session_ptr_const pj_session):
     cdef SDPConnection connection = None
-    cdef int i
     if pj_session.conn != NULL:
         connection = SDPConnection_create(pj_session.conn)
     return SDPSession(_pj_str_to_bytes(pj_session.origin.addr),
@@ -985,7 +984,6 @@ cdef SDPSession SDPSession_create(pjmedia_sdp_session_ptr_const pj_session):
 
 cdef FrozenSDPSession FrozenSDPSession_create(pjmedia_sdp_session_ptr_const pj_session):
     cdef FrozenSDPConnection connection = None
-    cdef int i
     if pj_session.conn != NULL:
         connection = FrozenSDPConnection_create(pj_session.conn)
     return FrozenSDPSession(_pj_str_to_bytes(pj_session.origin.addr),
@@ -1004,7 +1002,6 @@ cdef FrozenSDPSession FrozenSDPSession_create(pjmedia_sdp_session_ptr_const pj_s
 
 cdef SDPMediaStream SDPMediaStream_create(pjmedia_sdp_media *pj_media):
     cdef SDPConnection connection = None
-    cdef int i
     if pj_media.conn != NULL:
         connection = SDPConnection_create(pj_media.conn)
     return SDPMediaStream(_pj_str_to_bytes(pj_media.desc.media),
@@ -1018,7 +1015,6 @@ cdef SDPMediaStream SDPMediaStream_create(pjmedia_sdp_media *pj_media):
 
 cdef FrozenSDPMediaStream FrozenSDPMediaStream_create(pjmedia_sdp_media *pj_media):
     cdef FrozenSDPConnection connection = None
-    cdef int i
     if pj_media.conn != NULL:
         connection = FrozenSDPConnection_create(pj_media.conn)
     return FrozenSDPMediaStream(_pj_str_to_bytes(pj_media.desc.media),

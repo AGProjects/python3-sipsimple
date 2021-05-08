@@ -1,4 +1,4 @@
-# cython: language_level=2
+# cython: language_level=3
 
 cdef extern from *:
     ctypedef char *char_ptr_const "const char *"
@@ -906,8 +906,8 @@ cdef extern from "pjmedia-codec.h":
     int pjmedia_codec_register_audio_codecs(pjmedia_endpt *endpt, const pjmedia_audio_codec_config *c) nogil
     int pjmedia_codec_ffmpeg_vid_init(pjmedia_vid_codec_mgr *mgr, pj_pool_factory *pf) nogil
     int pjmedia_codec_ffmpeg_vid_deinit() nogil
-    int pjmedia_codec_vpx_init(pjmedia_vid_codec_mgr *mgr, pj_pool_factory *pf) nogil
-    int pjmedia_codec_vpx_deinit() nogil
+    int pjmedia_codec_vpx_vid_init(pjmedia_vid_codec_mgr *mgr, pj_pool_factory *pf) nogil
+    int pjmedia_codec_vpx_vid_deinit() nogil
 
 cdef extern from "pjsip.h":
 

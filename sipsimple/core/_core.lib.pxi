@@ -146,7 +146,7 @@ cdef class PJSIPEndpoint:
         self._make_local_addr(&local_addr, self._local_ip_used, port)
         pjsip_tls_setting_default(&tls_setting)
         # The following value needs to be reasonably low, as TLS negotiation hogs the PJSIP polling loop
-        tls_setting.timeout.sec = self._tls_timeout / 1000
+        tls_setting.timeout.sec = <long>(self._tls_timeout / 1000)
         tls_setting.timeout.msec = self._tls_timeout % 1000
         if self._tls_ca_file is not None:
             tls_setting.ca_list_file = self._tls_ca_file.pj_str
@@ -181,13 +181,13 @@ cdef class PJSIPEndpoint:
         if resolver == NULL:
             raise SIPCoreError("Could not get DNS resolver on endpoint")
 
-        pj_servers = <pj_str_t *> malloc(sizeof(pj_str_t)*num_servers)
+        pj_servers = <pj_str_t *> malloc(sizeof(pj_str_t))
         if pj_servers == NULL:
             raise MemoryError()
 
-        for i, ns in enumerate(servers):
-            _str_to_pj_str(ns.encode(), &pj_servers[i])
-        status = pj_dns_resolver_set_ns(resolver, num_servers, pj_servers, NULL)
+	# set only 1st nameserver
+        _str_to_pj_str(servers[0].encode(), &pj_servers[0])
+        status = pj_dns_resolver_set_ns(resolver, 1, pj_servers, NULL)
         free(pj_servers)
         if status != 0:
             raise PJSIPError("Could not set nameservers on DNS resolver", status)
@@ -269,7 +269,7 @@ cdef class PJMEDIAEndpoint:
         if status != 0:
             raise PJSIPError("Could not initialize ffmpeg video codecs", status)
         self._has_ffmpeg_video = 1
-        status = pjmedia_codec_vpx_init(NULL, &caching_pool._obj.factory)
+        status = pjmedia_codec_vpx_vid_init(NULL, &caching_pool._obj.factory)
         if status != 0:
             raise PJSIPError("Could not initialize vpx video codecs", status)
         self._has_vpx = 1
@@ -284,7 +284,7 @@ cdef class PJMEDIAEndpoint:
         if self._has_ffmpeg_video:
             pjmedia_codec_ffmpeg_vid_deinit()
         if self._has_vpx:
-            pjmedia_codec_vpx_deinit()
+            pjmedia_codec_vpx_vid_deinit()
         if pjmedia_vid_codec_mgr_instance() != NULL:
             pjmedia_vid_codec_mgr_destroy(NULL)
         if pjmedia_event_mgr_instance() != NULL:
@@ -298,7 +298,6 @@ cdef class PJMEDIAEndpoint:
         cdef unsigned int count = PJMEDIA_CODEC_MGR_MAX_CODECS
         cdef pjmedia_codec_info info[PJMEDIA_CODEC_MGR_MAX_CODECS]
         cdef unsigned int prio[PJMEDIA_CODEC_MGR_MAX_CODECS]
-        cdef int i
         cdef list retval
         cdef int status
         status = pjmedia_codec_mgr_enum_codecs(pjmedia_endpt_get_codec_mgr(self._obj), &count, info, prio)
@@ -343,7 +342,7 @@ cdef class PJMEDIAEndpoint:
         all_codecs = set(self._get_all_codecs())
         codec_set = new_codecs.difference(all_codecs)
         if len(codec_set) > 0:
-            raise SIPCoreError("Unknown audio codecs: %s" % codec_set)
+            raise SIPCoreError("Unknown audio codecs: %s" % ", ".join(cdc.decode() for cdc in codec_set))
         # reverse the codec data tuples so that we can easily sort on sample rate
         # to make sure that bigger sample rates get higher priority
         codecs = [list(reversed(codec_data)) for codec_data in self._get_codecs()]
@@ -372,7 +371,6 @@ cdef class PJMEDIAEndpoint:
         cdef unsigned int count = PJMEDIA_VID_CODEC_MGR_MAX_CODECS
         cdef pjmedia_vid_codec_info info[PJMEDIA_VID_CODEC_MGR_MAX_CODECS]
         cdef unsigned int prio[PJMEDIA_VID_CODEC_MGR_MAX_CODECS]
-        cdef int i
         cdef list retval
         cdef int status
         status = pjmedia_vid_codec_mgr_enum_codecs(NULL, &count, info, prio)
@@ -415,7 +413,7 @@ cdef class PJMEDIAEndpoint:
             raise ValueError("Requested video codec list contains doubles")
         codec_set = new_codecs.difference(set(self._get_all_video_codecs()))
         if len(codec_set) > 0:
-            raise SIPCoreError("Unknown video codecs: %s" % codec_set)
+            raise SIPCoreError("Unknown video codecs: %s" % ", ".join(cdc.decode() for cdc in codec_set))
         codecs = self._get_video_codecs()
         codec_prio = list()
         for codec in req_codecs:
@@ -443,7 +441,6 @@ cdef class PJMEDIAEndpoint:
         cdef pjmedia_vid_codec_info info[PJMEDIA_VID_CODEC_MGR_MAX_CODECS]
         cdef pjmedia_vid_codec_param vparam
         cdef unsigned int prio[PJMEDIA_VID_CODEC_MGR_MAX_CODECS]
-        cdef int i
         cdef int status
         cdef PJSTR h264_profile_level_id_value
         cdef PJSTR h264_packetization_mode_value = PJSTR(b"1")    # TODO; make it configurable?
@@ -482,7 +479,6 @@ cdef class PJMEDIAEndpoint:
         cdef pjmedia_vid_codec_info info[PJMEDIA_VID_CODEC_MGR_MAX_CODECS]
         cdef pjmedia_vid_codec_param vparam
         cdef unsigned int prio[PJMEDIA_VID_CODEC_MGR_MAX_CODECS]
-        cdef int i
         cdef int status
 
         max_width, max_height = max_resolution
