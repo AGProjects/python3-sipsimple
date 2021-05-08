@@ -9,10 +9,7 @@ echo
 echo "Revert uncommitted changes..."
 echo
 
-darcs revert -a ../../sipsimple/configuration/
-darcs revert -a ../../sipsimple/core/
-darcs revert -a ../../deps/pjsip/
-darcs revert -a ../../setup_pjsip.py
+darcs revert -a
 
 #
 # Update PJSIP 
