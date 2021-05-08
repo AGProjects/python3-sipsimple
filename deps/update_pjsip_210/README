@@ -1,1 +1,18 @@
-This is experiemental work in progress, not functional yet.
+This patch must be applied once, on top of the darcs tag:
+
+before-pjsip-210
+
+The following patches have been preserved as a reference for future
+upgrades:
+
+ - deps/update_pjsip_210/patches/pjsip_210.patch
+ - deps/update_pjsip_210/patches/zsrtp.patch
+
+SIP SIMPLE SDK depends hereinafter upon the following third party sources:
+
+- PJSIP base revision 210 from 2020-02-14
+  https://github.com/pjsip/pjproject/archive/2.10.tar.gz
+
+- ZRTP tag 6b3cd8e6783642292bad0c21e3e5e5ce45ff3e03
+  https://github.com/wernerd/ZRTPCPP.git
+

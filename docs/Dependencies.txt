@@ -4,7 +4,15 @@ SIP SIMPLE client SDK dependencies
 
 Home page: http://sipsimpleclient.org
 
-Python packages available from AG Projects:
+SIP SIMPLE SDK depends upon the following third party C sources:
+
+- PJSIP base revision 210 from 2020-02-14
+  https://github.com/pjsip/pjproject/archive/2.10.tar.gz
+
+- ZRTP tag 6b3cd8e6783642292bad0c21e3e5e5ce45ff3e03
+  https://github.com/wernerd/ZRTPCPP.git
+
+Python dependencies available from AG Projects repositories:
 
  * python3-application      http://download.ag-projects.com/SipSimpleSDK/Python3/ 
  * python3-eventlib         http://download.ag-projects.com/SipSimpleSDK/Python3/ 
