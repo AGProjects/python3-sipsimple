@@ -3,8 +3,6 @@ TODO
 
  - Use individual TCP/TLS transport per SIP account
  - Use individual TLS settings per account (CA, list, certificate and verify server)
- - Use MacOS native video hardware acceleration https://trac.pjsip.org/repos/ticket/2022
- - Fix TLS verify server https://github.com/AGProjects/python-sipsimple/pull/7
  - After ICE neg is completed we must send re-INVITE with the chosen RTP candidates
  - Cannot retry a Call Transfer if it failed (invitation._transfer_usage is not reset) 
  - Modify Invitation/Request/Subscription to reset transport on request_uri

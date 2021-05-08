@@ -22,6 +22,15 @@ for the following packages:
 Step 2. Install system dependencies
 -----------------------------------
 
+SIP SIMPLE SDK depends upon the following third party sources:
+
+- PJSIP base revision 210 from 2020-02-14
+  https://github.com/pjsip/pjproject/archive/2.10.tar.gz
+
+- ZRTP tag 6b3cd8e6783642292bad0c21e3e5e5ce45ff3e03
+  https://github.com/wernerd/ZRTPCPP.git
+
+
 See Dependencies.txt for detailed description of the required libraries and
 their minimum version number.
 
