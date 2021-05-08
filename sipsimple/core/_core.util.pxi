@@ -156,7 +156,10 @@ cdef class frozendict:
 # functions
 
 cdef int _str_to_pj_str(object string, pj_str_t *pj_str) except -1:
-    pj_str.ptr = PyBytes_AsString(string)
+    if type(string) != bytes:
+        pj_str.ptr = PyBytes_AsString(string.encode())
+    else:
+        pj_str.ptr = PyBytes_AsString(string)
     pj_str.slen = len(string)
 
 cdef object _pj_str_to_bytes(pj_str_t pj_str):
@@ -172,10 +175,16 @@ cdef object _buf_to_str(object buf):
     return PyBytes_FromString(buf).decode()
 
 cdef object _str_as_str(object string):
-    return PyBytes_AsString(string)
+    if type(string) != bytes:
+        return PyBytes_AsString(string.encode())
+    else:
+        return PyBytes_AsString(string)
 
 cdef object _str_as_size(object string):
-    return PyBytes_Size(string)
+    if type(string) != bytes:
+        return PyBytes_Size(string.encode())
+    else:
+        return PyBytes_Size(string)
 
 cdef object _pj_status_to_str(int status):
     cdef char buf[PJ_ERR_MSG_SIZE]
