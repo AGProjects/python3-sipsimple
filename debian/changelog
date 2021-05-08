@@ -1,3 +1,13 @@
+python3-sipsimple (5.0.0) unstable; urgency=medium
+
+  * Updated to PJSIP 2.10
+  * Added VP9 video codec
+  * Added peer TLS verification settings.tls.verify_server
+  * Added per account TLS server name to verify (account.tls.tls_name)
+  * Updated docs/Install.linux, unpacking pjsip is required before build
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Sat May  8 16:28:51 -03 2021
+
 python3-sipsimple (4.0.3) unstable; urgency=medium
 
   * IMDN payloads fixes
