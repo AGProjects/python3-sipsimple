@@ -6,7 +6,7 @@ python3-sipsimple (5.0.0) unstable; urgency=medium
   * Added per account TLS server name to verify (account.tls.tls_name)
   * Updated docs/Install.linux, unpacking pjsip is required before build
 
- -- Adrian Georgescu <ag@ag-projects.com>  Sat May  8 16:28:51 -03 2021
+ -- Adrian Georgescu <ag@ag-projects.com>  Sat, 08 May 2021 16:28:51 -0300
 
 python3-sipsimple (4.0.3) unstable; urgency=medium
 
