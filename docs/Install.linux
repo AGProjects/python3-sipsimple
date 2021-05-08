@@ -81,6 +81,10 @@ sudo dpkg -i *.deb
 Step 4. Install the SDK
 -----------------------
 
+First unpack pjsip archive (only needs to be done once):
+
+./extract_pjsip.sh
+
 The SDK consists of two packages:
 
  - python3-sipsimple
