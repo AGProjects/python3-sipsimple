@@ -55,8 +55,8 @@ General
  * Acoustic Echo Cancelation
  * Answering machine
  * Wide-band Internet audio codecs: Opus and Speex
- * PSTN compatible codecs: G722, G711, iLBC, GSM
- * Video codecs: H.264, VP8
+ * PSTN compatible codecs: G722, G711, iLBC, GSM, AMR
+ * Video codecs: H.264, VP8, VP9
 
 Supported media
 
