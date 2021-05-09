@@ -1,0 +1,41 @@
+--- pjsip/pjlib/src/pj/ssl_sock_ossl.c
++++ pjsip/pjlib/src/pj/ssl_sock_ossl.c
+@@ -1705,6 +1705,10 @@ static void ssl_update_certs_info(pj_ssl_sock_t *ssock)
+     pj_parsed_time v;
+     pj_time_val end;
+     pj_bool_t gmt;
++    char *local_cert_subject;
++    char *local_cert_issuer;
++    char *remote_cert_subject;
++    char *remote_cert_issuer;
+ 
+     pj_assert(ssock->ssl_state == SSL_STATE_ESTABLISHED);
+ 
+@@ -1716,7 +1720,12 @@ static void ssl_update_certs_info(pj_ssl_sock_t *ssock)
+ 
+ 	pj_time_decode(&end, &v);
+ 
+-	PJ_LOG(1, (THIS_FILE, "[local TLS certificate] subject:%s | issuer:%s | valid until:%d-%d-%d", ssock->local_cert_info.subject.info.ptr, ssock->local_cert_info.issuer.info.ptr, v.year, v.mon, v.day));
++	local_cert_subject = ssock->local_cert_info.subject.info.ptr;
++	local_cert_subject[ssock->local_cert_info.subject.info.slen] = '\x00';
++	local_cert_issuer = ssock->local_cert_info.issuer.info.ptr;
++	local_cert_issuer[ssock->local_cert_info.issuer.info.slen] = '\x00';
++
++	PJ_LOG(1, (THIS_FILE, "[local TLS certificate] subject:%s | issuer:%s | valid until:%d-%d-%d", local_cert_subject, local_cert_issuer, v.year, v.mon, v.day));
+ 
+ 	/* Don't free local's X509! */
+     } else {
+@@ -1731,7 +1740,12 @@ static void ssl_update_certs_info(pj_ssl_sock_t *ssock)
+ 
+ 	pj_time_decode(&end, &v);
+ 
+-	PJ_LOG(1, (THIS_FILE, "[remote TLS certificate] subject:%s | issuer:%s | valid until:%d-%d-%d | host:%s:%d", ssock->remote_cert_info.subject.info.ptr, ssock->remote_cert_info.issuer.info.ptr, v.year, v.mon, v.day, pj_inet_ntoa(ssock->rem_addr.ipv4.sin_addr), ssock->rem_addr.ipv4.sin_port));
++	remote_cert_subject = ssock->remote_cert_info.subject.info.ptr;
++	remote_cert_subject[ssock->remote_cert_info.subject.info.slen] = '\x00';
++	remote_cert_issuer = ssock->remote_cert_info.issuer.info.ptr;
++	remote_cert_issuer[ssock->remote_cert_info.issuer.info.slen] = '\x00';
++
++	PJ_LOG(1, (THIS_FILE, "[remote TLS certificate] subject:%s | issuer:%s | valid until:%d-%d-%d | host:%s:%d", remote_cert_subject, remote_cert_issuer, v.year, v.mon, v.day, pj_inet_ntoa(ssock->rem_addr.ipv4.sin_addr), ssock->rem_addr.ipv4.sin_port));
+ 
+ 	/* Free peer's X509 */
+ 	X509_free(x);

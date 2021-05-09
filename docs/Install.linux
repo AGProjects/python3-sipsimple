@@ -31,6 +31,8 @@ SIP SIMPLE SDK depends upon the following third party sources:
   https://github.com/wernerd/ZRTPCPP.git
 
 
+Fetch and patch the dependencies using get_dependencies.sh script
+
 See Dependencies.txt for detailed description of the required libraries and
 their minimum version number.
 

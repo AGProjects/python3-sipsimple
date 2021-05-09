@@ -1,0 +1,426 @@
+--- pjsip_orig/third_party/zsrtp/zrtp/srtp/CryptoContext.h
++++ pjsip/third_party/zsrtp/zrtp/srtp/CryptoContext.h
+@@ -419,7 +419,11 @@
+     typedef union _hmacCtx {
+         SkeinCtx_t       hmacSkeinCtx;
+ #ifdef ZRTP_OPENSSL
++	#if OPENSSL_VERSION_NUMBER < 0x10100000L
+         HMAC_CTX         hmacSha1Ctx;
++	#else
++		HMAC_CTX *		hmacSha1Ctx;
++	#endif
+ #else
+         hmacSha1Context  hmacSha1Ctx;
+ #endif
+--- pjsip_orig/third_party/zsrtp/zrtp/srtp/crypto/openssl/hmac.cpp
++++ pjsip/third_party/zsrtp/zrtp/srtp/crypto/openssl/hmac.cpp
+@@ -36,21 +36,40 @@
+                const std::vector<const uint8_t*>& data,
+                const std::vector<uint64_t>& dataLength,
+                uint8_t* mac, int32_t* macLength) {
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+     HMAC_CTX ctx = {};
+     HMAC_CTX_init(&ctx);
+     HMAC_Init_ex(&ctx, key, static_cast<int>(keyLength), EVP_sha1(), NULL);
++#else
++    HMAC_CTX* ctx;
++    ctx = HMAC_CTX_new();
++    HMAC_Init_ex(ctx, key, static_cast<int>(keyLength), EVP_sha1(), NULL);
++#endif
+     for (size_t i = 0, size = data.size(); i < size; i++) {
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+         HMAC_Update(&ctx, data[i], dataLength[i]);
++#else
++        HMAC_Update(ctx, data[i], dataLength[i]);
++#endif
+     }
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+     HMAC_Final(&ctx, mac, reinterpret_cast<uint32_t*>(macLength));
+     HMAC_CTX_cleanup(&ctx);
++#else
++    HMAC_Final(ctx, mac, reinterpret_cast<uint32_t*>(macLength));
++    HMAC_CTX_free( ctx );
++#endif
+ }
+ 
+ void* createSha1HmacContext(const uint8_t* key, uint64_t keyLength)
+ {
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+     auto* ctx = (HMAC_CTX*)malloc(sizeof(HMAC_CTX));
+ 
+     HMAC_CTX_init(ctx);
++#else
++    HMAC_CTX* ctx = HMAC_CTX_new();
++#endif
+     HMAC_Init_ex(ctx, key, static_cast<int>(keyLength), EVP_sha1(), nullptr);
+     return ctx;
+ }
+@@ -59,7 +68,11 @@
+ {
+     auto *pctx = (HMAC_CTX*)ctx;
+ 
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+     HMAC_CTX_init(pctx);
++#else
++    HMAC_CTX_reset(pctx);
++#endif
+     HMAC_Init_ex(pctx, key, static_cast<int>(keyLength), EVP_sha1(), nullptr);
+     return pctx;
+ }
+@@ -69,9 +92,9 @@
+ {
+     auto* pctx = (HMAC_CTX*)ctx;
+ 
+-    HMAC_Init_ex(pctx, nullptr, 0, nullptr, nullptr);
+-    HMAC_Update(pctx, data, data_length );
+-    HMAC_Final(pctx, mac, reinterpret_cast<uint32_t*>(mac_length) );
++    HMAC_Init_ex( pctx, nullptr, 0, nullptr, nullptr );
++    HMAC_Update( pctx, data, data_length );
++    HMAC_Final( pctx, mac, reinterpret_cast<uint32_t*>(mac_length) );
+ }
+ 
+ void hmacSha1Ctx(void* ctx,
+@@ -91,7 +114,11 @@
+ void freeSha1HmacContext(void* ctx)
+ {
+     if (ctx) {
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+         HMAC_CTX_cleanup((HMAC_CTX*)ctx);
+         free(ctx);
++#else
++        HMAC_CTX_free((HMAC_CTX*)ctx);
++#endif
+     }
+-}
+\ No newline at end of file
++}
+--- pjsip_orig/third_party/zsrtp/zrtp/zrtp/crypto/openssl/hmac256.cpp
++++ pjsip/third_party/zsrtp/zrtp/zrtp/crypto/openssl/hmac256.cpp
+@@ -32,13 +32,31 @@
+                 uint8_t* mac, uint32_t* mac_length)
+ {
+     unsigned int tmp;
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+     HMAC_CTX ctx = {};
+     HMAC_CTX_init(&ctx);
+     HMAC_Init_ex( &ctx, key, static_cast<int>(key_length), EVP_sha256(), nullptr );
++#else
++    HMAC_CTX * ctx;
++    ctx = HMAC_CTX_new();
++    HMAC_Init_ex( ctx, key, static_cast<int>(key_length), EVP_sha256(), nullptr );
++#endif
+     for (size_t i = 0, size = data.size(); i < size; i++) {
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+         HMAC_Update(&ctx, data[i], dataLength[i]);
++#else
++        HMAC_Update( ctx, data[i], dataLength[i]);
++#endif
+     }
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+     HMAC_Final( &ctx, mac, &tmp);
++#else
++    HMAC_Final( ctx, mac, &tmp);
++#endif
+     *mac_length = tmp;
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+     HMAC_CTX_cleanup( &ctx );
++#else
++    HMAC_CTX_free( ctx );
++#endif
+ }
+--- pjsip_orig/third_party/zsrtp/zrtp/zrtp/crypto/openssl/hmac384.cpp
++++ pjsip/third_party/zsrtp/zrtp/zrtp/crypto/openssl/hmac384.cpp
+@@ -32,14 +32,32 @@
+                 uint8_t* mac, uint32_t* mac_length)
+ {
+     unsigned int tmp;
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+     HMAC_CTX ctx = {};
+     HMAC_CTX_init( &ctx );
+     HMAC_Init_ex( &ctx, key, static_cast<int>(key_length), EVP_sha384(), nullptr );
+
++#else
++    HMAC_CTX * ctx;
++    ctx = HMAC_CTX_new();
++    HMAC_Init_ex( ctx, key, static_cast<int>(key_length), EVP_sha384(), nullptr );
++#endif
+     for (size_t i = 0, size = data.size(); i < size; i++) {
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+         HMAC_Update(&ctx, data[i], dataLength[i]);
++#else
++        HMAC_Update( ctx, data[i], dataLength[i]);
++#endif
+     }
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+     HMAC_Final( &ctx, mac, &tmp);
++#else
++    HMAC_Final( ctx, mac, &tmp);
++#endif
+     *mac_length = tmp;
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+     HMAC_CTX_cleanup( &ctx );
++#else
++    HMAC_CTX_free( ctx );
++#endif
+ }
+--- pjsip_orig/third_party/zsrtp/zrtp/zrtp/crypto/openssl/zrtpDH.cpp
++++ pjsip/third_party/zsrtp/zrtp/zrtp/crypto/openssl/zrtpDH.cpp
+@@ -201,18 +201,41 @@ ZrtpDH::ZrtpDH(const char* type) {
+     case DH3K:
+         ctx = static_cast<void*>(DH_new());
+         tmpCtx = static_cast<DH*>(ctx);
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+         tmpCtx->g = BN_new();
+         BN_set_word(tmpCtx->g, DH_GENERATOR_2);
++#else
++        {
++            BIGNUM* g = BN_new();
++            BN_set_word(g, DH_GENERATOR_2);
++#endif
+ 
+         if (pkType == DH2K) {
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+             tmpCtx->p = BN_dup(bnP2048);
++#else
++            DH_set0_pqg(tmpCtx, BN_dup(bnP2048), nullptr, g);
++#endif
+             RAND_bytes(random, 32);
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+             tmpCtx->priv_key = BN_bin2bn(random, 32, nullptr);
++#else
++            DH_set0_key(tmpCtx, NULL, BN_bin2bn(random, 32, nullptr));
++#endif
+         }
+         else if (pkType == DH3K) {
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+             tmpCtx->p = BN_dup(bnP3072);
++#else
++            DH_set0_pqg(tmpCtx, BN_dup(bnP3072), nullptr, g);
++#endif
+             RAND_bytes(random, 64);
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+             tmpCtx->priv_key = BN_bin2bn(random, 32, nullptr);
++#else
++            DH_set0_key(tmpCtx, NULL, BN_bin2bn(random, 32, nullptr));
++            }
++#endif
+         }
+         break;
+ 
+@@ -252,11 +275,18 @@ int32_t ZrtpDH::computeSecretKey(uint8_t *pubKeyBytes, uint8_t *secret) {
+     if (pkType == DH2K || pkType == DH3K) {
+         auto* tmpCtx = static_cast<DH*>(ctx);
+ 
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+         if (tmpCtx->pub_key != nullptr) {
+             BN_free(tmpCtx->pub_key);
+         }
+         tmpCtx->pub_key = BN_bin2bn(pubKeyBytes, getDhSize(), nullptr);
+         return DH_compute_key(secret, tmpCtx->pub_key, tmpCtx);
++#else
++        DH_set0_key(tmpCtx, BN_bin2bn(pubKeyBytes, getDhSize(), NULL), NULL);
++        BIGNUM* pub_key;
++        DH_get0_key(tmpCtx, const_cast<const BIGNUM**>(&pub_key), NULL);
++        return DH_compute_key(secret, pub_key, tmpCtx);
++#endif
+     }
+     if (pkType == EC25 || pkType == EC38) {
+         uint8_t buffer[200];
+@@ -304,8 +334,15 @@ int32_t ZrtpDH::getDhSize() const
+ 
+ int32_t ZrtpDH::getPubKeySize() const
+ {
+-    if (pkType == DH2K || pkType == DH3K)
+-        return BN_num_bytes(static_cast<DH*>(ctx)->pub_key);
++	if (pkType == DH2K || pkType == DH3K) {
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
++		return BN_num_bytes(static_cast<DH*>(ctx)->pub_key);
++#else
++		BIGNUM* pub_key;
++		DH_get0_key(static_cast<DH*>(ctx), const_cast<const BIGNUM**>(&pub_key), NULL);
++		return BN_num_bytes(pub_key);
++#endif
++	}
+ 
+     if (pkType == EC25 || pkType == EC38)
+         return EC_POINT_point2oct(EC_KEY_get0_group(static_cast<EC_KEY*>(ctx)),
+@@ -324,7 +361,13 @@ int32_t ZrtpDH::getPubKeyBytes(uint8_t *buf) const
+         if (prepend > 0) {
+             memset(buf, 0, prepend);
+         }
++#if OPENSSL_VERSION_NUMBER < 0x10100000L
+         return BN_bn2bin(static_cast<DH*>(ctx)->pub_key, buf + prepend);
++#else
++		BIGNUM* pub_key;
++		DH_get0_key(static_cast<DH*>(ctx), const_cast<const BIGNUM**>(&pub_key), NULL);
++		return BN_bn2bin(pub_key, buf + prepend);
++#endif
+     }
+     if (pkType == EC25 || pkType == EC38) {
+         uint8_t buffer[200];
+--- pjsip/third_party/build/zsrtp/Makefile	2021-02-18 22:53:28.796756816 +0100
++++ pjsip/third_party/build/zsrtp/Makefile	2021-02-06 16:30:32.687434185 +0100
+@@ -1,5 +1,6 @@
+ include ../../../build.mak
+ include ../../../build/common.mak
++include ../os-$(OS_NAME).mak
+ 
+ export LIBDIR := ../../lib
+ 
+@@ -5,8 +6,14 @@
+
+ RULES_MAK := $(PJDIR)/build/rules.mak
+ 
+-export ZSRTP_LIB := ../../lib/libzsrtp-$(TARGET_NAME)$(LIBEXT)
++export ZSRTP_LIB := libzsrtp-$(TARGET_NAME)$(LIBEXT)
+ 
++ifeq ($(PJ_SHARED_LIBRARIES),)
++else
++export ZSRTP_SONAME := libzsrtp.$(SHLIB_SUFFIX)
++export ZSRTP_SHLIB := $(ZSRTP_SONAME).$(PJ_VERSION_MAJOR)
++endif
++
+ ###############################################################################
+ # Gather all flags.
+ #
+@@ -22,7 +29,7 @@
+ 		   $(CC_CFLAGS) $(OS_CFLAGS) $(HOST_CFLAGS) $(M_CFLAGS) \
+ 		   $(CFLAGS)  -fno-strict-aliasing
+ export _CXXFLAGS:= $(_CFLAGS) $(CC_CXXFLAGS) $(OS_CXXFLAGS) $(M_CXXFLAGS) \
+-		   $(HOST_CXXFLAGS) $(CXXFLAGS)
++		   $(HOST_CXXFLAGS) $(CXXFLAGS) -std=c++11
+ export _LDFLAGS := $(CC_LDFLAGS) $(OS_LDFLAGS) $(M_LDFLAGS) $(HOST_LDFLAGS) \
+ 		   $(LDFLAGS) -lsqlite3 -lstdc++
+ 
+@@ -78,6 +85,7 @@
+           zrtp/zrtp/ZrtpTextData.o \
+           zrtp/zrtp/ZrtpConfigure.o \
+           zrtp/zrtp/ZrtpCWrapper.o \
++          zrtp/zrtp/EmojiBase32.o \
+           zrtp/zrtp/Base32.o \
+           zrtp/zrtp/zrtpB64Encode.o \
+           zrtp/zrtp/zrtpB64Decode.o
+@@ -92,6 +100,7 @@
+ export ZSRTP_OBJS = $(zrtpobj) $(cryptobj) $(srtpobj) $(common)
+ export ZSRTP_CFLAGS = $(_CFLAGS)
+ export ZSRTP_CXXFLAGS = $(_CXXFLAGS)
++export ZSRTP_LDFLAGS = $(PJLIB_LDLIB) $(_LDFLAGS)
+ 
+ 
+ export CC_OUT CC AR RANLIB HOST_MV HOST_RM HOST_RMDIR HOST_MKDIR OBJEXT LD LDOUT
+@@ -100,7 +109,7 @@
+ #
+ # $(TARGET) is defined in os-$(OS_NAME).mak file in current directory.
+ #
+-TARGETS := libzsrtp
++TARGETS := $(ZSRTP_LIB) $(ZSRTP_SONAME)
+ 
+ all: $(TARGETS)
+ 
+@@ -112,8 +120,16 @@
+ 
+ .PHONY: dep depend libzsrtp clean realclean distclean
+ 
+-libzsrtp:
+-	$(MAKE) -f $(RULES_MAK) APP=ZSRTP app=libzsrtp $(ZSRTP_LIB)
++.PHONY: $(TARGETS)
++.PHONY: $(ZSRTP_LIB) $(ZSRTP_SONAME)
++
++libzsrtp: $(ZSRTP_LIB)
++$(ZSRTP_SONAME): $(ZSRTP_LIB)
++$(ZSRTP_LIB) $(ZSRTP_SONAME):
++	$(MAKE) -f $(RULES_MAK) APP=ZSRTP app=libzsrtp $(subst /,$(HOST_PSEP),$(LIBDIR)/$@)
++
++#$(MAKE) -f $(RULES_MAK) APP=ZSRTP app=libzsrtp $(ZSRTP_LIB)
++
+ 
+ clean print_lib:
+ 	$(MAKE) -f $(RULES_MAK) APP=ZSRTP app=libzsrtp $@
+--- pjsip_orig/third_party/zsrtp/zrtp/zrtp/ZRtp.cpp
++++ pjsip/third_party/zsrtp/zrtp/zrtp/ZRtp.cpp
+@@ -1284,7 +1291,7 @@
+     // - if not found 2 values and more data available try next value
+     // - terminate loop if 2 values found or data exhausted
+     for (int32_t i = 0; i < SHA256_DIGEST_LENGTH - 4 && found < 2; i++) {
+-        alignmentUnion data {0};
++        alignmentUnion data = {0};
+         data.bytes[0] = sasHash[i];
+         data.bytes[1] = sasHash[i+1];
+         data.bytes[2] = sasHash[i+2];
+--- pjsip/third_party/zsrtp/zrtp/zrtp/libzrtpcpp/ZrtpCWrapper.h	2021-02-24 06:47:20.854938875 +0100
++++ pjsip/third_party/zsrtp/zrtp/zrtp/libzrtpcpp/ZrtpCWrapper.h	2021-02-04 11:09:10.732191188 +0100
+@@ -827,6 +829,29 @@
+     char* zrtp_getPeerHelloHash(ZrtpContext* zrtpContext);
+ 
+     /**
++     * Get the peer's previously associated name.
++     *
++     * @param zrtpContext
++     *    Pointer to the opaque ZrtpContext structure.
++     * @return
++     *    a heap allocated char array that contains the name.
++     *    If ZRTP was not started or there was no name set the method
++     *    returns NULL. The user is responsible for freeing the returned
++     *    memory.
++     */
++    char* zrtp_getPeerName(ZrtpContext* zrtpContext);
++
++    /**
++     * Associate a name with the peer.
++     *
++     * @param zrtpContext
++     *    Pointer to the opaque ZrtpContext structure.
++     * @param name
++     *    Char array containing the name to be associated.
++     */
++    void zrtp_putPeerName(ZrtpContext* zrtpContext, const char* name);
++
++    /**
+      * Get Multi-stream parameters.
+      *
+      * Use this method to get the Multi-stream parameters that were computed
+--- pjsip/third_party/zsrtp/zrtp/zrtp/ZrtpCWrapper.cpp	2021-02-24 06:47:20.850938760 +0100
++++ pjsip/third_party/zsrtp/zrtp/zrtp/ZrtpCWrapper.cpp	2021-02-04 11:09:10.704190413 +0100
+@@ -191,6 +194,42 @@
+     return retval;
+ }
+ 
++char* zrtp_getPeerName(ZrtpContext* zrtpContext) {
++    uint8_t peerZid[IDENTIFIER_LEN];
++    std::string ret;
++
++    if (zrtpContext && zrtpContext->zrtpEngine) {
++        if (!zrtpContext->zrtpEngine->getPeerZid(peerZid))
++            return NULL;
++        if (!getZidCacheInstance()->getPeerName(peerZid, &ret))
++            return NULL;
++    } else {
++        return NULL;
++    }
++
++    if (ret.size() == 0)
++        return NULL;
++
++    char* retval = (char*)malloc(ret.size()+1);
++    strcpy(retval, ret.c_str());
++    return retval;
++}
++
++void zrtp_putPeerName(ZrtpContext* zrtpContext, const char* name) {
++    uint8_t peerZid[IDENTIFIER_LEN];
++    std::string ret;
++
++    if (!name)
++        return;
++
++    if (zrtpContext && zrtpContext->zrtpEngine)
++        if (!zrtpContext->zrtpEngine->getPeerZid(peerZid))
++            return;
++
++        std::string str(name);
++        getZidCacheInstance()->putPeerName(peerZid, str);
++}
++
+ char* zrtp_getMultiStrParams(ZrtpContext* zrtpContext, int32_t *length) {
+     std::string ret;
+ 

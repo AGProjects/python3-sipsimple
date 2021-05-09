@@ -3,6 +3,8 @@ if [ -f dist ]; then
     rm -r dist
 fi
 
+./get_dependencies.sh
+
 sudo apt install equivs
 sudo mk-build-deps --install debian/control
 
@@ -18,5 +20,6 @@ cd python3-sipsimple-?.?.?
 
 debuild --no-sign
 
-ls
+cd ..
 
+ls

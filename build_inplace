@@ -1,7 +1,6 @@
 #!/bin/sh
 
-chmod +x extract_pjsip.sh
-./extract_pjsip.sh
+./get_dependencies.sh
 
 chmod +x deps/pjsip/configure
 chmod +x deps/pjsip/aconfigure

@@ -12,6 +12,8 @@ SIP SIMPLE SDK depends upon the following third party C sources:
 - ZRTP tag 6b3cd8e6783642292bad0c21e3e5e5ce45ff3e03
   https://github.com/wernerd/ZRTPCPP.git
 
+Fetch and patch the dependencies using get_dependencies.sh script
+
 Python dependencies available from AG Projects repositories:
 
  * python3-application      http://download.ag-projects.com/SipSimpleSDK/Python3/ 

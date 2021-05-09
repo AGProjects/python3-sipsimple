@@ -1,4 +1,0 @@
- * Opus codec not working
- * Allow build without video support --disable-video
- * Mac compilation problem
- * Test Windows build
