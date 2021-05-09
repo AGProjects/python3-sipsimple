@@ -45,6 +45,7 @@ General
  * Non-blocking asynchronous engine
  * Built-in configuration framework
  * TLS Security for signaling (SIP) and media (MSRP, XCAP)
+ * TLS server name extention
  * Support for multiple SIP accounts
  * Multiple Media Types per Session (e.g. Video, Audio and IM)
  * Failover support for DNS lookups, SIP and MSRP routing
