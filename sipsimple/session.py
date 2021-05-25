@@ -1090,7 +1090,7 @@ class Session(object):
             route_header = RouteHeader(self.route.uri)
             contact_header = ContactHeader(contact_uri)
             if is_focus:
-                contact_header.parameters['isfocus'] = None
+                contact_header.parameters[b'isfocus'] = None
             if self.transfer_info is not None:
                 if self.transfer_info.referred_by is not None:
                     extra_headers.append(Header('Referred-By', self.transfer_info.referred_by))
@@ -1381,7 +1381,7 @@ class Session(object):
             else:
                 contact_header.uri = local_contact_uri
             if is_focus:
-                contact_header.parameters['isfocus'] = None
+                contact_header.parameters[b'isfocus'] = None
             self._invitation.send_response(200, contact_header=contact_header, sdp=local_sdp, extra_headers=extra_headers)
             notification_center.post_notification('SIPSessionWillStart', sender=self)
             # Local and remote SDPs will be set after the 200 OK is sent
