@@ -427,6 +427,7 @@ class ChatStream(MSRPStreamBase):
                     message.timestamp = ISOTimestamp.now()
                 if message.sender is None:
                     message.sender = self.remote_identity
+
                 private = self.session.remote_focus and len(message.recipients) == 1 and message.recipients[0] != self.remote_identity
         else:
             payload = SimplePayload.decode(data, content_type)
@@ -644,9 +645,17 @@ class ChatIdentity(object):
 
     def __eq__(self, other):
         if isinstance(other, ChatIdentity):
-            return self.uri.user == other.uri.user and self.uri.host == other.uri.host
+            left_user = self.uri.user.decode() if isinstance(self.uri.user, bytes) else self.uri.user
+            right_user = other.uri.user.decode() if isinstance(other.uri.user, bytes) else other.uri.user
+            left_host = self.uri.host.decode() if isinstance(self.uri.host, bytes) else self.uri.host
+            right_host = other.uri.host.decode() if isinstance(other.uri.host, bytes) else other.uri.host
+            return left_user == right_user and left_host == right_host
         elif isinstance(other, BaseSIPURI):
-            return self.uri.user == other.user and self.uri.host == other.host
+            left_user = self.uri.user.decode() if isinstance(self.uri.user, bytes) else self.uri.user
+            right_user = other.user.decode() if isinstance(other.user, bytes) else other.user
+            left_host = self.uri.host.decode() if isinstance(self.uri.host, bytes) else self.uri.host
+            right_host = other.host.decode() if isinstance(other.host, bytes) else other.host
+            return left_user == right_user and left_host == right_host
         elif isinstance(other, str):
             try:
                 other_uri = SIPURI.parse(other)
@@ -671,6 +680,7 @@ class ChatIdentity(object):
 
     @classmethod
     def parse(cls, value):
+        value = value.decode() if isinstance(value, bytes) else value
         match = cls._format_re.match(value)
         if match is None:
             raise ValueError('Cannot parse identity value: %r' % value)
