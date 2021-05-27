@@ -316,7 +316,7 @@ class ChatStream(MSRPStreamBase):
         if remote_stream.formats != [b'*']:
             raise InvalidStreamError("wrong format list specified")
         stream = cls()
-        stream.remote_role = remote_stream.attributes.getfirst('setup', 'active')
+        stream.remote_role = remote_stream.attributes.getfirst(b'setup', b'active')
         
         if remote_stream.direction != b'sendrecv':
             raise InvalidStreamError("Unsupported direction for chat stream: %s" % remote_stream.direction)
@@ -353,7 +353,9 @@ class ChatStream(MSRPStreamBase):
     def chatroom_capabilities(self):
         try:
             if self.cpim_enabled and self.session.remote_focus:
-                return ' '.join(self.remote_media.attributes.getall('chatroom')).split()
+                chatroom = self.remote_media.attributes.getfirst(b'chatroom')
+                chatroom_caps = chatroom.decode().split() if chatroom else []
+                return chatroom_caps
         except AttributeError:
             pass
         return []
