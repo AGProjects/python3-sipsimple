@@ -9,6 +9,8 @@ import codecs
 import os
 import random
 import re
+from email import charset as _charset
+Charset = _charset.Charset
 
 from application.python.descriptor import WriteOnceAttribute
 from application.notification import IObserver, NotificationCenter, NotificationData
@@ -41,6 +43,30 @@ from sipsimple.util import MultilingualText, ISOTimestamp
 
 __all__ = ['ChatStream', 'ChatStreamError', 'ChatIdentity', 'CPIMPayload', 'CPIMHeader', 'CPIMNamespace', 'CPIMParserError', 'OTRState', 'SMPStatus']
 
+
+class ChatMimeMessage(EmailMessage):
+    def set_charset(self, charset):
+        # avoid automatic adding of Content-Transfer-Encoding header and conversion to base64
+        # TODO: it seems impossible to get rid of the header itself though, is deep inside email.Generator._write
+
+        if charset is None:
+            self.del_param('charset')
+            self._charset = None
+            return
+
+        if not isinstance(charset, Charset):
+            charset = Charset(charset)
+
+        self._charset = charset
+
+        if 'MIME-Version' not in self:
+            self.add_header('MIME-Version', '1.0')
+
+        if 'Content-Type' not in self:
+            self.add_header('Content-Type', 'text/plain', charset=charset.get_output_charset())
+        else:
+            self.set_param('charset', charset.get_output_charset())
+    
 
 class OTRTrustedPeer(object):
     fingerprint = WriteOnceAttribute()  # in order to be hashable this needs to be immutable
@@ -681,6 +707,7 @@ class ChatIdentity(object):
     @classmethod
     def parse(cls, value):
         value = value.decode() if isinstance(value, bytes) else value
+        
         match = cls._format_re.match(value)
         if match is None:
             raise ValueError('Cannot parse identity value: %r' % value)
@@ -789,9 +816,10 @@ class CPIMPayload(object):
 
         headers = '\r\n'.join(header_list)
 
-        mime_message = EmailMessage()
+        mime_message = ChatMimeMessage()
         mime_message.set_payload(self.content)
         mime_message.set_type(self.content_type)
+
         if self.charset is not None:
             mime_message.set_param('charset', self.charset)
 
@@ -827,7 +855,8 @@ class CPIMPayload(object):
                     if name == 'From':
                         sender = ChatIdentity.parse(value)
                     elif name == 'To':
-                        recipients.append(ChatIdentity.parse(value))
+                        to = ChatIdentity.parse(value);
+                        recipients.append(to)
                     elif name == 'cc':
                         courtesy_recipients.append(ChatIdentity.parse(value))
                     elif name == 'Subject':
@@ -861,6 +890,7 @@ class CPIMPayload(object):
 
         mime_message = EmailParser().parsestr(body)
         content_type = mime_message.get_content_type()
+        
         if content_type is None:
             raise CPIMParserError("CPIM message missing Content-Type MIME header")
         content = mime_message.get_payload()
