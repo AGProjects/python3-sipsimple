@@ -1,3 +1,17 @@
+python3-sipsimple (5.0.1) unstable; urgency=medium
+
+  * Fixed encoding CPIM payload, avoid automatic conversion to base64
+  * Fixed comparing ChatIdentity objects
+  * Fixed getting chatroom capabilities
+  * Fixed handling isfocus parameter
+  * Update TLS features
+  * Update supported codecs
+  * Refactor initial pjsip setup
+  * Fixed TLS cert name in PJSIP logging
+  * Update authors
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Tue, 01 Jun 2021 19:35:50 +0200
+
 python3-sipsimple (5.0.0) unstable; urgency=medium
 
   * Updated to PJSIP 2.10
