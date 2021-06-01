@@ -177,11 +177,18 @@ class PJSIP_build_ext(build_ext):
         ffmpeg_path = env.get("SIPSIMPLE_FFMPEG_PATH", None)
         if ffmpeg_path is not None:
             cmd.append("--with-ffmpeg=%s" % os.path.abspath(os.path.expanduser(ffmpeg_path)))
+
         libvpx_path = env.get("SIPSIMPLE_LIBVPX_PATH", None)
         if libvpx_path is not None:
             cmd.append("--with-vpx=%s" % os.path.abspath(os.path.expanduser(libvpx_path)))
+
+        opencore_amr_path = env.get("SIPSIMPLE_OPENAMR_PATH", None)
+        if opencore_amr_path is not None:
+            cmd.append("--with-opencore-amr=%s" % os.path.abspath(os.path.expanduser(opencore_amr_path)))
+
         if self.verbose:
             log.info(" ".join(cmd))
+
         self.distutils_exec_process(cmd, silent=not self.verbose, cwd=self.build_dir, env=env)
         if "#define PJ_HAS_SSL_SOCK 1\n" not in open(os.path.join(self.build_dir, "pjlib", "include", "pj", "compat", "os_auto.h")).readlines():
             os.remove(os.path.join(self.build_dir, "build.mak"))
