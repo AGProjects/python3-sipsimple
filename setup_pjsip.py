@@ -182,9 +182,13 @@ class PJSIP_build_ext(build_ext):
         if libvpx_path is not None:
             cmd.append("--with-vpx=%s" % os.path.abspath(os.path.expanduser(libvpx_path)))
 
-        opencore_amr_path = env.get("SIPSIMPLE_OPENAMR_PATH", None)
-        if opencore_amr_path is not None:
-            cmd.append("--with-opencore-amr=%s" % os.path.abspath(os.path.expanduser(opencore_amr_path)))
+        amr_nb_path = env.get("SIPSIMPLE_AMR_NB_PATH", None)
+        if amr_nb_path is not None:
+            cmd.append("--with-opencore-amr=%s" % os.path.abspath(os.path.expanduser(amr_nb_path)))
+
+        amr_wb_path = env.get("SIPSIMPLE_AMR_WB_PATH", None)
+        if amr_wb_path is not None:
+            cmd.append("--with-opencore-amrwbenc=%s" % os.path.abspath(os.path.expanduser(amr_wb_path)))
 
         if self.verbose:
             log.info(" ".join(cmd))
