@@ -8,7 +8,7 @@ cdef class Subscription:
     #public methods
 
     def __cinit__(self, *args, **kwargs):
-        self.state = b"NULL"
+        self.state = "NULL"
         pj_timer_entry_init(&self._timeout_timer, 0, <void *> self, _Subscription_cb_timer)
         self._timeout_timer_active = 0
         pj_timer_entry_init(&self._refresh_timer, 1, <void *> self, _Subscription_cb_timer)
@@ -28,7 +28,7 @@ cdef class Subscription:
         cdef pjsip_cred_info *cred_info
         cdef PJSIPUA ua = _get_ua()
         cdef int status
-        if self._obj != NULL or self.state != b"NULL":
+        if self._obj != NULL or self.state != "NULL":
             raise SIPCoreError("Subscription.__init__() was already called")
         if refresh <= 0:
             raise ValueError("refresh argument needs to be a non-negative integer")
@@ -113,13 +113,13 @@ cdef class Subscription:
             self._dlg = NULL
 
     def subscribe(self, list extra_headers not None=list(), object content_type=None, object body=None, object timeout=None):
-        cdef object prev_state = self.state
+        cdef str prev_state = self.state
         cdef PJSIPUA ua = self._get_ua()
 
         with nogil:
             pjsip_dlg_inc_lock(self._dlg)
         try:
-            if self.state == b"TERMINATED":
+            if self.state == "TERMINATED":
                 raise SIPCoreError('This method may not be called in the "TERMINATED" state')
             if (content_type is not None and body is None) or (content_type is None and body is not None):
                 raise ValueError("Both or none of content_type and body arguments need to be specified")
@@ -137,7 +137,7 @@ cdef class Subscription:
             self.body = body
             self._send_subscribe(ua, self.refresh, &self._subscribe_timeout, self.extra_headers, content_type, body)
             self._cancel_timers(ua, 0, 1)
-            if prev_state == b"NULL":
+            if prev_state == "NULL":
                 _add_event("SIPSubscriptionWillStart", dict(obj=self))
         finally:
             with nogil:
@@ -150,9 +150,9 @@ cdef class Subscription:
         with nogil:
             pjsip_dlg_inc_lock(self._dlg)
         try:
-            if self.state == b"TERMINATED":
+            if self.state == "TERMINATED":
                 return
-            if self.state == b"NULL":
+            if self.state == "NULL":
                 raise SIPCoreError('This method may not be called in the "NULL" state')
             if timeout is not None:
                 if timeout <= 0:
@@ -187,7 +187,7 @@ cdef class Subscription:
             self._obj = NULL
             self._timeout_timer_active = 0
             self._refresh_timer_active = 0
-            self.state = b"TERMINATED"
+            self.state = "TERMINATED"
             return None
         else:
             return ua
@@ -235,14 +235,14 @@ cdef class Subscription:
 
     # callback methods
 
-    cdef int _cb_state(self, PJSIPUA ua, object state, int code, object reason, dict headers) except -1:
+    cdef int _cb_state(self, PJSIPUA ua, str state, int code, object reason, dict headers) except -1:
         # PJSIP holds the dialog lock when this callback is entered
-        cdef object prev_state = self.state
+        cdef str prev_state = self.state
         cdef int expires
         cdef int status
         cdef pj_time_val end_timeout
         self.state = state
-        if state == b"ACCEPTED" and prev_state == b"SENT":
+        if state == "ACCEPTED" and prev_state == "SENT":
             try:
                 contact_header = headers['Contact'][0]
             except LookupError:
@@ -270,7 +270,7 @@ cdef class Subscription:
                         with nogil:
                             pjsip_evsub_terminate(self._obj, 1)
                 return 0
-        elif state == b"TERMINATED":
+        elif state == "TERMINATED":
             pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
             self._cancel_timers(ua, 1, 1)
             self._obj = NULL
@@ -283,8 +283,9 @@ cdef class Subscription:
                 else:
                     subscription_state = headers.get('Subscription-State')
                     if subscription_state is not None and subscription_state.state == 'terminated':
-                        reason = subscription_state.reason
-                    _add_event("SIPSubscriptionDidFail", dict(obj=self, code=code, reason=reason, min_expires=min_expires))
+                        _add_event("SIPSubscriptionDidEnd", dict(obj=self))
+                    else:
+                        _add_event("SIPSubscriptionDidFail", dict(obj=self, code=code, reason=reason, min_expires=min_expires))
         if prev_state != state:
             _add_event("SIPSubscriptionChangedState", dict(obj=self, prev_state=prev_state, state=state))
 
@@ -296,7 +297,7 @@ cdef class Subscription:
         cdef pj_time_val refresh
         _pjsip_msg_to_dict(rdata.msg_info.msg, event_dict)
         self.to_header = FrozenToHeader_create(rdata.msg_info.to_hdr)
-        if self.state != b"TERMINATED":
+        if self.state != "TERMINATED":
             try:
                 contact_header = event_dict["headers"]["Contact"][0]
             except LookupError:
@@ -307,7 +308,7 @@ cdef class Subscription:
                 expires = self._expires
             if expires == 0:
                 return 0
-        if self.state != b"TERMINATED" and not self._want_end:
+        if self.state != "TERMINATED" and not self._want_end:
             self._cancel_timers(ua, 1, 0)
             refresh.sec = max(1, expires - self.expire_warning_time, expires/2)
             refresh.msec = 0
@@ -404,7 +405,7 @@ cdef class IncomingSubscription:
                 pjsip_dlg_dec_session(self._dlg, &ua._module)
             self._dlg = NULL
 
-    cdef int init(self, PJSIPUA ua, pjsip_rx_data *rdata, str event) except -1:
+    cdef int init(self, PJSIPUA ua, pjsip_rx_data *rdata, object event) except -1:
         global _incoming_subs_cb
         cdef int status
         cdef str transport
@@ -420,12 +421,12 @@ cdef class IncomingSubscription:
             self._expires = 3600
         else:
             self._expires = min(expires_header.ivalue, 3600)
-        self._set_state("incoming")
+        self._set_state("INCOMING")
         self.event = event
         self.peer_address = EndpointAddress(rdata.pkt_info.src_name, rdata.pkt_info.src_port)
         event_dict = dict(obj=self)
         _pjsip_msg_to_dict(rdata.msg_info.msg, event_dict)
-        transport = rdata.tp_info.transport.type_name.lower()
+        transport = rdata.tp_info.transport.type_name.decode().lower()
         request_uri = event_dict["request_uri"]
         if _is_valid_ip(pj_AF_INET(), request_uri.host.encode()):
             contact_header = FrozenContactHeader(request_uri)
@@ -474,8 +475,8 @@ cdef class IncomingSubscription:
         with nogil:
             pjsip_dlg_inc_lock(self._dlg)
         try:
-            if self.state != "incoming":
-                raise SIPCoreInvalidStateError('Can only reject an incoming SUBSCRIBE in the "incoming" state, '+
+            if self.state != "INCOMING":
+                raise SIPCoreInvalidStateError('Can only reject an incoming SUBSCRIBE in the "INCOMING" state, '+
                                         'object is currently in the "%s" state' % self.state)
             if not (300 <= code < 700):
                 raise ValueError("Invalid negative SIP response code: %d" % code)
@@ -484,7 +485,7 @@ cdef class IncomingSubscription:
             with nogil:
                 pjsip_evsub_terminate(self._obj, 0)
             self._obj = NULL
-            self._set_state("terminated")
+            self._set_state("TERMINATED")
             _add_event("SIPIncomingSubscriptionDidEnd", dict(obj=self))
         finally:
             with nogil:
@@ -496,11 +497,11 @@ cdef class IncomingSubscription:
         with nogil:
             pjsip_dlg_inc_lock(self._dlg)
         try:
-            if self.state != "incoming":
-                raise SIPCoreInvalidStateError('Can only accept an incoming SUBSCRIBE as pending in the "incoming" state, '+
+            if self.state != "INCOMING":
+                raise SIPCoreInvalidStateError('Can only accept an incoming SUBSCRIBE as pending in the "INCOMING" state, '+
                                         'object is currently in the "%s" state' % self.state)
             self._send_initial_response(202)
-            self._set_state("pending")
+            self._set_state("PENDING")
             if self._expires > 0:
                 self._send_notify()
             else:
@@ -510,7 +511,7 @@ cdef class IncomingSubscription:
             with nogil:
                 pjsip_dlg_dec_lock(self._dlg)
 
-    def accept(self, str content_type=None, str content=None):
+    def accept(self, str content_type=None, object content=None):
         global _re_content_type
         cdef object content_type_match
         cdef PJSIPUA ua = self._get_ua(1)
@@ -518,8 +519,8 @@ cdef class IncomingSubscription:
         with nogil:
             pjsip_dlg_inc_lock(self._dlg)
         try:
-            if self.state not in ("incoming", "pending"):
-                raise SIPCoreInvalidStateError('Can only accept an incoming SUBSCRIBE in the "incoming" or "pending" state, object is currently in the "%s" state' % self.state)
+            if self.state not in ("INCOMING", "PENDING"):
+                raise SIPCoreInvalidStateError('Can only accept an incoming SUBSCRIBE in the "INCOMING" or "PENDING" state, object is currently in the "%s" state' % self.state)
             if (content_type is None and content is not None) or (content_type is not None and content is None):
                 raise ValueError('Either both or neither of the "content_type" and "content" arguments should be specified')
             if content_type is not None:
@@ -528,10 +529,10 @@ cdef class IncomingSubscription:
                     raise ValueError("content_type parameter is not properly formatted")
                 self._content_type = PJSTR(content_type_match.group(1).encode())
                 self._content_subtype = PJSTR(content_type_match.group(2).encode())
-                self._content = PJSTR(content.encode())
-            if self.state == "incoming":
+                self._content = PJSTR(content)
+            if self.state == "INCOMING":
                 self._send_initial_response(200)
-            self._set_state("active")
+            self._set_state("ACTIVE")
             if self._expires > 0:
                 self._send_notify()
             else:
@@ -541,7 +542,7 @@ cdef class IncomingSubscription:
             with nogil:
                 pjsip_dlg_dec_lock(self._dlg)
 
-    def push_content(self, str content_type not None, str content not None):
+    def push_content(self, str content_type not None, object content not None):
         global _re_content_type
         cdef object content_type_match
         cdef PJSIPUA ua = self._get_ua(1)
@@ -549,15 +550,15 @@ cdef class IncomingSubscription:
         with nogil:
             pjsip_dlg_inc_lock(self._dlg)
         try:
-            if self.state != "active":
-                raise SIPCoreInvalidStateError('Can only push the content for a SUBSCRIBE session in the "active" state, '
+            if self.state != "ACTIVE":
+                raise SIPCoreInvalidStateError('Can only push the content for a SUBSCRIBE session in the "ACTIVE" state, '
                                             'object is currently in the "%s" state' % self.state)
             content_type_match = _re_content_type.match(content_type)
             if content_type_match is None:
                 raise ValueError("content_type parameter is not properly formatted")
             self._content_type = PJSTR(content_type_match.group(1).encode())
             self._content_subtype = PJSTR(content_type_match.group(2).encode())
-            self._content = PJSTR(content.encode())
+            self._content = PJSTR(content.encode)
             self._send_notify()
         finally:
             with nogil:
@@ -569,11 +570,11 @@ cdef class IncomingSubscription:
         with nogil:
             pjsip_dlg_inc_lock(self._dlg)
         try:
-            if self.state == "terminated":
+            if self.state == "TERMINATED":
                 return
-            if self.state not in ("pending", "active"):
-                raise SIPCoreInvalidStateError('Can only end an incoming SUBSCRIBE session in the "pending" or '+
-                                        '"active" state, object is currently in the "%s" state' % self.state)
+            if self.state not in ("PENDING", "ACTIVE"):
+                raise SIPCoreInvalidStateError('Can only end an incoming SUBSCRIBE session in the "PENDING" or '+
+                                        '"ACTIVE" state, object is currently in the "%s" state' % self.state)
             self._terminate(ua, reason, 1)
         finally:
             with nogil:
@@ -594,7 +595,7 @@ cdef class IncomingSubscription:
             self._obj = NULL
             self._initial_response = NULL
             self._initial_tsx = NULL
-            self._set_state("terminated")
+            self._set_state("TERMINATED")
             if raise_exception:
                 raise
             else:
@@ -627,7 +628,7 @@ cdef class IncomingSubscription:
                 # Start TIMER_TYPE_UAS_TIMEOUT, which PJSIP doesn't do for the initial SUBSCRIBE
                 pjsip_evsub_set_timer(self._obj, 2, self._expires)
 
-    cdef int _send_notify(self, str reason=None) except -1:
+    cdef int _send_notify(self, object reason=None) except -1:
         cdef pjsip_evsub_state state
         cdef pj_str_t reason_pj
         cdef pj_str_t *reason_p
@@ -635,20 +636,20 @@ cdef class IncomingSubscription:
         cdef int status
 
         reason_p = NULL
-        if self.state == "pending":
+        if self.state == "PENDING":
             state = PJSIP_EVSUB_STATE_PENDING
-        elif self.state == "active":
+        elif self.state == "ACTIVE":
             state = PJSIP_EVSUB_STATE_ACTIVE
         else:
             state = PJSIP_EVSUB_STATE_TERMINATED
             if reason is not None:
-                _str_to_pj_str(reason.encode(), &reason_pj)
+                _str_to_pj_str(reason, &reason_pj)
                 reason_p = &reason_pj
         with nogil:
             status = pjsip_evsub_notify(self._obj, state, NULL, reason_p, &tdata)
         if status != 0:
             raise PJSIPError("Could not create NOTIFY request", status)
-        if self.state == "active" and None not in (self._content_type, self._content_subtype, self._content):
+        if self.state == "ACTIVE" and None not in (self._content_type, self._content_subtype, self._content):
             tdata.msg.body = pjsip_msg_body_create(tdata.pool, &self._content_type.pj_str,
                                                    &self._content_subtype.pj_str, &self._content.pj_str)
         with nogil:
@@ -660,9 +661,9 @@ cdef class IncomingSubscription:
         _add_event("SIPIncomingSubscriptionSentNotify", event_dict)
         return 0
 
-    cdef int _terminate(self, PJSIPUA ua, str reason, int do_cleanup) except -1:
+    cdef int _terminate(self, PJSIPUA ua, object reason, int do_cleanup) except -1:
         cdef int status
-        self._set_state("terminated")
+        self._set_state("TERMINATED")
         try:
             self._send_notify(reason)
         except SIPCoreError:
@@ -700,7 +701,7 @@ cdef class IncomingSubscription:
             self._send_notify()
         except SIPCoreError, e:
             _add_event("SIPIncomingSubscriptionNotifyDidFail", dict(obj=self, code=0, reason=e.args[0]))
-        if self.state == "active":
+        if self.state == "ACTIVE":
             return 200
         else:
             return 202
@@ -762,7 +763,7 @@ cdef class IncomingSubscription:
             event_dict = dict(obj=self)
             _pjsip_msg_to_dict(event.body.tsx_state.src.tdata.msg, event_dict)
             _add_event("SIPIncomingSubscriptionAnsweredSubscribe", event_dict)
-            if self.state == "terminated" and self._obj != NULL:
+            if self.state == "TERMINATED" and self._obj != NULL:
                 pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
                 self._obj = NULL
 
@@ -771,7 +772,7 @@ cdef class IncomingSubscription:
 cdef void _Subscription_cb_state(pjsip_evsub *sub, pjsip_event *event) with gil:
     cdef void *subscription_void
     cdef Subscription subscription
-    cdef object state
+    cdef str state
     cdef int code = 0
     cdef object reason = None
     cdef pjsip_rx_data *rdata = NULL
@@ -785,11 +786,11 @@ cdef void _Subscription_cb_state(pjsip_evsub *sub, pjsip_event *event) with gil:
         if subscription_void == NULL:
             return
         subscription = <object> subscription_void
-        state = pjsip_evsub_get_state_name(sub)
+        state = pjsip_evsub_get_state_name(sub).decode()
         if (event != NULL and event.type == PJSIP_EVENT_TSX_STATE and
             (event.body.tsx_state.tsx.state == PJSIP_TSX_STATE_COMPLETED or
              event.body.tsx_state.tsx.state == PJSIP_TSX_STATE_TERMINATED)):
-            if state == b"TERMINATED":
+            if state == "TERMINATED":
                 if event.body.tsx_state.tsx.role == PJSIP_ROLE_UAC:
                     code = event.body.tsx_state.tsx.status_code
                     reason = _pj_str_to_str(event.body.tsx_state.tsx.status_text)

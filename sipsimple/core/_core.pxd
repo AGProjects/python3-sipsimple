@@ -2192,7 +2192,7 @@ cdef class Subscription(object):
     cdef int _timeout_timer_active
     cdef pj_timer_entry _refresh_timer
     cdef int _refresh_timer_active
-    cdef readonly object state
+    cdef readonly str state
     cdef readonly EndpointAddress peer_address
     cdef readonly FrozenFromHeader from_header
     cdef readonly FrozenToHeader to_header
@@ -2216,7 +2216,7 @@ cdef class Subscription(object):
     cdef int _cancel_timers(self, PJSIPUA ua, int cancel_timeout, int cancel_refresh) except -1
     cdef int _send_subscribe(self, PJSIPUA ua, int expires, pj_time_val *timeout,
                              object extra_headers, object content_type, object body) except -1
-    cdef int _cb_state(self, PJSIPUA ua, object state, int code, object reason, dict headers) except -1
+    cdef int _cb_state(self, PJSIPUA ua, str state, int code, object reason, dict headers) except -1
     cdef int _cb_got_response(self, PJSIPUA ua, pjsip_rx_data *rdata) except -1
     cdef int _cb_notify(self, PJSIPUA ua, pjsip_rx_data *rdata) except -1
     cdef int _cb_timeout_timer(self, PJSIPUA ua)
@@ -2233,17 +2233,17 @@ cdef class IncomingSubscription(object):
     cdef pjsip_transaction *_initial_tsx
     cdef int _expires
     cdef readonly str state
-    cdef readonly str event
+    cdef readonly object event
     cdef readonly str call_id
     cdef readonly EndpointAddress peer_address
 
     # methods
     cdef int _set_state(self, str state) except -1
     cdef PJSIPUA _get_ua(self, int raise_exception)
-    cdef int init(self, PJSIPUA ua, pjsip_rx_data *rdata, str event) except -1
+    cdef int init(self, PJSIPUA ua, pjsip_rx_data *rdata, object event) except -1
     cdef int _send_initial_response(self, int code) except -1
-    cdef int _send_notify(self, str reason=*) except -1
-    cdef int _terminate(self, PJSIPUA ua, str reason, int do_cleanup) except -1
+    cdef int _send_notify(self, object reason=*) except -1
+    cdef int _terminate(self, PJSIPUA ua, object reason, int do_cleanup) except -1
     cdef int _cb_rx_refresh(self, PJSIPUA ua, pjsip_rx_data *rdata) except -1
     cdef int _cb_server_timeout(self, PJSIPUA ua) except -1
     cdef int _cb_tsx(self, PJSIPUA ua, pjsip_event *event) except -1
