@@ -477,7 +477,7 @@ cdef class IncomingReferral:
                 raise PJSIPError("Could not send response", status)
             return 0
         event_dict["refer_to"] = event_dict["headers"].get("Refer-To")
-        transport = rdata.tp_info.transport.type_name.lower()
+        transport = rdata.tp_info.transport.type_name.decode().lower()
         request_uri = event_dict["request_uri"]
         if _is_valid_ip(pj_AF_INET(), request_uri.host):
             self.local_contact_header = FrozenContactHeader(request_uri)
