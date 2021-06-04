@@ -1,6 +1,7 @@
 python3-sipsimple (5.1.0) unstable; urgency=medium
 
-  * Fixed incoming subscriptions
+  * Fixed incoming Subscriptions
+  * Fixed incoming Referrals
 
  -- Adrian Georgescu <ag@ag-ag-projects.com>  Thu, 03 Jun 2021 15:18:48 +0200
 
