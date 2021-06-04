@@ -1153,7 +1153,7 @@ cdef int _cb_trace_rx(pjsip_rx_data *rdata) with gil:
                              source_port=rdata.pkt_info.src_port,
                              destination_ip=_pj_str_to_str(rdata.tp_info.transport.local_name.host),
                              destination_port=rdata.tp_info.transport.local_name.port,
-                             data=_pj_buf_len_to_str(rdata.pkt_info.packet, rdata.pkt_info.len).decode(),
+                             data=_pj_buf_len_to_str(rdata.pkt_info.packet, rdata.pkt_info.len),
                              transport=rdata.tp_info.transport.type_name.decode()))
     except:
         ua._handle_exception(0)
@@ -1173,7 +1173,7 @@ cdef int _cb_trace_tx(pjsip_tx_data *tdata) with gil:
                              source_port=tdata.tp_info.transport.local_name.port,
                              destination_ip=tdata.tp_info.dst_name.decode(),
                              destination_port=tdata.tp_info.dst_port,
-                             data=_pj_buf_len_to_str(tdata.buf.start, tdata.buf.cur - tdata.buf.start).decode(),
+                             data=_pj_buf_len_to_str(tdata.buf.start, tdata.buf.cur - tdata.buf.start),
                              transport=tdata.tp_info.transport.type_name.decode()))
     except:
         ua._handle_exception(0)
