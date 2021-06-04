@@ -457,9 +457,9 @@ cdef class IncomingReferral:
         refer_sub_header = <pjsip_generic_string_hdr *> pjsip_msg_find_hdr_by_name(rdata.msg_info.msg, &_refer_sub_hdr_name.pj_str, NULL);
         if refer_sub_header != NULL and _pj_str_to_str(refer_sub_header.hvalue) == "false":
             self._create_subscription = 0
-        self._set_state("incoming")
+        self._set_state("INCOMING")
         self.peer_address = EndpointAddress(rdata.pkt_info.src_name, rdata.pkt_info.src_port)
-        event_dict = dict(obj=self, prev_state=self.state, state="incoming")
+        event_dict = dict(obj=self, prev_state=self.state, state="INCOMING")
         _pjsip_msg_to_dict(rdata.msg_info.msg, event_dict)
         try:
             self.remote_contact_header = event_dict['headers']['Contact'][0]
@@ -539,18 +539,18 @@ cdef class IncomingReferral:
         with nogil:
             pjsip_dlg_inc_lock(self._dlg)
         try:
-            if self.state != "incoming":
-                raise SIPCoreInvalidStateError('Can only accept an incoming REFER in the "incoming" state, '+
+            if self.state != "INCOMING":
+                raise SIPCoreInvalidStateError('Can only accept an incoming REFER in the "INCOMING" state, '+
                                         'object is currently in the "%s" state' % self.state)
             pjsip_evsub_update_expires(self._obj, duration)
             self._send_initial_response(code)
-            self._set_state("active")
+            self._set_state("ACTIVE")
             if not self._create_subscription:
                 pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
                 with nogil:
                     pjsip_evsub_terminate(self._obj, 0)
                 self._obj = NULL
-                self._set_state("terminated")
+                self._set_state("TERMINATED")
                 _add_event("SIPIncomingReferralDidEnd", dict(obj=self))
             else:
                 self._set_content(100, "Trying")
@@ -565,8 +565,8 @@ cdef class IncomingReferral:
         with nogil:
             pjsip_dlg_inc_lock(self._dlg)
         try:
-            if self.state != "incoming":
-                raise SIPCoreInvalidStateError('Can only reject an incoming REFER in the "incoming" state, '+
+            if self.state != "INCOMING":
+                raise SIPCoreInvalidStateError('Can only reject an incoming REFER in the "INCOMING" state, '+
                                         'object is currently in the "%s" state' % self.state)
             if not (300 <= code < 700):
                 raise ValueError("Invalid negative SIP response code: %d" % code)
@@ -575,7 +575,7 @@ cdef class IncomingReferral:
             with nogil:
                 pjsip_evsub_terminate(self._obj, 0)
             self._obj = NULL
-            self._set_state("terminated")
+            self._set_state("TERMINATED")
             _add_event("SIPIncomingReferralDidEnd", dict(obj=self))
         finally:
             with nogil:
@@ -588,8 +588,8 @@ cdef class IncomingReferral:
         with nogil:
             pjsip_dlg_inc_lock(self._dlg)
         try:
-            if self.state != "active":
-                raise SIPCoreInvalidStateError('Can only send NOTIFY for a REFER session in the "active" state, '
+            if self.state != "ACTIVE":
+                raise SIPCoreInvalidStateError('Can only send NOTIFY for a REFER session in the "ACTIVE" state, '
                                             'object is currently in the "%s" state' % self.state)
             self._set_content(code, status)
             self._send_notify()
@@ -603,11 +603,11 @@ cdef class IncomingReferral:
         with nogil:
             pjsip_dlg_inc_lock(self._dlg)
         try:
-            if self.state == "terminated":
+            if self.state == "TERMINATED":
                 return
-            if self.state not in ("pending", "active"):
-                raise SIPCoreInvalidStateError('Can only end an incoming REFER session in the "pending" or '+
-                                        '"active" state, object is currently in the "%s" state' % self.state)
+            if self.state not in ("PENDING", "ACTIVE"):
+                raise SIPCoreInvalidStateError('Can only end an incoming REFER session in the "PENDING" or '+
+                                        '"ACTIVE" state, object is currently in the "%s" state' % self.state)
             self._set_content(code, status)
             self._terminate(ua, 1)
         finally:
@@ -620,7 +620,7 @@ cdef class IncomingReferral:
             ua = _get_ua()
         except SIPCoreError:
             self._obj = NULL
-            self._set_state("terminated")
+            self._set_state("TERMINATED")
             if raise_exception:
                 raise
             else:
@@ -636,7 +636,7 @@ cdef class IncomingReferral:
             except IndexError:
                 reason = "Unknown"
         content = "SIP/2.0 %d %s\r\n" % (code, reason)
-        self._content = PJSTR(content)
+        self._content = PJSTR(content.encode())
 
     cdef int _set_state(self, str state) except -1:
         cdef str prev_state
@@ -674,9 +674,9 @@ cdef class IncomingReferral:
         cdef PJSTR reason = PJSTR(b"noresource")
 
         reason_p = NULL
-        if self.state == "pending":
+        if self.state == "PENDING":
             state = PJSIP_EVSUB_STATE_PENDING
-        elif self.state == "active":
+        elif self.state == "ACTIVE":
             state = PJSIP_EVSUB_STATE_ACTIVE
         else:
             state = PJSIP_EVSUB_STATE_TERMINATED
@@ -685,7 +685,7 @@ cdef class IncomingReferral:
             status = pjsip_evsub_notify(self._obj, state, NULL, reason_p, &tdata)
         if status != 0:
             raise PJSIPError("Could not create NOTIFY request", status)
-        if self.state in ("active", "terminated"):
+        if self.state in ("ACTIVE", "TERMINATED"):
             tdata.msg.body = pjsip_msg_body_create(tdata.pool, &_content_type.pj_str, &_content_subtype.pj_str, &self._content.pj_str)
             _dict_to_pjsip_param(_sipfrag_version, &tdata.msg.body.content_type.param, tdata.pool)
         with nogil:
@@ -699,7 +699,7 @@ cdef class IncomingReferral:
 
     cdef int _terminate(self, PJSIPUA ua, int do_cleanup) except -1:
         cdef int status
-        self._set_state("terminated")
+        self._set_state("TERMINATED")
         self._send_notify()
         if do_cleanup:
             pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
@@ -732,7 +732,7 @@ cdef class IncomingReferral:
         _add_event("SIPIncomingReferralGotRefreshingSubscribe", event_dict)
         # Last NOTIFY will be resent
         self._send_notify()
-        if self.state == "active":
+        if self.state == "ACTIVE":
             return 200
         else:
             return 202
@@ -797,7 +797,7 @@ cdef class IncomingReferral:
             event_dict = dict(obj=self)
             _pjsip_msg_to_dict(event.body.tsx_state.src.tdata.msg, event_dict)
             _add_event("SIPIncomingReferralAnsweredRefer", event_dict)
-            if self.state == "terminated" and self._obj != NULL:
+            if self.state == "TERMINATED" and self._obj != NULL:
                 pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
                 self._obj = NULL
 
