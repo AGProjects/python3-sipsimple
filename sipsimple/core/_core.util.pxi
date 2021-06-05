@@ -348,8 +348,8 @@ cdef int _add_headers_to_tdata(pjsip_tx_data *tdata, object headers) except -1:
     cdef pj_str_t name_pj, value_pj
     cdef pjsip_hdr *hdr
     for header in headers:
-        hb = header.name.decode() if isinstance(header.name, bytes) else header.name
-        bb = header.body.decode() if isinstance(header.body, bytes) else header.body
+        hb = header.name if isinstance(header.name, bytes) else header.name.encode()
+        bb = header.body if isinstance(header.body, bytes) else header.body.encode()
         _str_to_pj_str(hb, &name_pj)
         _str_to_pj_str(bb, &value_pj)
         hdr = <pjsip_hdr *> pjsip_generic_string_hdr_create(tdata.pool, &name_pj, &value_pj)
