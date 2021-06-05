@@ -7,6 +7,7 @@ __all__ = ['MSRPStreamError', 'MSRPStreamBase']
 
 import traceback
 
+
 from application.notification import NotificationCenter, NotificationData, IObserver
 from application.python import Null
 from application.system import host
@@ -114,6 +115,7 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
         self.greenlet = api.getcurrent()
         notification_center = NotificationCenter()
         notification_center.add_observer(self, sender=self)
+        settings = SIPSimpleSettings()
         try:
             self.session = session
             self.transport = self.session.account.msrp.transport
@@ -124,7 +126,7 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
                     self.msrp_connector = DirectConnector(logger=logger)
                     self.local_role = 'active'
                 else:
-                    if self.transport == 'tls' and None in (self.session.account.tls_credentials.cert, self.session.account.tls_credentials.key):
+                    if self.transport == 'tls' and settings.tls.certificate is None:
                         raise MSRPStreamError("Cannot accept MSRP connection without a TLS certificate")
                     self.msrp_connector = DirectAcceptor(logger=logger)
                     self.local_role = 'passive'
@@ -159,7 +161,7 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
                         self.msrp_connector = DirectConnector(logger=logger, use_sessmatch=True)
                         self.local_role = 'active'
                     else:
-                        if not outgoing and self.transport == 'tls' and None in (self.session.account.tls_credentials.cert, self.session.account.tls_credentials.key):
+                        if not outgoing and self.transport == 'tls' and settings.tls.certificate is None:
                             raise MSRPStreamError("Cannot accept MSRP connection without a TLS certificate")
                         self.msrp_connector = DirectAcceptor(logger=logger, use_sessmatch=True)
                         self.local_role = 'actpass' if outgoing else 'passive'

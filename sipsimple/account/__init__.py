@@ -310,7 +310,7 @@ class Account(SettingsObject):
                 self.ca_list = ca_list
 
         credentials = X509Credentials(certificate, private_key, trusted_cas)
-        credentials.verify_peer = settings.tls.verify_peer
+        credentials.verify_server = settings.tls.verify_server
         return credentials
 
     @property
@@ -678,7 +678,7 @@ class BonjourAccount(SettingsObject):
             private_key = None
 
         credentials = X509Credentials(certificate, private_key, [])
-        credentials.verify_peer = False
+        credentials.verify_server = False
         return credentials
 
     @property
