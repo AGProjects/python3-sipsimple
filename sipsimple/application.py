@@ -179,10 +179,10 @@ class SIPApplication(object, metaclass=Singleton):
         if account is not None:
             try:
                 self.engine.set_tls_options(port=settings.sip.tls_port,
-                                            verify_server=account.tls.verify_server,
+                                            verify_server=settings.tls.verify_server,
                                             ca_file=settings.tls.ca_list.normalized if settings.tls.ca_list else None,
-                                            cert_file=account.tls.certificate.normalized if account.tls.certificate else None,
-                                            privkey_file=account.tls.certificate.normalized if account.tls.certificate else None)
+                                            cert_file=settings.tls.certificate.normalized if settings.tls.certificate else None,
+                                            privkey_file=settings.tls.certificate.normalized if settings.tls.certificate else None)
             except Exception as e:
                 notification_center = NotificationCenter()
                 notification_center.post_notification('SIPApplicationFailedToStartTLS', sender=self, data=NotificationData(error=e))

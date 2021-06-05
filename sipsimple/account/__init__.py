@@ -89,12 +89,6 @@ class PresenceSettings(SettingsGroup):
     enabled = Setting(type=bool, default=False)
 
 
-class TLSSettings(SettingsGroup):
-    ca_list = Setting(type=Path, default=None, nillable=True)
-    certificate = Setting(type=Path, default=None, nillable=True)
-    verify_server = Setting(type=bool, default=False)
-
-
 class MSRPSettings(SettingsGroup):
     transport = Setting(type=MSRPTransport, default='tls')
     connection_model = Setting(type=MSRPConnectionModel, default='relay')
@@ -141,7 +135,6 @@ class Account(SettingsObject):
     msrp = MSRPSettings
     presence = PresenceSettings
     xcap = XCAPSettings
-    tls = TLSSettings
 
     def __new__(cls, id):
         #with AccountManager.load.lock:
@@ -270,7 +263,7 @@ class Account(SettingsObject):
         # however this is not a time consuming operation (~ 3000 req/sec). -Luci
 
         settings = SIPSimpleSettings()
-        tls_certificate  = self.tls.certificate or settings.tls.certificate
+        tls_certificate  = settings.tls.certificate
 
         certificate = None
         private_key = None
@@ -284,7 +277,7 @@ class Account(SettingsObject):
                 pass
                 
         trusted_cas = []
-        ca_list  = self.tls.ca_list or settings.tls.ca_list
+        ca_list  = settings.tls.ca_list
 
         if ca_list is not None:
             if len(self.trusted_cas) > 0:
@@ -317,7 +310,7 @@ class Account(SettingsObject):
                 self.ca_list = ca_list
 
         credentials = X509Credentials(certificate, private_key, trusted_cas)
-        credentials.verify_peer = self.tls.verify_server or settings.tls.certificate
+        credentials.verify_peer = settings.tls.verify_peer
         return credentials
 
     @property
@@ -607,7 +600,6 @@ class BonjourAccount(SettingsObject):
     msrp = BonjourMSRPSettings
     presence = PresenceSettings
     rtp = RTPSettings
-    tls = TLSSettings
 
     def __new__(cls):
 #        with AccountManager.load.lock:
@@ -676,7 +668,7 @@ class BonjourAccount(SettingsObject):
         # This property can be optimized to cache the credentials it loads from disk,
         # however this is not a time consuming operation (~ 3000 req/sec). -Luci
         settings = SIPSimpleSettings()
-        tls_certificate  = self.tls.certificate or settings.tls.certificate
+        tls_certificate  = settings.tls.certificate
         if tls_certificate is not None:
             certificate_data = open(tls_certificate.normalized).read()
             certificate = X509Certificate(certificate_data)

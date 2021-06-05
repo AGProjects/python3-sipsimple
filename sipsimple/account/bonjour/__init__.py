@@ -268,7 +268,7 @@ class BonjourServices(object):
                 pass
             else:
                 transport = record.uri.transport
-                supported_transport = transport in settings.sip.transport_list and (transport!='tls' or self.account.tls.certificate is not None)
+                supported_transport = transport in settings.sip.transport_list and (transport!='tls' or settings.tls.certificate is not None)
                 if not supported_transport and service_description in self._neighbours:
                     record = self._neighbours.pop(service_description)
                     notification_center.post_notification('BonjourAccountDidRemoveNeighbour', sender=self.account, data=NotificationData(neighbour=service_description, record=record))
@@ -334,7 +334,7 @@ class BonjourServices(object):
         if self._register_timer is not None and self._register_timer.active():
             self._register_timer.cancel()
         self._register_timer = None
-        supported_transports = set(transport for transport in settings.sip.transport_list if transport != 'tls' or self.account.tls.certificate is not None)
+        supported_transports = set(transport for transport in settings.sip.transport_list if transport != 'tls' or settings.tls.certificate is not None)
         registered_transports = set(file.transport for file in self._files if isinstance(file, BonjourRegistrationFile))
         missing_transports = supported_transports - registered_transports
         added_transports = set()
@@ -409,7 +409,7 @@ class BonjourServices(object):
         if self._discover_timer is not None and self._discover_timer.active():
             self._discover_timer.cancel()
         self._discover_timer = None
-        supported_transports = set(transport for transport in settings.sip.transport_list if transport!='tls' or self.account.tls.certificate is not None)
+        supported_transports = set(transport for transport in settings.sip.transport_list if transport!='tls' or settings.tls.certificate is not None)
         discoverable_transports = set('tcp' if transport=='tls' else transport for transport in supported_transports)
         old_files = []
         for file in (f for f in self._files[:] if isinstance(f, (BonjourDiscoveryFile, BonjourResolutionFile)) and f.transport not in discoverable_transports):
