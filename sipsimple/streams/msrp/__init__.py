@@ -10,6 +10,8 @@ import traceback
 from application.notification import NotificationCenter, NotificationData, IObserver
 from application.python import Null
 from application.system import host
+from gnutls.errors import CertificateAuthorityError, CertificateError, CertificateRevokedError
+
 from twisted.internet.error import ConnectionDone
 from zope.interface import implementer
 
@@ -210,9 +212,13 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
             if self.msrp_session_class is not None:
                 self.msrp_session = self.msrp_session_class(self.msrp, accept_types=self.accept_types, on_incoming_cb=self._handle_incoming, automatic_reports=False)
             self.msrp_connector = None
+        except (CertificateAuthorityError, CertificateError, CertificateRevokedError) as e:
+            peer = '%s:%s' % (full_remote_path[0].host, full_remote_path[0].port)
+            self._failure_reason = "Peer %s: %s" % (peer, e.error)
+            notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context=context, reason=self._failure_reason))
         except Exception as e:
+            #traceback.print_exc()
             self._failure_reason = str(e)
-            traceback.print_exc()
             notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context=context, reason=self._failure_reason))
         else:
             notification_center.post_notification('MediaStreamDidStart', sender=self)

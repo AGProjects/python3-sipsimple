@@ -1196,9 +1196,9 @@ class Session(object):
             if isinstance(e, api.TimeoutError):
                 error = 'media stream timed-out while starting'
             elif isinstance(e, MediaStreamDidNotInitializeError):
-                error = '%s media stream did not initialize: %s' % (e.sender.type, e.data.reason)
+                error = '%s media stream did not initialize: %s' % (e.stream.type, e.data.reason)
             else:
-                error = '%s media stream failed: %s' % (e.sender.type, e.data.reason)
+                error = '%s media stream failed: %s' % (e.stream.type, e.data.reason)
             self._fail(originator='local', code=0, reason=None, error=error)
         except InvitationDisconnectedError as e:
             notification_center.remove_observer(self, sender=self._invitation)
@@ -1473,12 +1473,12 @@ class Session(object):
                     reason_header.cause = 500
                     reason_header.text = 'Missing ACK'
             elif isinstance(e, MediaStreamDidNotInitializeError):
-                error = '%s media stream did not initialize: %s' % (e.sender.type, e.data.reason)
+                error = '%s media stream did not initialize: %s' % (e.stream.type, e.data.reason)
                 reason_header = ReasonHeader('SIP')
                 reason_header.cause = 500
                 reason_header.text = 'media stream did not initialize'
             else:
-                error = '%s media stream failed: %s' % (e.sender.type, e.data.reason)
+                error = '%s media stream failed: %s' % (e.stream.type, e.data.reason)
                 reason_header = ReasonHeader('SIP')
                 reason_header.cause = 500
                 reason_header.text = 'media stream failed to start'
