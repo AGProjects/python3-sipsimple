@@ -174,18 +174,17 @@ class SIPApplication(object, metaclass=Singleton):
 
     def _initialize_tls(self):
         settings = SIPSimpleSettings()
-        account_manager = AccountManager()
-        account = account_manager.default_account
-        if account is not None:
-            try:
-                self.engine.set_tls_options(port=settings.sip.tls_port,
-                                            verify_server=settings.tls.verify_server,
-                                            ca_file=settings.tls.ca_list.normalized if settings.tls.ca_list else None,
-                                            cert_file=settings.tls.certificate.normalized if settings.tls.certificate else None,
-                                            privkey_file=settings.tls.certificate.normalized if settings.tls.certificate else None)
-            except Exception as e:
-                notification_center = NotificationCenter()
-                notification_center.post_notification('SIPApplicationFailedToStartTLS', sender=self, data=NotificationData(error=e))
+        notification_center = NotificationCenter()
+        try:
+            self.engine.set_tls_options(port=settings.sip.tls_port,
+                                        verify_server=settings.tls.verify_server,
+                                        ca_file=settings.tls.ca_list.normalized if settings.tls.ca_list else None,
+                                        cert_file=settings.tls.certificate.normalized if settings.tls.certificate else None,
+                                        privkey_file=settings.tls.certificate.normalized if settings.tls.certificate else None)
+        except Exception as e:
+            notification_center.post_notification('SIPApplicationFailedToStartTLS', sender=self, data=NotificationData(error=e))
+        else:
+            notification_center.post_notification('TLSTransportHasChanged', sender=self, data=NotificationData(verify_server=settings.tls.verify_server, certtificate=settings.tls.certificate.normalized, ca_file=settings.tls.ca_list.normalized ))
 
     @run_in_green_thread
     def _initialize_subsystems(self):
@@ -446,7 +445,7 @@ class SIPApplication(object, metaclass=Singleton):
                     self.engine.set_udp_port(settings.sip.udp_port)
                 if 'sip.tcp_port' in notification.data.modified:
                     self.engine.set_tcp_port(settings.sip.tcp_port)
-                if {'sip.tls_port', 'tls.ca_list', 'default_account'}.intersection(notification.data.modified):
+                if {'sip.tls_port', 'tls.ca_list', 'default_account', 'tls.verify_server', 'tls.certificate'}.intersection(notification.data.modified):
                     self._initialize_tls()
                 if 'rtp.port_range' in notification.data.modified:
                     self.engine.rtp_port_range = (settings.rtp.port_range.start, settings.rtp.port_range.end)
@@ -460,9 +459,6 @@ class SIPApplication(object, metaclass=Singleton):
                     self.engine.trace_sip = settings.logs.trace_sip
                 if {'logs.trace_pjsip', 'logs.pjsip_level'}.intersection(notification.data.modified):
                     self.engine.log_level = settings.logs.pjsip_level if settings.logs.trace_pjsip else 0
-            elif notification.sender is account_manager.default_account:
-                if {'tls.verify_server', 'tls.certificate'}.intersection(notification.data.modified):
-                    self._initialize_tls()
         except (SIPCoreError, PJSIPError) as e:
             print('Error setting core option: %s' % str(e))
 
