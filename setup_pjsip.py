@@ -68,8 +68,11 @@ class PJSIP_build_ext(build_ext):
                    "#define PJMEDIA_AUDIO_DEV_HAS_ALSA %d" % (1 if sys_platform=="linux" else 0),
                    "#define PJMEDIA_AUDIO_DEV_HAS_WMME %d" % (1 if sys_platform=="win32" else 0),
                    "#define PJMEDIA_HAS_SPEEX_AEC 0",
-                   "#define PJMEDIA_HAS_OPENCORE_AMRWB_CODEC 1",
+                   "#define PJMEDIA_HAS_SPEEX_CODEC 1",
+                   "#define PJMEDIA_HAS_GSM_CODEC 1",
+                   "#define PJMEDIA_HAS_ILBC_CODEC 1",
                    "#define PJMEDIA_HAS_OPENCORE_AMRNB_CODEC 1",
+                   "#define PJMEDIA_HAS_OPENCORE_AMRWB_CODEC 1",
                    "#define PJMEDIA_HAS_WEBRTC_AEC %d" % (1 if re.match('i\d86|x86|x86_64', platform.machine()) else 0),
                    "#define PJMEDIA_RTP_PT_TELEPHONE_EVENTS 101",
                    "#define PJMEDIA_RTP_PT_TELEPHONE_EVENTS_STR \"101\"",
@@ -174,7 +177,9 @@ class PJSIP_build_ext(build_ext):
             cmd = ["bash", "configure"]
         else:
             cmd = ["./configure"]
+
         cmd.extend(["--disable-openh264", "--disable-l16-codec", "--disable-g7221-codec", "--disable-sdl"])
+        #cmd.extend(["--disable-ilbc-codec", "--disable-speex-codec", "--disable-gsm-codec"])
         
         ffmpeg_path = env.get("SIPSIMPLE_FFMPEG_PATH", None)
         if ffmpeg_path is not None:
