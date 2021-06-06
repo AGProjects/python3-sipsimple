@@ -172,6 +172,7 @@ class Account(SettingsObject):
         self._started = True
 
         notification_center = NotificationCenter()
+        notification_center.post_notification('SIPAccountWillStart', sender=self)
         notification_center.add_observer(self, name='CFGSettingsObjectDidChange', sender=self)
         notification_center.add_observer(self, name='CFGSettingsObjectDidChange', sender=SIPSimpleSettings())
         notification_center.add_observer(self, name='XCAPManagerDidDiscoverServerCapabilities', sender=self.xcap_manager)
@@ -194,6 +195,7 @@ class Account(SettingsObject):
         self._deactivate()
 
         notification_center = NotificationCenter()
+        notification_center.post_notification('SIPAccountWillStop', sender=self)
         notification_center.remove_observer(self, name='CFGSettingsObjectDidChange', sender=self)
         notification_center.remove_observer(self, name='CFGSettingsObjectDidChange', sender=SIPSimpleSettings())
         notification_center.remove_observer(self, name='XCAPManagerDidDiscoverServerCapabilities', sender=self.xcap_manager)
@@ -636,6 +638,7 @@ class BonjourAccount(SettingsObject):
         self._started = True
 
         notification_center = NotificationCenter()
+        notification_center.post_notification('BonjourAccountWillStart', sender=self)
         notification_center.add_observer(self, name='CFGSettingsObjectDidChange', sender=self)
         notification_center.add_observer(self, name='CFGSettingsObjectDidChange', sender=SIPSimpleSettings())
 
@@ -648,10 +651,12 @@ class BonjourAccount(SettingsObject):
             return
         self._started = False
 
+        notification_center = NotificationCenter()
+        notification_center.post_notification('BonjourAccountWillStop', sender=self)
+
         self._deactivate()
         self._bonjour_services.stop()
 
-        notification_center = NotificationCenter()
         notification_center.remove_observer(self, name='CFGSettingsObjectDidChange', sender=self)
         notification_center.remove_observer(self, name='CFGSettingsObjectDidChange', sender=SIPSimpleSettings())
 
@@ -779,7 +784,7 @@ class AccountManager(object, metaclass=Singleton):
         set to activate.
         """
         notification_center = NotificationCenter()
-        notification_center.post_notification('SIPAccountManagerWillStart', sender=self)
+        notification_center.post_notification('SIPAccountManagerWillStart', sender=self, data=NotificationData(accounts=list(a.id for a in self.accounts.values())))
         proc.waitall([proc.spawn(account.start) for account in list(self.accounts.values())])
         notification_center.post_notification('SIPAccountManagerDidStart', sender=self)
 
