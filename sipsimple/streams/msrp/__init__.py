@@ -169,9 +169,9 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
             self.local_media = self._create_local_media(full_local_path)
         except (CertificateError, CertificateAuthorityError, CertificateExpiredError, CertificateSecurityError, CertificateRevokedError) as e:
             reason = "%s for %s" % (e.error, e.certificate.subject.CN.lower())
-            notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason=reason))
+            notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason=reason, transport=self.transport, credentials=self.session.account.tls_credentials))
         except Exception as e:
-            notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason=str(e)))
+            notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason=str(e), transport=self.transport, credentials=self.session.account.tls_credentials))
         else:
             notification_center.post_notification('MediaStreamDidInitialize', sender=self)
         finally:
@@ -216,12 +216,12 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
             self.msrp_connector = None
         except (CertificateAuthorityError, CertificateError, CertificateRevokedError) as e:
             peer = '%s:%s' % (full_remote_path[0].host, full_remote_path[0].port)
-            self._failure_reason = "Peer %s: %s" % (peer, e.error)
-            notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context=context, reason=self._failure_reason))
+            self._failure_reason = "%s - %s" % (peer, e.error)
+            notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context=context, reason=self._failure_reason, transport=self.transport, credentials=self.session.account.tls_credentials))
         except Exception as e:
             #traceback.print_exc()
             self._failure_reason = str(e)
-            notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context=context, reason=self._failure_reason))
+            notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context=context, reason=self._failure_reason, transport=self.transport, credentials=self.session.account.tls_credentials))
         else:
             notification_center.post_notification('MediaStreamDidStart', sender=self)
         finally:
@@ -302,7 +302,7 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
             if self.shutting_down and isinstance(error.value, ConnectionDone):
                 return
             self._failure_reason = error.getErrorMessage()
-            notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context='reading', reason=self._failure_reason))
+            notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context='reading', reason=self._failure_reason, transport=self.transport, credentials=self.session.account.tls_credentials))
         elif chunk is not None:
             method_handler = getattr(self, '_handle_%s' % chunk.method, None)
             if method_handler is not None:
