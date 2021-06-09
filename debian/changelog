@@ -1,3 +1,17 @@
+python3-sipsimple (5.2.0) unstable; urgency=medium
+
+  * Fixed detecting that bonjour discovery is available on Mac
+  * Add notifications when account starts
+  * Update audio codecs settings
+  * Fixed reloading TLS settings
+  * Allways set tls_name Route header attribute
+  * Removed per account TLS settings
+  * Fix capturing some stream exceptions
+  * Fixed encoding PJSIP extra headers
+  * Fixed handling incoming REFER
+
+ -- Adrian Georgescu <ag@ag-ag-projects.com>  Wed, 09 Jun 2021 14:17:38 +0200
+
 python3-sipsimple (5.1.0) unstable; urgency=medium
 
   * Fixed incoming Subscriptions
