@@ -767,11 +767,13 @@ class AccountManager(object, metaclass=Singleton):
         Load all accounts from the configuration. The accounts will not be
         started until the start method is called.
         """
+        notification_center = NotificationCenter()
         configuration = ConfigurationManager()
         bonjour_account = BonjourAccount()
         names = configuration.get_names([Account.__group__])
         [Account(id) for id in names if id != bonjour_account.id]
         default_account = self.default_account
+        notification_center.post_notification('SIPAccountManagerDidLoad', sender=self, data=NotificationData(accounts=names, default_account=default_account))
         if default_account is None or not default_account.enabled:
             try:
                 self.default_account = next((account for account in list(self.accounts.values()) if account.enabled))
@@ -784,7 +786,7 @@ class AccountManager(object, metaclass=Singleton):
         set to activate.
         """
         notification_center = NotificationCenter()
-        notification_center.post_notification('SIPAccountManagerWillStart', sender=self, data=NotificationData(accounts=list(a.id for a in self.accounts.values())))
+        notification_center.post_notification('SIPAccountManagerWillStart', sender=self, data=NotificationData(bonjour_available=_bonjour.available, accounts=list(a.id for a in self.accounts.values())))
         proc.waitall([proc.spawn(account.start) for account in list(self.accounts.values())])
         notification_center.post_notification('SIPAccountManagerDidStart', sender=self)
 

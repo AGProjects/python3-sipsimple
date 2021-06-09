@@ -95,7 +95,7 @@ if sys.platform == 'win32':
         available = True
 else:
     if sys.platform == 'darwin':
-        _libdnssd = 'libSystem.B.dylib'
+        _libdnssd = '/usr/lib/libSystem.B.dylib'
     else:
         _libdnssd = 'libdns_sd.so.1'
 
