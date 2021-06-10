@@ -27,7 +27,7 @@ from sipsimple.account.subscription import MWISubscriber, PresenceWinfoSubscribe
 from sipsimple.account.xcap import XCAPManager
 from sipsimple.core import Credentials, SIPURI, ContactURIFactory
 from sipsimple.configuration import ConfigurationManager, Setting, SettingsGroup, SettingsObject, SettingsObjectID
-from sipsimple.configuration.datatypes import AudioCodecList, MSRPConnectionModel, MSRPRelayAddress, MSRPTransport, NonNegativeInteger, Path, SIPAddress, SIPProxyAddress, SRTPKeyNegotiation, STUNServerAddressList, VideoCodecList, XCAPRoot
+from sipsimple.configuration.datatypes import AudioCodecList, MSRPConnectionModel, MSRPRelayAddress, MSRPTransport, NonNegativeInteger, Path, SIPAddress, SIPProxyAddress, SRTPKeyNegotiation, SIPTransport, STUNServerAddressList, VideoCodecList, XCAPRoot
 from sipsimple.configuration.settings import SIPSimpleSettings
 from sipsimple.payloads import ParserError
 from sipsimple.payloads.messagesummary import MessageSummary
@@ -52,6 +52,11 @@ class SIPSettings(SettingsGroup):
     register_interval = Setting(type=NonNegativeInteger, default=600)
     subscribe_interval = Setting(type=NonNegativeInteger, default=600)
     publish_interval = Setting(type=NonNegativeInteger, default=600)
+    tls_name = Setting(type=str, default=None, nillable=True)
+
+
+class BonjourSIPSettings(SettingsGroup):
+    transport = Setting(type=SIPTransport, default='tcp')
     tls_name = Setting(type=str, default=None, nillable=True)
 
 
@@ -602,6 +607,8 @@ class BonjourAccount(SettingsObject):
     msrp = BonjourMSRPSettings
     presence = PresenceSettings
     rtp = RTPSettings
+    sip = BonjourSIPSettings
+    
 
     def __new__(cls):
 #        with AccountManager.load.lock:
