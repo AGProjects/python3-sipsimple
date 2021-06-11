@@ -263,7 +263,7 @@ class DNSLookup(object):
                 if transport not in supported_transports:
                     raise DNSLookupError("IP transport %s dictated by URI is not supported" % transport)
                 port = uri.port or (5061 if transport=='tls' else 5060)
-                route = [Route(address=uri.host, port=port, transport=transport, tls_name=uri.host)]
+                route = [Route(address=uri.host, port=port, transport=transport, tls_name=tls_name or uri.host)]
                 return route
 
             resolver = DNSResolver()
