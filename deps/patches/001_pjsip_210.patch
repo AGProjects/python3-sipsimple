@@ -8142,7 +8142,7 @@ diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/
 +		    const pj_str_t st_name = {"tls_name", 8};
 +		    if (pj_stricmp(&p->name, &st_name) == 0) {
 +			pj_strdup(pool, &tls_name, &p->value);
-+			tls_name.ptr[tls_name.slen] = '\x00';
++			//tls_name.ptr[tls_name.slen] = '\x00';
 +			break;
 +		    }
 +		p = p->next;
