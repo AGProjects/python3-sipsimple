@@ -191,7 +191,7 @@ class Document(object):
                 raise XCAPError("failed to update %s document: %s" % (self.name, e))
 
         self.etag = response.etag if data is not None else None
-        notification_data = NotificationData(method=method, url=self.url, application=self.application, result='success', reason='changed', code=200, etag=self.etag, size=len(data))
+        notification_data = NotificationData(method=method, url=self.url, application=self.application, result='success', reason='changed', code=200, etag=self.etag, size=len(data) if data else 0)
         notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
 
         self.dirty = False
