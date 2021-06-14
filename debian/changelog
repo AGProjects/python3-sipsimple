@@ -16,7 +16,7 @@ python3-sipsimple (5.2.0) unstable; urgency=medium
   * Fixed verify_peer credentials in account
   * Improved MediaStreamFail notification data for MSRP streams
 
- -- Adrian Georgescu <ag@ag-ag-projects.com>   Mon, 14 Jun 2021 08:55:09 -0300
+ -- Adrian Georgescu <ag@ag-ag-projects.com>  Mon, 14 Jun 2021 08:55:09 -0300
 
 python3-sipsimple (5.1.0) unstable; urgency=medium
 
