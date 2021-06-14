@@ -184,7 +184,7 @@ class SIPApplication(object, metaclass=Singleton):
         except Exception as e:
             notification_center.post_notification('SIPApplicationFailedToStartTLS', sender=self, data=NotificationData(error=e))
         else:
-            notification_center.post_notification('TLSTransportHasChanged', sender=self, data=NotificationData(port=settings.sip.tls_port, verify_server=settings.tls.verify_server, certificate=settings.tls.certificate.normalized, ca_file=settings.tls.ca_list.normalized ))
+            notification_center.post_notification('TLSTransportHasChanged', sender=self, data=NotificationData(port=settings.sip.tls_port, verify_server=settings.tls.verify_server, certificate=settings.tls.certificate.normalized if settings.tls.certificate else None, ca_file=settings.tls.ca_list.normalized if settings.tls.ca_list else None))
 
     @run_in_green_thread
     def _initialize_subsystems(self):
