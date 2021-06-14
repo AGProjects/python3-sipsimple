@@ -20,13 +20,17 @@ AMR codec
 
 Narrow-band
 
-   * Install opencore-amr using Brew
+   * Install opencore-amr using Brew or apt-get 
+
+   On Mac:
    * export SIPSIMPLE_AMR_NB_PATH="/usr/local/opt/opencore-amr"
 
 Wide-band
 
    * https://sourceforge.net/projects/opencore-amr/files/vo-amrwbenc
    * ./configure --prefix=/usr/local/opt/vo-amrwbenc
+
+   On Mac and Linux:
    * export SIPSIMPLE_AMR_WB_PATH="/usr/local/opt/vo-amrwbenc"
 
 
