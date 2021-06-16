@@ -246,7 +246,7 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
                     msrp_connector.cleanup()
             finally:
                 notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason='Interrupted'))
-                notification_center.remove_observer(self, sender=self)
+                notification_center.discard_observer(self, sender=self)
                 self.msrp_connector = None
                 self.greenlet = None
         else:
