@@ -822,7 +822,8 @@ class AccountManager(object, metaclass=Singleton):
 
     def find_account(self, contact_uri):
         # compare contact_address with account contact
-        exact_matches = (account for account in list(self.accounts.values()) if account.enabled and account.contact.username==contact_uri.user)
+        exact_matches = (account for account in list(self.accounts.values()) if account.enabled and account.contact.username==contact_uri.user or (account.id.username==contact_uri.user and account.id.domain==contact_uri.host))
+
         # compare username in contact URI with account username
         loose_matches = (account for account in list(self.accounts.values()) if account.enabled and account.id.username==contact_uri.user)
         return next(chain(exact_matches, loose_matches, [None]))
