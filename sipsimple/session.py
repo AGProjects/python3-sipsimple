@@ -2625,7 +2625,7 @@ class Session(object):
                         self.state = 'terminated'
                         notification.center.post_notification('SIPSessionWillEnd', self, NotificationData(originator=notification.data.originator))
                         for stream in self.streams:
-                            notification.center.remove_observer(self, sender=stream)
+                            notification.center.discard_observer(self, sender=stream)
                             stream.deactivate()
                             stream.end()
                         if notification.data.originator == 'remote':
