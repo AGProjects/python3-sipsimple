@@ -173,6 +173,7 @@ class Publisher(object, metaclass=ABCMeta):
             handler = getattr(self, '_CH_%s' % command.name)
             handler(command)
 
+    @run_in_green_thread
     def _CH_publish(self, command):
         if command.state is None or self._publication is None and command.state is SameState:
             command.signal()
