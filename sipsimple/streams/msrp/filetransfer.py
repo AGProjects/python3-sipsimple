@@ -697,7 +697,7 @@ class FileTransferStream(MSRPStreamBase):
     @property
     def file_offset_supported(self):
         try:
-            return 'x-file-offset' in self.remote_media.attributes
+            return b'x-file-offset' in self.remote_media.attributes
         except AttributeError:
             return False
 
