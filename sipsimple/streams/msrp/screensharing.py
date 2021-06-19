@@ -268,11 +268,11 @@ class ScreenSharingStream(MSRPStreamBase):
             raise InvalidStreamError("expected %s transport in chat stream, got %s" % (expected_transport, remote_stream.transport))
         if remote_stream.formats != [b'*']:
             raise InvalidStreamError("wrong format list specified")
-        remote_rfbsetup = remote_stream.attributes.getfirst('rfbsetup', 'active')
-        remote_rfbsetup = remote_rfbsetup.decode() if remote_rfbsetup else None
-        if remote_rfbsetup == 'active':
+        remote_rfbsetup = remote_stream.attributes.getfirst(b'rfbsetup', b'active')
+        remote_rfbsetup
+        if remote_rfbsetup == b'active':
             stream = cls(mode='server')
-        elif remote_rfbsetup == 'passive':
+        elif remote_rfbsetup == b'passive':
             stream = cls(mode='viewer')
         else:
             raise InvalidStreamError("unknown rfbsetup attribute in the remote screen sharing stream")
