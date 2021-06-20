@@ -2385,8 +2385,11 @@ cdef void _RTPTransport_cb_zrtp_show_message(pjmedia_transport *tp, int severity
         if rtp_transport is None:
             return
         level = zrtp_message_levels.get(severity, 1)
-        message = zrtp_error_messages[level].get(sub_code, 'Unknown')
-        _add_event("RTPTransportZRTPLog", dict(obj=rtp_transport, level=level, message=message))
+        if severity == 2 and sub_code in (5, 6, 7):
+            pass
+        else:
+            message = zrtp_error_messages[level].get(sub_code, 'Unknown')
+            _add_event("RTPTransportZRTPLog", dict(obj=rtp_transport, level=level, message=message))
     except:
         ua._handle_exception(1)
 
