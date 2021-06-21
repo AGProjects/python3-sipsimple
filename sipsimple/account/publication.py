@@ -278,7 +278,7 @@ class Publisher(object, metaclass=ABCMeta):
                 raise PublicationError('No more routes to try', retry_after=retry_after)
         except PublicationError as e:
             self.publishing = False
-            notification_center.remove_observer(self, sender=self._publication)
+            notification_center.discard_observer(self, sender=self._publication)
             def publish(e):
                 if self.active:
                     self._command_channel.send(Command('publish', event=command.event, state=self.state, refresh_interval=e.refresh_interval))
