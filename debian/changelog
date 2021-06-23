@@ -1,3 +1,16 @@
+python3-sipsimple (5.2.1) unstable; urgency=medium
+
+  * Turn off spurious per frame zrtp warning notifications
+  * Fixed reading a media stream attribute
+  * Fixed reading screen sharing stream attributes
+  * Fixed matching accounts 
+  * Discard a stream observer
+  * Run a function in green thread
+  * Discard observer that may not have been added
+  * Fixed crash when using VP8 and VP9 codecs
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Tue, 22 Jun 2021 12:58:03 -0300
+
 python3-sipsimple (5.2.0) unstable; urgency=medium
 
   * Added support for opencore AMR codecs
