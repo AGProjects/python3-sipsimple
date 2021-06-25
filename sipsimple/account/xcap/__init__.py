@@ -134,6 +134,10 @@ class Document(object):
                 if self.content is not None:
                     self.reset()
                     self.fetch_time = datetime.utcnow()
+            elif e.status == 401:
+                notification_data = NotificationData(method='GET', url=self.url, application=self.application, result='failure', reason=str(e), code=e.status, etag=self.etag)
+                notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
+                raise XCAPError("failed to fetch %s document: auth failed (401)" % self.name)
             elif e.status != 304: # Other than Not Modified:
                 notification_data = NotificationData(method='GET', url=self.url, application=self.application, result='failure', reason=str(e), code=e.status, etag=self.etag)
                 notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
