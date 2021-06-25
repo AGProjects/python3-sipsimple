@@ -750,8 +750,9 @@ class XCAPManager(object):
         self.rls_services = RLSServicesDocument(self)
         self.status_icon = StatusIconDocument(self)
 
-        for document in self.documents:
-            document.load_from_cache()
+        if self.account.enabled and self.account.xcap.enabled:
+            for document in self.documents:
+                document.load_from_cache(self.account)
 
         try:
             journal = self.storage.load('journal')
@@ -1748,7 +1749,10 @@ class XCAPManager(object):
         if 'enabled' in notification.data.modified:
             return  # global account activation is handled separately by the account itself
         if self.account.enabled and 'xcap.enabled' in notification.data.modified:
-            if self.account.xcap.enabled:
+            if self.account.enabled and self.account.xcap.enabled:
+                for document in self.documents:
+                    document.load_from_cache()
+
                 self.start()
             else:
                 self.stop()
