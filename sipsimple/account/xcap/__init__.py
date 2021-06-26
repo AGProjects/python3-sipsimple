@@ -752,7 +752,7 @@ class XCAPManager(object):
 
         if self.account.enabled and self.account.xcap.enabled:
             for document in self.documents:
-                document.load_from_cache(self.account)
+                document.load_from_cache()
 
         try:
             journal = self.storage.load('journal')
