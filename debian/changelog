@@ -1,3 +1,11 @@
+python3-sipsimple (5.2.2) unstable; urgency=medium
+
+  * Don't encode XCAP icon to bytes, let the application do it
+  * Load XCAP documents only if account and xcap are both enabled
+  * Fixed comparing XCAP status icon from server with local cache
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Sat, 26 Jun 2021 13:48:10 -0300
+
 python3-sipsimple (5.2.1) unstable; urgency=medium
 
   * Turn off spurious per frame zrtp warning notifications

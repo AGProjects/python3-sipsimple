@@ -27,11 +27,22 @@ Narrow-band
 
 Wide-band
 
-   * https://sourceforge.net/projects/opencore-amr/files/vo-amrwbenc
-   * ./configure --prefix=/usr/local/opt/vo-amrwbenc
+Download the tar archive from:
 
-   On Mac and Linux:
-   * export SIPSIMPLE_AMR_WB_PATH="/usr/local/opt/vo-amrwbenc"
+https://sourceforge.net/projects/opencore-amr/files/vo-amrwbenc
+ 
+On Mac:
+
+     ./configure --prefix=/usr/local/opt/vo-amrwbenc
+     make 
+     make install
+     export SIPSIMPLE_AMR_WB_PATH="/usr/local/opt/vo-amrwbenc"
+
+On Linux:
+
+     ./configure --prefix=/usr/local/
+     make 
+     make install
 
 
 In ./sipsimple/configuration/settings.py add the AMR codecs to audio_codec_list:
