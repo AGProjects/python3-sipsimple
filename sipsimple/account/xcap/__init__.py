@@ -1687,7 +1687,7 @@ class XCAPManager(object):
             self.status_icon.content = None
         else:
             icon_bytes = icon.data
-            data = base64.b64encode(icon_bytes if isinstance(icon_bytes, bytes) else icon_bytes.encode()).decode('utf-8')
+            data = base64.b64encode(icon_bytes).decode('utf-8')
             content = prescontent.PresenceContent(data=data, mime_type=icon.mime_type, encoding='base64', description=icon.description)
             if self.status_icon.content.data == content.data:
                 return
