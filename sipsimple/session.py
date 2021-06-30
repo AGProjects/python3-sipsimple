@@ -806,7 +806,7 @@ class TransferHandler(object):
 
     def _NH_SIPInvitationTransferGotNotify(self, notification):
         if notification.data.event == 'refer' and notification.data.body:
-            match = sipfrag_re.match(notification.data.body)
+            match = sipfrag_re.match(notification.data.body.decode())
             if match:
                 code = int(match.group('code'))
                 reason = match.group('reason')
