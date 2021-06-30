@@ -1279,10 +1279,13 @@ cdef class Invitation:
             raise PJSIPError("failed to acquire lock", status)
         try:
             prev_state = self.transfer_state
-            self._set_transfer_state(timer.state.decode() if isinstance(timer.state, bytes) else timer.state)
-            if timer.state == "ACCEPTED" and prev_state == "SENT":
+            timer_state = timer.state.decode()
+
+            self._set_transfer_state(timer_state)
+
+            if timer_state == "ACCEPTED" and prev_state == "SENT":
                 _add_event("SIPInvitationTransferDidStart", dict(obj=self))
-            elif timer.state == "TERMINATED":
+            elif timer_state == "TERMINATED":
                 # If a NOTIFY is rejected with 408 or 481 PJSIP will erase the subscription
                 if self._transfer_usage != NULL:
                     pjsip_evsub_set_mod_data(self._transfer_usage, ua._event_module.id, NULL)
