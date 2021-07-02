@@ -247,7 +247,7 @@ class Account(SettingsObject):
     def credentials(self):
         username = self.auth.username or self.id.username
         username = username.encode() if username else None
-        password = self.auth.password.encode() if self.auth.password else None
+        password = self.auth.password.encode() if self.auth.password else b''
         return Credentials(username, password)
 
     @property
