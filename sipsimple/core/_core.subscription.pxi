@@ -558,7 +558,8 @@ cdef class IncomingSubscription:
                 raise ValueError("content_type parameter is not properly formatted")
             self._content_type = PJSTR(content_type_match.group(1).encode())
             self._content_subtype = PJSTR(content_type_match.group(2).encode())
-            self._content = PJSTR(content.encode)
+            payload = content if isinstance(content, bytes) else content.encode()
+            self._content = PJSTR(payload)
             self._send_notify()
         finally:
             with nogil:
