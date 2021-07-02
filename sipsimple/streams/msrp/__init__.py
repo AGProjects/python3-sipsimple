@@ -198,7 +198,7 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
             if self.transport != remote_transport:
                 raise MSRPStreamError("remote transport ('%s') different from local transport ('%s')" % (remote_transport, self.transport))
             if isinstance(self.session.account, Account) and self.local_role == 'actpass':
-                remote_setup = remote_media.attributes.getfirst('setup', 'passive')
+                remote_setup = remote_media.attributes.getfirst(b'setup', b'passive').decode()
                 if remote_setup == 'passive':
                     # If actpass is offered connectors are always started as passive
                     # We need to switch to active if the remote answers with passive
