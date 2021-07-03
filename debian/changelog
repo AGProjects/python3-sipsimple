@@ -1,3 +1,13 @@
+python3-sipsimple (5.2.3) UNRELEASED; urgency=medium
+
+  * Fixed encoding Notify payload
+  * Fixed handling call transfer failures 
+  * Fixed msrp session setup when remote is 'active'
+  * Fixed account password in credentials, it can't be None
+  * Fixed parsing Call transfer progress body
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Sat, 03 Jul 2021 09:52:03 -0300
+
 python3-sipsimple (5.2.2) unstable; urgency=medium
 
   * Don't encode XCAP icon to bytes, let the application do it
