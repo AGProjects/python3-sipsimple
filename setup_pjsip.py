@@ -68,6 +68,7 @@ class PJSIP_build_ext(build_ext):
                    "#define PJMEDIA_AUDIO_DEV_HAS_ALSA %d" % (1 if sys_platform=="linux" else 0),
                    "#define PJMEDIA_AUDIO_DEV_HAS_WMME %d" % (1 if sys_platform=="win32" else 0),
                    "#define PJMEDIA_HAS_SPEEX_AEC 0",
+                   "#define PJMEDIA_SRTP_HAS_AES_CM_256 1",
                    "#define PJMEDIA_HAS_SPEEX_CODEC 1",
                    "#define PJMEDIA_HAS_GSM_CODEC 1",
                    "#define PJMEDIA_HAS_ILBC_CODEC 1",
