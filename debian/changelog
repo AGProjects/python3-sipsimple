@@ -1,4 +1,10 @@
-python3-sipsimple (5.2.3) UNRELEASED; urgency=medium
+python3-sipsimple (5.2.4) unstable; urgency=medium
+
+  * Fixed negotiating encryption for RTP streams
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Mon, 05 Jul 2021 15:12:25 -0300
+
+python3-sipsimple (5.2.3) unstable; urgency=medium
 
   * Fixed encoding Notify payload
   * Fixed handling call transfer failures 
