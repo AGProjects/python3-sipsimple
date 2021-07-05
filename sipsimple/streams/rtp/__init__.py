@@ -416,9 +416,10 @@ class RTPStream(object, metaclass=RTPStreamType):
         if remote_stream.transport not in (b'RTP/AVP', b'RTP/SAVP'):
             raise InvalidStreamError("expected RTP/AVP or RTP/SAVP transport in %s stream, got %s" % (cls.type, remote_stream.transport.decode()))
         local_encryption_policy = session.account.rtp.encryption.key_negotiation if session.account.rtp.encryption.enabled else None
-        if local_encryption_policy == "sdes_mandatory" and not b"crypto" in remote_stream.attributes:
+        
+        if local_encryption_policy == "sdes_mandatory" and not b'crypto' in remote_stream.attributes:
             raise InvalidStreamError("SRTP/SDES is locally mandatory but it's not remotely enabled")
-        if remote_stream.transport == b'RTP/SAVP' and b"crypto" in remote_stream.attributes and local_encryption_policy not in ("opportunistic", "sdes_optional", "sdes_mandatory"):
+        if remote_stream.transport == b'RTP/SAVP' and b'crypto' in remote_stream.attributes and local_encryption_policy not in ("opportunistic", "sdes_optional", "sdes_mandatory"):
             raise InvalidStreamError("SRTP/SDES is remotely mandatory but it's not locally enabled")
         account_preferred_codecs = getattr(session.account.rtp, '%s_codec_list' % cls.type)
         general_codecs = getattr(settings.rtp, '%s_codec_list' % cls.type)
@@ -441,10 +442,10 @@ class RTPStream(object, metaclass=RTPStreamType):
                 # ICE attributes could come at the session level or at the media level
                 remote_stream = self._incoming_remote_sdp.media[self._incoming_stream_index]
                 self._try_ice = self.session.account.nat_traversal.use_ice and ((remote_stream.has_ice_attributes or self._incoming_remote_sdp.has_ice_attributes) and remote_stream.has_ice_candidates)
-                if "zrtp-hash" in remote_stream.attributes:
+                if b'zrtp-hash' in remote_stream.attributes:
                     incoming_stream_encryption = 'zrtp'
-                elif "crypto" in remote_stream.attributes:
-                    incoming_stream_encryption = 'sdes_mandatory' if remote_stream.transport == 'RTP/SAVP' else 'sdes_optional'
+                elif b'crypto' in remote_stream.attributes:
+                    incoming_stream_encryption = 'sdes_mandatory' if remote_stream.transport == b'RTP/SAVP' else 'sdes_optional'
                 else:
                     incoming_stream_encryption = None
                 if incoming_stream_encryption is not None and local_encryption_policy == 'opportunistic':
