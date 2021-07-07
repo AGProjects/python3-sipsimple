@@ -1,3 +1,9 @@
+python3-sipsimple (5.2.5) unstable; urgency=medium
+
+  * Fixed replicating account XCAP icon
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Wed, 07 Jul 2021 13:24:35 -0300
+
 python3-sipsimple (5.2.4) unstable; urgency=medium
 
   * Fixed negotiating encryption for RTP streams
