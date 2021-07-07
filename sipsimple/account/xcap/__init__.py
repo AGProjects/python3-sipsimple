@@ -1681,6 +1681,7 @@ class XCAPManager(object):
     def _OH_SetStatusIconOperation(self, operation):
         if not self.status_icon.supported:
             return
+
         icon = operation.icon
         if icon is None or not icon.data:
             self.status_icon.dirty = self.status_icon.content is not None
@@ -1689,8 +1690,9 @@ class XCAPManager(object):
             icon_bytes = icon.data
             data = base64.b64encode(icon_bytes).decode('utf-8')
             content = prescontent.PresenceContent(data=data, mime_type=icon.mime_type, encoding='base64', description=icon.description)
-            if self.status_icon.content.data == content.data:
+            if self.status_icon.content and content and self.status_icon.content.data == content.data:
                 return
+
             self.status_icon.content = content
 
     def _OH_SetOfflineStatusOperation(self, operation):
