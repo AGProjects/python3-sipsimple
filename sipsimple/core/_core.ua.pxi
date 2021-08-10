@@ -203,10 +203,9 @@ cdef class PJSIPUA:
             self._incoming_events.add(event)
 
         for method in kwargs["incoming_requests"]:
-            if method in (b"ACK", b"BYE", b"INVITE", b"REFER", b"SUBSCRIBE"):
+            if method in ("ACK", "BYE", "INVITE", "REFER", "SUBSCRIBE"):
                 raise ValueError('Handling incoming "%s" requests is not allowed' % method)
-            self._incoming_requests.add(method)
-
+            self._incoming_requests.add(method.encode())
         pj_stun_config_init(&self._stun_cfg, &self._caching_pool._obj.factory, 0,
                             pjmedia_endpt_get_ioqueue(self._pjmedia_endpoint._obj),
                             pjsip_endpt_get_timer_heap(self._pjsip_endpoint._obj))
@@ -300,15 +299,15 @@ cdef class PJSIPUA:
 
     def add_incoming_request(self, object method):
         self._check_self()
-        if method in (b"ACK", b"BYE", b"INVITE", b"REFER", b"SUBSCRIBE"):
+        if method in ("ACK", "BYE", "INVITE", "REFER", "SUBSCRIBE"):
             raise ValueError('Handling incoming "%s" requests is not allowed' % method)
-        self._incoming_requests.add(method)
+        self._incoming_requests.add(method.encode())
 
     def remove_incoming_request(self, object method):
         self._check_self()
-        if method in (b"ACK", b"BYE", b"INVITE", b"REFER", b"SUBSCRIBE"):
+        if method in ("ACK", "BYE", "INVITE", "REFER", "SUBSCRIBE"):
             raise ValueError('Handling incoming "%s" requests is not allowed' % method)
-        self._incoming_requests.discard(method)
+        self._incoming_requests.discard(method.encode())
 
     cdef pj_pool_t* create_memory_pool(self, bytes name, int initial_size, int resize_size):
         cdef pj_pool_t *pool
