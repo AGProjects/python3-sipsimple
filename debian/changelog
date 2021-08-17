@@ -1,3 +1,9 @@
+python3-sipsimple (5.2.6) unstable; urgency=medium
+
+  * Fixed usage of Incoming Request class
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Tue, 17 Aug 2021 14:47:17 -0300
+
 python3-sipsimple (5.2.5) unstable; urgency=medium
 
   * Fixed replicating account XCAP icon
