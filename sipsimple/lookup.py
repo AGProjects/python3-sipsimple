@@ -223,7 +223,7 @@ class DNSLookup(object):
 
     @run_in_waitable_green_thread
     @post_dns_lookup_notifications
-    def lookup_sip_proxy(self, uri, supported_transports, timeout=3.0, lifetime=15.0, tls_name=None):
+    def lookup_sip_proxy(self, uri, supported_transports, timeout=10.0, lifetime=30.0, tls_name=None):
         """
         Performs an RFC 3263 compliant lookup of transport/ip/port combinations
         for a particular SIP URI. As arguments it takes a SIPURI object
