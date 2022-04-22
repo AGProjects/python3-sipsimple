@@ -64,7 +64,10 @@ class FileStorage(object):
                 return
             raise XCAPStorageError("failed to delete XCAP data for %s/%s: %s" % (self.account_id, name, str(e)))
         else:
-            self.names.remove(name)
+            try:
+                self.names.remove(name)
+            except KeyError:
+                pass
 
     def purge(self):
         """Delete all the files stored by the backend"""
