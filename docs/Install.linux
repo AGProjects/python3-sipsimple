@@ -31,7 +31,7 @@ SIP SIMPLE SDK depends upon the following third party sources:
   https://github.com/wernerd/ZRTPCPP.git
 
 
-Fetch and patch the dependencies using get_dependencies.sh script
+Fetch and patch the dependencies using ./get_dependencies.sh script
 
 See Dependencies.txt for detailed description of the required libraries and
 their minimum version number.
@@ -92,21 +92,26 @@ sudo dpkg -i *.deb
 Step 4. Install the SDK
 -----------------------
 
-First unpack pjsip archive (only needs to be done once):
+Using pip3 inside your user environment:
 
-./extract_pjsip.sh
+pip3 install --user .
 
-The SDK consists of two packages:
+System-wide using setup.py:
 
- - python3-sipsimple
- - sipclients3 (optional, for testing all SDK functions)
+sudo python3 setup.py install
 
-Install them similar to the dependencies above.
+As a debian package:
+
+./makedeb.sh
+
+The debian package can be found inside ./dist folder
+
+sudo dpkg -i *.deb
 
 
 Step 5. Testing the SDK
 -----------------------
 
 Use the command line tools provided by sipclients3 package, the executables
-start with sip- prefix
+start with sip- prefix.
 
