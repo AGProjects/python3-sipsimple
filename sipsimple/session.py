@@ -2138,7 +2138,7 @@ class Session(object):
     @check_state(['connected'])
     @check_transfer_state(None, None)
     @run_in_twisted_thread
-    def transfer(self, target_uri, replaced_session=None, extra_headers=None):
+    def transfer(self, target_uri, replaced_session=None, extra_headers=[]):
         notification_center = NotificationCenter()
         notification_center.post_notification('SIPSessionTransferNewOutgoing', self, NotificationData(transfer_destination=target_uri, extra_headers=extra_headers))
         try:
