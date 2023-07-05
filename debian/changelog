@@ -1,3 +1,16 @@
+python3-sipsimple (5.3.0) unstable; urgency=medium
+
+  * Added support for http filetransfer (RCS RCC.07) documents
+  * Added extra headers to session transfer
+  * Increased DNS lookup timeout
+  * Fixed account delete
+  * Support ffmpeg 5.1
+  * Fixed filetransfer abort
+  * Updated installation instructions
+  * Fixed fatal compile error on macos
+
+ -- Tijmen de Mes <tijmen@ag-projects.com>  Wed, 05 Jul 2023 09:04:09 +0200
+
 python3-sipsimple (5.2.6) unstable; urgency=medium
 
   * Fixed usage of Incoming Request class
