@@ -11,6 +11,12 @@ python3-sipsimple (5.3.0) unstable; urgency=medium
 
  -- Tijmen de Mes <tijmen@ag-projects.com>  Wed, 05 Jul 2023 09:04:09 +0200
 
+python3-sipsimple (5.2.6-1) unstable; urgency=medium
+
+  * Rebuild for unstable with python 3.10 support and libvpx7
+
+ -- Tijmen de Mes <tijmen@ag-projects.com>  Fri, 29 Jul 2022 13:50:59 +0200
+
 python3-sipsimple (5.2.6) unstable; urgency=medium
 
   * Fixed usage of Incoming Request class
