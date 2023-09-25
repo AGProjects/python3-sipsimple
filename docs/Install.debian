@@ -11,25 +11,11 @@ systems from the official public repository maintained by AG Projects.
 Configure Repository
 --------------------
 
-Install the AG Projects debian software signing key: 
-
-wget http://download.ag-projects.com/agp-debian-gpg.key
-sudo apt-key add agp-debian-gpg.key
-
-Add these lines to /etc/apt/sources.list:
-
-
-Debian Stable (Buster)
------------------------
-
-deb	http://ag-projects.com/debian stable main
-deb-src http://ag-projects.com/debian stable main
-
+See https://packages.ag-projects.com
 
 Update the list of available packages:
 
 sudo apt-get update
-
 
 Install SIP SIMPLE SDK:
 
