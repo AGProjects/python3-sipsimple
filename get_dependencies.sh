@@ -3,6 +3,14 @@
 #
 # Update PJSIP 
 #
+
+sudo apt install python3 dh-python python3-all-dev cython3 libasound2-dev \
+python3-dateutil python3-dnspython libssl-dev libv4l-dev libavcodec-dev \
+libavformat-dev libopencore-amrnb-dev libopencore-amrwb-dev libavutil-dev \
+libswscale-dev libx264-dev libvpx-dev libopus-dev libsqlite3-dev pkg-config \
+uuid-dev cython cython-dbg python3-setuptools devscripts debhelper dh-python \
+python3-all-dev python3-all-dbg libasound2-dev libssl-dev libsqlite3-dev
+
 cd deps
 
 echo "Preparing PJSIP sources..."
@@ -62,7 +70,7 @@ cp -r ZRTPCPP/zrtp ./pjsip/third_party/zsrtp/zrtp/
 cp ZRTPCPP/COPYING ./pjsip/third_party/zsrtp/zrtp/
 cp ZRTPCPP/README.md ./pjsip/third_party/zsrtp/zrtp/
 
-for p in patches/*.patch; do
+for p in patches/0*.patch; do
     echo "Applying patch $p"
     cat $p | patch -p0 > /dev/null
 done
