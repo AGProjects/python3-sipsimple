@@ -1,0 +1,62 @@
+
+SIP SIMPLE client SDK installation on Raspbian
+----------------------------------------------
+
+Home page: http://sipsimpleclient.org
+
+This document describes the installation procedure on Raspbian Linux
+operating system on a Rasberry Pi (armhf architecture).
+
+
+Installation from AG Projects repository
+----------------------------------------
+
+Follow the instructions from https://packages.ag-projects.com
+
+
+Building the debian package
+---------------------------
+
+Install building dependencies:
+
+./get_dependencies.sh
+
+Obtain the source code from AG Projects using darcs command:
+
+darcs get --set-scripts-executable http://devel.ag-projects.com/repositories/project
+
+For each of the projects listed bellow:
+
+ * python3-application
+ * python3-otr
+ * python3-eventlib
+ * python3-xcap
+ * python3-msrp
+ * python3-sipsimple (see WebRTC AEC note below)
+ * sipclients3
+
+Enter the directory where each project has been downloaded and run:
+
+./makedeb.sh
+
+If makedeb.sh script is missing, run these commands:
+
+python3 setup.py sdist
+
+Go to the ./dist directory and untar the file created at the step above.
+
+Go to the newly created directory and type:
+
+debuild -us -uc --no-sign
+
+The .deb and related files are built in one of the upper directories.
+
+Use dpkg -i package_name.deb command to install the software.
+
+
+WebRTC AEC note
+---------------
+
+Before building python3-sipsimple, to enable WebRTC echo canceler on Raspbian apply the patch from:
+
+deps/patches/raspbian-webrtc.patch 

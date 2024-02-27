@@ -2,7 +2,7 @@
 SIP SIMPLE SDK
 --------------
 
-Copyright (c) 2008-2021 AG Projects
+Copyright (c) 2008-2023 AG Projects
 https://ag-projects.com
 
 
@@ -116,6 +116,7 @@ Instant Messaging
  * Indication of Message Composition for Instant Messaging (RFC 3994)
  * Message Summary Event Package (RFC 3842)
  * File Transfer (RFC 5547)
+ * Support for http file-transfer (RCS RCC.07) documents
  * OTR (Off-the-Record Messaging) a cryptographic protocol that provides
    encryption for instant messaging conversations
 
@@ -163,11 +164,9 @@ To request support you must use the mailing list available at
 
 http://lists.ag-projects.com/mailman/listinfo/sipbeyondvoip
 
-Patches and bug reports must be submitted by opening a ticket at
+Patches and bug reports can also be submitted by opening a ticket at
 
-http://sipsimpleclient.org/projects/sipsimpleclient/issues
-
-To open ticket please Register first.
+https://github.com/AGProjects/python3-sipsimple
 
 
 Acknowledgments

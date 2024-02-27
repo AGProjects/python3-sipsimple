@@ -11,34 +11,20 @@ systems from the official public repository maintained by AG Projects.
 Configure Repository
 --------------------
 
-Install the AG Projects debian software signing key: 
-
-wget http://download.ag-projects.com/agp-debian-gpg.key
-sudo apt-key add agp-debian-gpg.key
-
-Add these lines to /etc/apt/sources.list:
-
-
-Debian Stable (Buster)
------------------------
-
-deb	http://ag-projects.com/debian stable main
-deb-src http://ag-projects.com/debian stable main
-
+See https://packages.ag-projects.com
 
 Update the list of available packages:
 
 sudo apt-get update
 
-
 Install SIP SIMPLE SDK:
 
-sudo apt-get install python-sipsimple
+sudo apt-get install python3-sipsimple
 
 
 Install the Command Line Clients:
 
-sudo apt-get install sipclients 
+sudo apt-get install sipclients3
 
 
 Creating Debian Packages
@@ -46,9 +32,9 @@ Creating Debian Packages
 
 Install the building dependencies:
 
-sudo apt-get install cython cython-dbg python-setuptools devscripts \
-debhelper python-all-dev python-all-dbg libasound2-dev libssl-dev \
-libsqlite3-dev
+sudo apt-get install cython cython-dbg python3-setuptools devscripts \
+debhelper python3-all-dev python3-all-dbg libasound2-dev libssl-dev \
+libsqlite3-dev dh-python
 
 For adding Video support:
 
@@ -66,7 +52,7 @@ Obtain the source code using darcs as described in Install.linux document.
 
 Create under each repository a clean distribution file:
 
-python setup.py sdist
+python3 setup.py sdist
 
 Go to the ./dist directory and untar the file created at the step above.
 
