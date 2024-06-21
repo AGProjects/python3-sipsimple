@@ -357,7 +357,7 @@ class IncomingFileTransferHandler(FileTransferHandler):
                     stream.file_selector.fd = openfile(stream.file_selector.name, 'ab')  # open doesn't seek to END in append mode on win32 until first write, but openfile does
                     self.offset = stream.file_selector.fd.tell()
                     self.hash = prev_file.partial_hash
-                except (KeyError, EnvironmentError, ValueError):
+                except (KeyError, EnvironmentError, ValueError, AttributeError):
                     file_path = stream.file_selector.name.decode() if isinstance(stream.file_selector.name, bytes) else stream.file_selector.name
                     for name in UniqueFilenameGenerator.generate(os.path.join(directory, os.path.basename(file_path))):
                         try:
