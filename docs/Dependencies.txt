@@ -20,29 +20,39 @@ AMR codec
 
 Narrow-band
 
-   * Install opencore-amr using Brew or apt-get 
+   Install opencore-amr using apt-get on Debian/Ubuntu
 
    On Mac:
-   * export SIPSIMPLE_AMR_NB_PATH="/usr/local/opt/opencore-amr"
+
+   brew install opencore-amr
+
+   Add to shell environment:
+
+   export SIPSIMPLE_AMR_NB_PATH="/usr/local/opt/opencore-amr"
 
 Wide-band
 
-Download the tar archive from:
+Source code: https://sourceforge.net/projects/opencore-amr/files/vo-amrwbenc
 
-https://sourceforge.net/projects/opencore-amr/files/vo-amrwbenc
+A copy of the tree is included in ./deps/vo-amrwbenc-0.1.3 folder.
+
+cd ./deps/vo-amrwbenc-0.1.3/
  
 On Mac:
 
      ./configure --prefix=/usr/local/opt/vo-amrwbenc
      make 
-     make install
+     sudo make install
+
+     Add to shell environment:
+
      export SIPSIMPLE_AMR_WB_PATH="/usr/local/opt/vo-amrwbenc"
 
 On Linux:
 
      ./configure --prefix=/usr/local/
      make 
-     make install
+     sudo make install
 
 
 In ./sipsimple/configuration/settings.py add the AMR codecs to audio_codec_list:
