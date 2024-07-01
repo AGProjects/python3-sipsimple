@@ -27,21 +27,21 @@ if sys_platform == "darwin":
     except subprocess.CalledProcessError as e:
         raise RuntimeError("Could not locate SDK path: %s" % str(e))
 
-    # OpenSSL (installed with Homebrew)
-    ossl_cflags = "-I/usr/local/opt/openssl/include"
-    ossl_ldflags = "-L/usr/local/opt/openssl/lib"
+    # OpenSSL (installed with Port)
+    ossl_cflags = "-I/opt/local/include"
+    ossl_ldflags = "-L/opt/local/lib"
 
-    # SQLite (installed with Homebrew)
-    sqlite_cflags = "-I/usr/local/opt/sqlite/include"
-    sqlite_ldflags = "-L/usr/local/opt/sqlite/lib"
+    # SQLite (installed with Port)
+    sqlite_cflags = "-I/opt/local/include"
+    sqlite_ldflags = "-L/opt/local/lib"
 
-    # Opus flags (installed with Homebrew)
-    opus_cflags = "-I/usr/local/opt/opus/include"
-    opus_ldflags = "-L/usr/local/opt/opus/lib"
+    # Opus flags (installed with Port)
+    opus_cflags = "-I/opt/local/include"
+    opus_ldflags = "-L/opt/local/lib"
 
-    # VPX (installed with Homebrew)
-    vpx_cflags = "-I/usr/local/opt/libvpx/include"
-    vpx_ldflags = "-L/usr/local/opt/libvpx/lib"
+    # VPX (installed with Port)
+    vpx_cflags = "-I/opt/local/include"
+    vpx_ldflags = "-L/opt/local/lib"
     
     # Prepare final flags
     arch_flags =  "-arch x86_64 -mmacosx-version-min=%s" % min_osx_version
@@ -69,9 +69,9 @@ class PJSIP_build_ext(build_ext):
                    "#define PJMEDIA_AUDIO_DEV_HAS_WMME %d" % (1 if sys_platform=="win32" else 0),
                    "#define PJMEDIA_HAS_SPEEX_AEC 0",
                    "#define PJMEDIA_SRTP_HAS_AES_CM_256 1",
-                   "#define PJMEDIA_HAS_SPEEX_CODEC 1",
-                   "#define PJMEDIA_HAS_GSM_CODEC 1",
-                   "#define PJMEDIA_HAS_ILBC_CODEC 1",
+                   "#define PJMEDIA_HAS_SPEEX_CODEC 0",
+                   "#define PJMEDIA_HAS_GSM_CODEC 0",
+                   "#define PJMEDIA_HAS_ILBC_CODEC 0",
                    "#define PJMEDIA_HAS_OPENCORE_AMRNB_CODEC 0",
                    "#define PJMEDIA_HAS_OPENCORE_AMRWB_CODEC 0",
                    "#define PJMEDIA_HAS_WEBRTC_AEC 1",
@@ -180,7 +180,7 @@ class PJSIP_build_ext(build_ext):
             cmd = ["./configure"]
 
         cmd.extend(["--disable-openh264", "--disable-l16-codec", "--disable-g7221-codec", "--disable-sdl"])
-        #cmd.extend(["--disable-ilbc-codec", "--disable-speex-codec", "--disable-gsm-codec"])
+        cmd.extend(["--disable-ilbc-codec", "--disable-speex-codec", "--disable-gsm-codec", "--disable-speex-aec"])
         
         ffmpeg_path = env.get("SIPSIMPLE_FFMPEG_PATH", None)
         if ffmpeg_path is not None:
