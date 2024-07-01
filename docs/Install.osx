@@ -16,8 +16,8 @@ Step 3. Install SIP SIMPLE SDK
 Step 1. Prerequisites
 ---------------------
 
- * MacOSX >= 10.14
- * Apple Developer tools (XCode 11)
+ * MacOSX 13
+ * Apple Developer tools (XCode 14)
  * MacPorts from https://guide.macports.org
 
 
@@ -138,3 +138,7 @@ See Install.linux document
 
 Same steps related to C dependencies must be taken for .so dynamic libraries
 that are part of Python packages on which the SDK depends.
+
+See install_osx_user.sh script in the top directory.
+
+

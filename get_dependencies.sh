@@ -1,18 +1,21 @@
 #!/bin/bash
 
-#
-# Update PJSIP 
-#
 
+unamestr=$(uname)
+if [[ "$unamestr" == 'Linux' ]]; then
 sudo apt install python3 dh-python python3-all-dev cython3 libasound2-dev \
 python3-dateutil python3-dnspython libssl-dev libv4l-dev libavcodec-dev \
 libavformat-dev libopencore-amrnb-dev libopencore-amrwb-dev libavutil-dev \
 libswscale-dev libx264-dev libvpx-dev libopus-dev libsqlite3-dev pkg-config \
 uuid-dev cython cython-dbg python3-setuptools devscripts debhelper dh-python \
 python3-all-dev python3-all-dbg libasound2-dev libssl-dev libsqlite3-dev
+fi
 
 cd deps
 
+#
+# Update PJSIP 
+#
 echo "Preparing PJSIP sources..."
 if [ ! -f 2.10.tar.gz ]; then
     echo Downloading PJSIP 2.10...
