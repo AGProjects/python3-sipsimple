@@ -42,7 +42,7 @@ the following packages, notice the minimum version numbers.
 Using pip3 inside your user environment:
 
 pip3 install --user cython==0.29.37 dnspython lxml twisted python-dateutil \
-greenlet zope.interface requests gmpy2 wheel
+greenlet zope.interface requests gmpy2 wheel gevent
 
 
 Step 3. Install AG Projects dependencies
