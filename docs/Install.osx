@@ -19,6 +19,7 @@ Step 1. Prerequisites
  * MacOSX 13
  * Apple Developer tools (XCode 14)
  * MacPorts from https://guide.macports.org
+ * Python 3.9, 3.10 or 3.11
 
 
 Step 2. Install dependencies
@@ -31,7 +32,7 @@ A. Install the C dependencies
 
 Install some building tools:
 
-sudo port install darcs pkg-config yasm 
+sudo port install darcs yasm 
 
 Install the dynamic libraries required by sipsimple:
 
