@@ -1,0 +1,15 @@
+--- pjsip/pjmedia/src/pjmedia-codec/vpx.c	2021-06-23 09:50:03.983367807 +0200
++++ pjsip/pjmedia/src/pjmedia-codec/vpx.c	2021-06-23 09:49:17.753967323 +0200
+@@ -507,8 +507,10 @@
+     PJ_ASSERT_RETURN(codec, PJ_EINVAL);
+ 
+     vpx_data = (vpx_codec_data*) codec->codec_data;
+-    vpx_codec_destroy(&vpx_data->enc);
+-    vpx_codec_destroy(&vpx_data->dec);
++    if (&vpx_data->enc)
++        vpx_codec_destroy(&vpx_data->enc);
++    if (&vpx_data->dec)
++        vpx_codec_destroy(&vpx_data->dec);
+ 
+     return PJ_SUCCESS;
+ }
