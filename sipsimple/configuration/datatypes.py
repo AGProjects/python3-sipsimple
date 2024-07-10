@@ -214,7 +214,7 @@ class CodecList(List):
     @values.setter
     def values(self, values):
         if not set(values).issubset(self.available_values):
-            raise ValueError("illegal codec values: %s" % ', '.join(values))
+            raise ValueError("illegal codecs: %s must be a subset of %s" % (', '.join(set(values)), self.available_values))
         self.__dict__['values'] = values
 
 
