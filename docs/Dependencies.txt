@@ -18,6 +18,8 @@ Fetch and patch the dependencies using get_dependencies.sh script
 AMR codec
 ---------
 
+See codecs note below.
+
 Narrow-band
 
    Install opencore-amr using apt-get on Debian/Ubuntu
@@ -55,11 +57,6 @@ On Linux:
      sudo make install
 
 
-In ./sipsimple/configuration/settings.py add the AMR codecs to audio_codec_list:
-
-    default=AudioCodecList(('opus', 'G722', 'PCMU', 'PCMA', 'speex', 'iLBC', 'GSM', 'AMR-WB')))
-
-
 Python dependencies available from AG Projects repositories:
 
  * python3-application      http://download.ag-projects.com/SipSimpleSDK/Python3/ 
@@ -74,4 +71,13 @@ The dependencies for each package can be found inside debian/control file
 On a Debian or Ubuntu based system you can install their dependencies using:
 
 sudo mk-build-deps --install debian/control
+
+
+Codecs note
+-----------
+
+Depending on what codecs have been compiled, one needs to modify in place:
+
+AudioCodecList inside sipsimple/configuration/datatypes.py
+RTPSettings inside sipsimple/configuration/setting.py
 
