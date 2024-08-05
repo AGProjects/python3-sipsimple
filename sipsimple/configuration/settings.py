@@ -13,8 +13,8 @@ from sipsimple.configuration.datatypes import Port, PortRange, SIPTransportList
 from sipsimple.configuration.datatypes import Path
 from sipsimple.configuration.datatypes import H264Profile, VideoResolution
 
-
 __all__ = ['SIPSimpleSettings']
+
 
 
 class EchoCancellerSettings(SettingsGroup):
@@ -64,12 +64,14 @@ class LogsSettings(SettingsGroup):
     trace_pjsip = Setting(type=bool, default=False)
     pjsip_level = Setting(type=PJSIPLogLevel, default=5)
 
-
-class RTPSettings(SettingsGroup):
-    port_range = Setting(type=PortRange, default=PortRange(50000, 50500))
-    timeout = Setting(type=NonNegativeInteger, default=30)
-    audio_codec_list = Setting(type=AudioCodecList, default=AudioCodecList(('opus', 'G722', 'PCMU', 'PCMA', 'speex', 'iLBC', 'GSM')))
-    video_codec_list = Setting(type=VideoCodecList, default=VideoCodecList(('H264', 'VP8', 'VP9')))
+try:
+    from sipsimple.configuration._codecs import RTPSettings
+except ImportError:
+    class RTPSettings(SettingsGroup):
+        port_range = Setting(type=PortRange, default=PortRange(50000, 50500))
+        timeout = Setting(type=NonNegativeInteger, default=30)
+        audio_codec_list = Setting(type=AudioCodecList, default=AudioCodecList(('opus', 'G722', 'PCMU', 'PCMA', 'speex', 'iLBC', 'GSM')))
+        video_codec_list = Setting(type=VideoCodecList, default=VideoCodecList(('H264', 'VP8', 'VP9')))
 
 
 def sip_port_validator(port, sibling_port):
