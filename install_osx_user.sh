@@ -43,11 +43,13 @@ if [ ! -d python3-sipsimple ]; then
 fi
 
 cd python3-sipsimple
+chmod +x ./get_dependencies.sh
+chmod +x ./build_inplace
 ./get_dependencies.sh 
 pip3 install --user .
 cd ..
 
-# Download nand install SIP command line tools
+# Download and install SIP command line tools
 if [ ! -d sipclients3 ]; then
     darcs clone http://devel.ag-projects.com/repositories/sipclients3
 fi
