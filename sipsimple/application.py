@@ -31,7 +31,7 @@ from sipsimple.configuration import ConfigurationManager
 from sipsimple.configuration.settings import SIPSimpleSettings
 from sipsimple.core import AudioMixer, Engine, SIPCoreError, PJSIPError
 from sipsimple.lookup import DNSManager
-from sipsimple.session import SessionManager
+from sipsimple.session import SessionManager, TerminateSubscription
 from sipsimple.storage import ISIPSimpleStorage, ISIPSimpleApplicationDataStorage
 from sipsimple.threading import ThreadManager, run_in_thread, run_in_twisted_thread
 from sipsimple.threading.green import run_in_green_thread
@@ -138,7 +138,10 @@ class SIPApplication(object, metaclass=Singleton):
             notification_center.post_notification('SIPApplicationWillEnd', sender=self)
         else:
             self._initialize_core()
-            reactor.run(installSignalHandlers=False)
+            try:
+                reactor.run(installSignalHandlers=False)
+            except TerminateSubscription:
+                pass
         with self._lock:
             self.state = 'stopped'
         notification_center.post_notification('SIPApplicationDidEnd', sender=self)
