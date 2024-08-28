@@ -2,7 +2,7 @@
 SIP SIMPLE SDK installation on Microsoft Windows
 ------------------------------------------------
 
-Note: This document has not been updated since the migration from Python 2
+Note: This document is work in progress.
 
 Home page: http://sipsimpleclient.org
 
@@ -13,64 +13,51 @@ operating systems. Supported versions are Windows XP or higher.
 Step 1. Prerequisites
 ---------------------
 
-First download and install darcs version control utility from darcs.net:
-
-http://darcs.net/binaries/windows/darcs-2.8.1-win1.msi
-
 The building process is designed to work with the MSYS2 environment and the
-MinGW-w64 compiler toolchain. Other approaches might work but they are not
+MinGW-w64 compiler toolchain.  Other approaches might work but they are not
 tested nor supported.
 
-MSYS2: MSYS2 is a minimal Unix-like environment for Windows. It includes a port
-of the 'pacman' package manager (ported from Arch Linux) and a pretty extensive
-collection of packages which can be easily installed. It contains packages for the
-MinGW-w64 toolchain, for 32 and 64 bit architectures.
+MSYS2: MSYS2 is a minimal Unix-like environment for Windows.  It includes a
+port of the 'pacman' package manager (ported from Arch Linux) and a pretty
+extensive collection of packages which can be easily installed.  It contains
+packages for the MinGW-w64 toolchain, for 32 and 64 bit architectures.
 
-MinGW-w64: MinGW is a minimal compilation toolchain for Windows. It contains GCC and
-allows for compilation of native applications for Windows. The original MinGW project
-(available at http://mingw.org, henceforth referred to as 'MinGW32') didn't support
-64 bit Windows so the MinGW-w64 project was created. It contains support for both 32
-and 64 bit architectures and generally it's better maintained than MinGW32.
+MinGW-w64: MinGW is a minimal compilation toolchain for Windows.  It
+contains GCC and allows for compilation of native applications for Windows. 
+The original MinGW project (available at http://mingw.org, henceforth
+referred to as 'MinGW32') didn't support 64 bit Windows so the MinGW-w64
+project was created.  It contains support for both 32 and 64 bit
+architectures and generally it's better maintained than MinGW32.
 
 
 Step 1.1. Installing MSYS2 and MinGW-w64
 ----------------------------------------
 
-The following instructions will guide you through the installation of a MSYS2 and MinGW-w64
-installation for a 32 bit Windows system. A 64 bit build is definitely possible but
-hasn't been tested.
+The following instructions will guide you through the installation of a MSYS2 and MinGW-w64.
 
-* Go to http://msys2.github.io and download the 32 bit (i686) MSYS2 installer
+* Go to http://msys2.github.io and download the MSYS2 installer
 * Run it and install it on C:\msys2 (or any other path, but note it has to be
   ASCII only and with no spaces! The no spaces restriction also applies to the
   paths of the packages that will be built during the installation)
-* Once the process is finished, check the box to "Run MSYS2 32bit now", a new
-  terminal window will appear
 * Upgrade the system packages by following the instructions from:
   http://msys2.github.io
+
+Launch MSYS MINGW64
+
 * Install the compiler toolchain and assorted tools:
-  pacman -S mingw-w64-i686-toolchain make mingw-w64-i686-libtool autoconf automake-wrapper
-
-After MSYS2 was installed a new menu group was created on the Window start menu: "MSYS2 32bit",
-which contains 3 links: MinGW-w64 Win32 Shell, MinGW-w64 Win64 Shell and MSYS2 Shell. We'll
-use "MinGW-w64 Win32 Shell" from now on, since it will contain the 32 bit MinGW-w64 toolchain
-in the path.
+  pacman -S mingw-w64-x86_64-toolchain
 
 
-Step 1.2. Installing Python 2.7
+Step 1.2. Installing Python-PIP
 -------------------------------
 
-In order to avoid problems derived from using multiple C runtimes, we are going to
-install Python 2.7 using pacman. The Python binaries that are available for download
-on Python's official website are compiled with Visual Studio, and if we use MinGW
-to compile libraries which are then used by Python modules we are at risk because
-the resulting application would load 2 different C runtimes.
+The Python binaries that are available for download on Python's official
+website are compiled with Visual Studio, and if we use MinGW to compile
+libraries which are then used by Python modules we are at risk because the
+resulting application would load 2 different C runtimes.  So you should
+remove python3 if it is installed in Windows.
 
-* Install Python 2.7 by running: pacman -S mingw-w64-i686-python2
-* Install pip/setuptools: pacman -S mingw-w64-i686-python2-pip
-
-NOTE: At the time of this writing the Python REPL needs to be started with "python -i" due to
-a problem with the ncurses libraries.
+* Install pip/setuptools: pacman -S mingw-w64-x86_64-python3-pip
 
 
 Step 2. Install dependencies
@@ -80,46 +67,51 @@ See Dependencies.txt for detailed description of the required libraries and
 their minimum version number.
 
 * Install required dependencies with pacman:
-  pacman -S mingw-w64-i686-gnutls mingw-w64-i686-python2-lxml mingw-w64-i686-ffmpeg mingw-w64-i686-sqlite3 msys2-w32api-headers mingw-w64-i686-gmp mingw-w64-i686-mpc mingw-w64-i686-mpfr
+
+  pacman -S mingw-w64-x86_64-gnutls mingw-w64-x86_64-python3-lxml \
+  mingw-w64-x86_64-ffmpeg mingw-w64-x86_64-sqlite3 msys2-w32api-headers \
+  mingw-w64-x86_64-gmp mingw-w64-x86_64-mpc mingw-w64-x86_64-mpfr
+
 * Install the Python package dependencies:
-  pip install cython dnspython twisted python-dateutil greenlet python-application python-cjson python-gnutls python-otr
+
+  pip3 install cython==0.29.37 dnspython twisted python-dateutil greenlet  
 
 
-Step 2.1. Install python-otr dependencies (if installation fails)
------------------------------------------------------------------
+Step 2.1. Install python3-application, python3-gnults and python3-otr
+---------------------------------------------------------------------
 
-At the time of this writing installing python-otr straight from PyPI is not
-possible due to some of its dependencies having problems in the MinGW
-toolchain.
+* Install git:
+  pacman -S git
 
-Installing these from source works though, so let's do that.
+* Install python3-application
 
-* Install Mercurial and Git:
-  pacman -S mercurial git
+  pip3 install git+https://github.com/AGProjects/python3-application.git
 
-* Install cffi:
-  hg clone https://bitbucket.org/cffi/cffi
-  cd cffi
-  pip install .
+* Install python3-gnutls:
+
+  git clone https://github.com/AGProjects/python3-gnutls.git
+  empty requirements.txt
+  pip3 install .
 
 * Install cryptography:
-  git clone https://github.com/pyca/cryptography.git
-  cd cryptography
-  pip install .
 
-  Note: if pip install fails, with:
+  pacman -S mingw-w64-x86_64-python-cffi
 
-    distutils.errors.DistutilsPlatformError: VC 6.0 is not supported by this module
+  wget https://mirror.msys2.org/mingw/sources/mingw-w64-python-cryptography-38.0.4-1.src.tar.zst
 
-  check: https://github.com/pypa/setuptools/issues/1118 (PeterMosmans' answer)
+  Extract this and cd into the dir:
+  tar --zstd -xvf ./mingw-w64-python-cryptography-38.0.4-1.src.tar.zst
+  cd mingw-w64-python-cryptography
+  makepkg-mingw -cfiL --nocheck --nosign
 
 * Install gmpy2:
-  git clone https://github.com/aleaxit/gmpy.git
-  cd gmpy
-  pip install .
 
-* Install python-otr:
-  pip install python-otr
+  pacman -S mingw-w64-x86_64-python-gmpy2
+
+* Install python3-otr:
+
+  git clone https://github.com/AGProjects/python3-otr.git
+  python setup.py install
 
 
 Step 2.2. Build and install some extra packages
@@ -150,50 +142,19 @@ Make sure that the path where you download the software below does not
 contain any space in its name.
 
 # Eventlib
-if [ -d python-eventlib ]; then
-        cd python-eventlib
-        darcs pull -a
-else
-        darcs get http://devel.ag-projects.com/repositories/python-eventlib
-        cd python-eventlib
-fi
-pip install .
-cd ..
+  git clone https://github.com/AGProjects/python3-eventlib.git
+  cd python3-eventlib
+  pip3 install .
+  cd ..
 
 # XCAP library
-if [ -d python-xcaplib ]; then
-        cd python-xcaplib
-        darcs pull -a
-else
-        darcs get http://devel.ag-projects.com/repositories/python-xcaplib
-        cd python-xcaplib
-fi
-pip install .
-cd ..
+  git clone https://github.com/AGProjects/python3-xcaplib.git
+  cd python3-xcaplib
+  pip3 install .
+  cd ..
 
 # MSRP library
-if [ -d python-msrplib ]; then
-        cd python-msrplib
-        darcs pull -a
-else
-        darcs get http://devel.ag-projects.com/repositories/python-msrplib
-        cd python-msrplib
-fi
-pip install .
-cd ..
-
-# SIP SIMPLE
-if [ -d python-sipsimple ]; then
-        cd python-sipsimple
-        darcs pull -a
-else
-        darcs get --set-scripts-executable http://devel.ag-projects.com/repositories/python-sipsimple
-        cd python-sipsimple
-fi
-./build_inplace --pjsip-clean-compile
-pip install .
-cd ..
-
-
-The software has been installed in C:\msys2\mingw32\lib\python2.7\site-packages
-
+  git clone https://github.com/AGProjects/python3-msrplib.git
+  cd python3-msrplib
+  pip3 install .
+  cd ..
