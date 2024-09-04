@@ -52,6 +52,13 @@ if sys_platform == "darwin":
     os.environ['ARCHFLAGS'] = arch_flags
     os.environ['MACOSX_DEPLOYMENT_TARGET'] = min_osx_version
 
+if sys_platform == "win32":
+    offmpeg_cflags = "-I/mingw64/include"
+    offmepg_ldflags = "-L/mingw64/lib/"
+    local_cflags = " %s" % (offmpeg_cflags)
+    local_ldflags = " %s" % (offmepg_ldflags)
+    os.environ['CFLAGS'] = os.environ.get('CFLAGS', '') + local_cflags
+    os.environ['LDFLAGS'] = os.environ.get('LDFLAGS', '') + local_ldflags
 
 from distutils import log
 from distutils.dir_util import copy_tree
@@ -182,6 +189,9 @@ class PJSIP_build_ext(build_ext):
         cmd.extend(["--disable-openh264", "--disable-l16-codec", "--disable-g7221-codec", "--disable-sdl"])
         cmd.extend(["--disable-ilbc-codec", "--disable-speex-codec", "--disable-gsm-codec", "--disable-speex-aec"])
         
+        if sys_platform == "win32":
+            cmd.extend(["--enable-video=yes"])
+
         ffmpeg_path = env.get("SIPSIMPLE_FFMPEG_PATH", None)
         if ffmpeg_path is not None:
             cmd.append("--with-ffmpeg=%s" % os.path.abspath(os.path.expanduser(ffmpeg_path)))
