@@ -74,7 +74,7 @@ their minimum version number.
 
 * Install the Python package dependencies:
 
-  pip3 install cython==0.29.37 dnspython twisted python-dateutil greenlet  
+  pip3 install cython==0.29.37 dnspython twisted python-dateutil greenlet
 
 
 Step 2.1. Install python3-application, python3-gnults and python3-otr
@@ -89,13 +89,12 @@ Step 2.1. Install python3-application, python3-gnults and python3-otr
 
 * Install python3-gnutls:
 
-  git clone https://github.com/AGProjects/python3-gnutls.git
-  empty requirements.txt
-  pip3 install .
+  pacman -S mingw-w64-x86_64-python-pyopenssl
+  pip install git+https://github.com/AGProjects/python3-gnutls.git --no-build-isolation
 
 * Install cryptography:
 
-  pacman -S mingw-w64-x86_64-python-cffi
+  pacman -S --overwrite '*' mingw-w64-x86_64-python-setuptools-rust patch
 
   wget https://mirror.msys2.org/mingw/sources/mingw-w64-python-cryptography-38.0.4-1.src.tar.zst
 
@@ -110,8 +109,7 @@ Step 2.1. Install python3-application, python3-gnults and python3-otr
 
 * Install python3-otr:
 
-  git clone https://github.com/AGProjects/python3-otr.git
-  python setup.py install
+  pip install git+https://github.com/AGProjects/python3-otr.git --no-build-isolation
 
 
 Step 2.2. Build and install some extra packages
@@ -121,6 +119,7 @@ mingw-w64-intsafe-headers
 
 * Get the package code: darcs get http://devel.ag-projects.com/repositories/windows/mingw-w64-intsafe-headers
 * Enter the directory and build+install the package: cd mingw-w64-intsafe-headers && makepkg-mingw -cfiL --nocheck --nosign
+* Install will probably fail, so install with pacman -S --overwrite '*' ./mingw-w64-intsafe-headers-1.1.0-1-any.pkg.tar.zst
 
 mingw-w64-dshow-baseclasses
 
@@ -144,17 +143,61 @@ contain any space in its name.
 # Eventlib
   git clone https://github.com/AGProjects/python3-eventlib.git
   cd python3-eventlib
-  pip3 install .
+  
+  Eventlib needs to be patched:
+
+  diff --git a/eventlib/green/socket.py b/eventlib/green/socket.py
+  index 7a4623b..0455e2e 100644
+
+  --- a/eventlib/green/socket.py
+  +++ b/eventlib/green/socket.py
+  @@ -1,5 +1,5 @@
+  import socket as __socket
+  -from socket import (__all__, error, AF_INET, AF_UNIX, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR, getdefaulttimeout, gethostname, getnameinfo, getservbyname, herror, htonl, SOCK_DGRAM, timeout, gaierror, SOCK_RAW, setdefaulttimeout, getservbyport, gethostbyaddr, ntohl, htons, ntohs, getfqdn, SOCK_RDM, SOCK_SEQPACKET)
+  +from socket import (__all__, error, AF_INET, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR, getdefaulttimeout, gethostname, getnameinfo, getservbyname, herror, htonl, SOCK_DGRAM, timeout, gaierror, SOCK_RAW, setdefaulttimeout, getservbyport, gethostbyaddr, ntohl, htons, ntohs, getfqdn, SOCK_RDM, SOCK_SEQPACKET)
+
+  from eventlib.api import get_hub
+  from eventlib.greenio import GreenSocket as socket
+
+  pip install .
   cd ..
 
 # XCAP library
   git clone https://github.com/AGProjects/python3-xcaplib.git
   cd python3-xcaplib
-  pip3 install .
+  Gevent does not work yet. So we need to patch xcaplib:
+
+  diff --git a/xcaplib/client.py b/xcaplib/client.py
+  index 6b489cb..3f904ca 100644
+  --- a/xcaplib/client.py
+  +++ b/xcaplib/client.py
+  @@ -1,8 +1,8 @@
+  -import gevent
+  -from gevent import monkey
+  +#import gevent
+  +#from gevent import monkey
+
+  -monkey.patch_socket()
+  -monkey.patch_ssl()
+  +#monkey.patch_socket()
+  +#monkey.patch_ssl()
+
+  from xcaplib import __version__
+  from xcaplib.httpclient import HTTPClient
+
+  pip install .
   cd ..
 
 # MSRP library
-  git clone https://github.com/AGProjects/python3-msrplib.git
-  cd python3-msrplib
-  pip3 install .
-  cd ..
+  pip install git+https://github.com/AGProjects/python3-msrplib.git --no-build-isolation
+
+# SIPSimple SDK
+  git clone https://github.com/AGProjects/python3-sipsimple.git
+  pacman -S msys/make
+  cd python3-sipsimple
+  ./get_dependencies.sh
+  Gevent does not work yet. So we need to patch xcap:
+  patch -p1 < ./deps/patches/windows/001_disable_gevent.patch
+  pip install . --no-build-isolation
+
+
