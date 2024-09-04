@@ -73,9 +73,10 @@ cp -r ZRTPCPP/zrtp ./pjsip/third_party/zsrtp/zrtp/
 cp ZRTPCPP/COPYING ./pjsip/third_party/zsrtp/zrtp/
 cp ZRTPCPP/README.md ./pjsip/third_party/zsrtp/zrtp/
 
+
 for p in patches/0*.patch; do
     echo "Applying patch $p"
-    cat $p | patch -p0 > /dev/null
+    patch -p0 < $p > /dev/null
 done
 
 cd - > /dev/null
