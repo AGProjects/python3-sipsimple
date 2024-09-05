@@ -19,6 +19,7 @@ index a015c13d..3c088694 100644
 -        gevent.joinall(jobs, timeout=15)
 +        # jobs = [gevent.spawn(document.fetch) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
 +        # gevent.joinall(jobs, timeout=15)
++        pass
 
      def _save_journal(self):
          try:
