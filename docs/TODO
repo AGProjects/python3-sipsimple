@@ -1,8 +1,8 @@
 TODO
 ----
 
+ - Remove use of gevent that doesnot work on Windows
  - Use individual TCP/TLS transport per SIP account
- - Use individual TLS settings per account (CA, list, certificate and verify server)
  - After ICE neg is completed we must send re-INVITE with the chosen RTP candidates
  - Cannot retry a Call Transfer if it failed (invitation._transfer_usage is not reset) 
  - Modify Invitation/Request/Subscription to reset transport on request_uri
@@ -11,16 +11,8 @@ TODO
    SIPSessionLocalPartyIsFocus, SIPSessionRemotePartyIsFocus
 
 
-Migrate from eventlib to gevent
--------------------------------
-
- * http://sdiehl.github.io/gevent-tutorial/
- * https://blog.gevent.org/2010/02/27/why-gevent/
- * http://groups.google.com/group/gevent/browse_thread/thread/7fca7230db0509f6
-
-
-TODO Python version 2
----------------------
+TODO Python 2
+-------------
 
 - If the SIP account password is changed on the server, then the client
   modifies some contact, xcap PUT will keep failing with 401 even after

@@ -2,8 +2,6 @@
 SIP SIMPLE SDK installation on Microsoft Windows
 ------------------------------------------------
 
-Note: This document is work in progress.
-
 Home page: http://sipsimpleclient.org
 
 This document describes the installation procedure on Microsoft Windows
@@ -165,6 +163,7 @@ contain any space in its name.
 # XCAP library
   git clone https://github.com/AGProjects/python3-xcaplib.git
   cd python3-xcaplib
+
   Gevent does not work yet. So we need to patch xcaplib:
 
   diff --git a/xcaplib/client.py b/xcaplib/client.py
@@ -196,8 +195,9 @@ contain any space in its name.
   pacman -S msys/make
   cd python3-sipsimple
   ./get_dependencies.sh
-  Gevent does not work yet. So we need to patch xcap:
-  patch -p1 < ./deps/patches/windows/001_disable_gevent.patch
-  pip install . --no-build-isolation
 
+  Gevent does not work yet, we skip it for the time being by patching xcap:
+  patch -p1 < ./deps/patches/windows/001_disable_gevent.patch
+
+  pip install . --no-build-isolation
 
