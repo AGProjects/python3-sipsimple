@@ -139,65 +139,21 @@ Make sure that the path where you download the software below does not
 contain any space in its name.
 
 # Eventlib
-  git clone https://github.com/AGProjects/python3-eventlib.git
-  cd python3-eventlib
-  
-  Eventlib needs to be patched:
-
-  diff --git a/eventlib/green/socket.py b/eventlib/green/socket.py
-  index 7a4623b..0455e2e 100644
-
-  --- a/eventlib/green/socket.py
-  +++ b/eventlib/green/socket.py
-  @@ -1,5 +1,5 @@
-  import socket as __socket
-  -from socket import (__all__, error, AF_INET, AF_UNIX, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR, getdefaulttimeout, gethostname, getnameinfo, getservbyname, herror, htonl, SOCK_DGRAM, timeout, gaierror, SOCK_RAW, setdefaulttimeout, getservbyport, gethostbyaddr, ntohl, htons, ntohs, getfqdn, SOCK_RDM, SOCK_SEQPACKET)
-  +from socket import (__all__, error, AF_INET, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR, getdefaulttimeout, gethostname, getnameinfo, getservbyname, herror, htonl, SOCK_DGRAM, timeout, gaierror, SOCK_RAW, setdefaulttimeout, getservbyport, gethostbyaddr, ntohl, htons, ntohs, getfqdn, SOCK_RDM, SOCK_SEQPACKET)
-
-  from eventlib.api import get_hub
-  from eventlib.greenio import GreenSocket as socket
-
-  pip install .
-  cd ..
+  pip install git+https://github.com/AGProjects/python3-eventlib.git --no-build-isolation
 
 # XCAP library
-  git clone https://github.com/AGProjects/python3-xcaplib.git
-  cd python3-xcaplib
-
-  Gevent does not work yet. So we need to patch xcaplib:
-
-  diff --git a/xcaplib/client.py b/xcaplib/client.py
-  index 6b489cb..3f904ca 100644
-  --- a/xcaplib/client.py
-  +++ b/xcaplib/client.py
-  @@ -1,8 +1,8 @@
-  -import gevent
-  -from gevent import monkey
-  +#import gevent
-  +#from gevent import monkey
-
-  -monkey.patch_socket()
-  -monkey.patch_ssl()
-  +#monkey.patch_socket()
-  +#monkey.patch_ssl()
-
-  from xcaplib import __version__
-  from xcaplib.httpclient import HTTPClient
-
-  pip install .
-  cd ..
+  pip install git+https://github.com/AGProjects/python3-xcaplib.git --no-build-isolation
 
 # MSRP library
   pip install git+https://github.com/AGProjects/python3-msrplib.git --no-build-isolation
 
 # SIPSimple SDK
-  git clone https://github.com/AGProjects/python3-sipsimple.git
-  pacman -S msys/make patch
-  cd python3-sipsimple
-  ./get_dependencies.sh
 
-  Gevent does not work yet, we skip it for the time being by patching xcap:
-  patch -p1 < ./deps/patches/windows/001_disable_gevent.patch
+  git clone https://github.com/AGProjects/python3-sipsimple.git
+
+  cd python3-sipsimple
+
+  ./get_dependencies.sh
 
   pip install . --no-build-isolation
 
