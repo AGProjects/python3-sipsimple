@@ -339,7 +339,7 @@ class ScreenSharingStream(MSRPStreamBase):
         self.msrp_writer_thread = spawn(self._msrp_writer)
 
     def _NH_MediaStreamWillEnd(self, notification):
-        notification.center.remove_observer(self, sender=self.handler)
+        notification.center.discard_observer(self, sender=self.handler)
         if self.msrp_reader_thread is not None:
             self.msrp_reader_thread.kill()
             self.msrp_reader_thread = None
