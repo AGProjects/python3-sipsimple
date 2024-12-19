@@ -193,13 +193,14 @@ class OTREncryption(object):
 
     def __init__(self, stream):
         self.stream = stream
+        self.otr_cache = OTRCache()
+
         try:
             self.otr_session = OTRSession(self.otr_cache.private_key, self.stream, supported_versions={3})  # we need at least OTR-v3 for question based SMP
         except NameError:
             self.otr_session = Null
             return
 
-        self.otr_cache = OTRCache()
 
         notification_center = NotificationCenter()
         notification_center.add_observer(self, sender=stream)
