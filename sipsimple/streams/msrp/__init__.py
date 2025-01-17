@@ -168,12 +168,16 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
             full_local_path = self.msrp_connector.prepare(local_uri=URI(host=host.default_ip, port=0, use_tls=self.transport=='tls', credentials=self.session.account.tls_credentials))
             self.local_media = self._create_local_media(full_local_path)
         except (CertificateError, CertificateAuthorityError, CertificateExpiredError, CertificateSecurityError, CertificateRevokedError) as e:
-            reason = "%s for %s" % (e.error, e.certificate.subject.CN.lower())
+            reason = "%s for CN %s issued by %s" % (e.error, e.certificate.subject.CN, e.certificate.issuer.CN)
             notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason=reason, transport=self.transport, credentials=self.session.account.tls_credentials))
         except Exception as e:
             notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason=str(e), transport=self.transport, credentials=self.session.account.tls_credentials))
         else:
-            notification_center.post_notification('MediaStreamDidInitialize', sender=self)
+            if self.transport == 'tls':
+                reason = "%s for CN %s issued by %s" % (e.error, e.certificate.subject.CN, e.certificate.issuer.CN)
+            else:
+                reason = None
+            notification_center.post_notification('MediaStreamDidInitialize', sender=self, data=NotificationData(reason=reason))
         finally:
             self._initialize_done = True
             self.greenlet = None
