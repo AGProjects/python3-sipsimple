@@ -173,11 +173,7 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
         except Exception as e:
             notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason=str(e), transport=self.transport, credentials=self.session.account.tls_credentials))
         else:
-            if self.transport == 'tls':
-                reason = "%s for CN %s issued by %s" % (e.error, e.certificate.subject.CN, e.certificate.issuer.CN)
-            else:
-                reason = None
-            notification_center.post_notification('MediaStreamDidInitialize', sender=self, data=NotificationData(reason=reason))
+            notification_center.post_notification('MediaStreamDidInitialize', sender=self)
         finally:
             self._initialize_done = True
             self.greenlet = None
