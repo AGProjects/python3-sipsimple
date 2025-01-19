@@ -1,6 +1,8 @@
 python3-sipsimple (5.3.1) UNRELEASED; urgency=medium
 
   * Critical fix for call transfers
+  * Capture exception in audio bridge
+  * Update build dependencies with cython-legacy
 
  -- Adrian Georgescu <support@ag-projects.com>  Sun, 19 Jan 2025 21:19:29 +0100
 
