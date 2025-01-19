@@ -233,7 +233,13 @@ class AudioStream(RTPStream):
             self._audio_rec = None
 
     def _pause(self):
-        self.bridge.remove(self)
+        try:
+            self.bridge.remove(self)
+        except ValueError:
+            pass
 
     def _resume(self):
-        self.bridge.add(self)
+        try:
+            self.bridge.add(self)
+        except ValueError:
+            pass
