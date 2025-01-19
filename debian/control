@@ -6,7 +6,7 @@ Uploaders: Tijmen de Mes <tijmen@ag-projects.com>
 Build-Depends: debhelper (>= 11), python3,
                dh-python,
                python3-all-dev,
-               cython3,
+               cython3-legacy,
                libasound2-dev,
                python3-dateutil,
                python3-dnspython,
