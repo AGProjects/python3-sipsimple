@@ -1,3 +1,9 @@
+python3-sipsimple (5.3.1) UNRELEASED; urgency=medium
+
+  * Critical fix for call transfers
+
+ -- Adrian Georgescu <support@ag-projects.com>  Sun, 19 Jan 2025 21:19:29 +0100
+
 python3-sipsimple (5.3.0) unstable; urgency=medium
 
   * Added support for http filetransfer (RCS RCC.07) documents
