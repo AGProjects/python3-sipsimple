@@ -157,12 +157,12 @@ class Account(SettingsObject):
         self._registrar = Registrar(self)
         self._mwi_subscriber = MWISubscriber(self)
         self._pwi_subscriber = PresenceWinfoSubscriber(self)
-        self._dwi_subscriber = DialogWinfoSubscriber(self)
         self._presence_subscriber = PresenceSubscriber(self)
         self._self_presence_subscriber = SelfPresenceSubscriber(self)
-        self._dialog_subscriber = DialogSubscriber(self)
         self._presence_publisher = PresencePublisher(self)
-        self._dialog_publisher = DialogPublisher(self)
+        #self._dwi_subscriber = DialogWinfoSubscriber(self)
+        #self._dialog_publisher = DialogPublisher(self)
+        #self._dialog_subscriber = DialogSubscriber(self)
         self._mwi_voicemail_uri = None
         self._pwi_version = None
         self._dwi_version = None
@@ -183,10 +183,10 @@ class Account(SettingsObject):
         notification_center.add_observer(self, name='XCAPManagerDidDiscoverServerCapabilities', sender=self.xcap_manager)
         notification_center.add_observer(self, sender=self._mwi_subscriber)
         notification_center.add_observer(self, sender=self._pwi_subscriber)
-        notification_center.add_observer(self, sender=self._dwi_subscriber)
         notification_center.add_observer(self, sender=self._presence_subscriber)
         notification_center.add_observer(self, sender=self._self_presence_subscriber)
-        notification_center.add_observer(self, sender=self._dialog_subscriber)
+        #notification_center.add_observer(self, sender=self._dialog_subscriber)
+        #notification_center.add_observer(self, sender=self._dwi_subscriber)
 
         self.xcap_manager.init()
         if self.enabled:
@@ -206,10 +206,10 @@ class Account(SettingsObject):
         notification_center.remove_observer(self, name='XCAPManagerDidDiscoverServerCapabilities', sender=self.xcap_manager)
         notification_center.remove_observer(self, sender=self._mwi_subscriber)
         notification_center.remove_observer(self, sender=self._pwi_subscriber)
-        notification_center.remove_observer(self, sender=self._dwi_subscriber)
         notification_center.remove_observer(self, sender=self._presence_subscriber)
         notification_center.remove_observer(self, sender=self._self_presence_subscriber)
-        notification_center.remove_observer(self, sender=self._dialog_subscriber)
+        #notification_center.remove_observer(self, sender=self._dialog_subscriber)
+        #notification_center.remove_observer(self, sender=self._dwi_subscriber)
 
     @run_in_green_thread
     def delete(self):
@@ -220,12 +220,12 @@ class Account(SettingsObject):
         self._registrar = None
         self._mwi_subscriber = None
         self._pwi_subscriber = None
-        self._dwi_subscriber = None
         self._presence_subscriber = None
         self._self_presence_subscriber = None
-        self._dialog_subscriber = None
         self._presence_publisher = None
-        self._dialog_publisher = None
+        #self._dwi_subscriber = None
+        #self._dialog_subscriber = None
+        #self._dialog_publisher = None
         self.xcap_manager = None
         SettingsObject.delete(self)
 
@@ -239,10 +239,10 @@ class Account(SettingsObject):
         if self._started:
             self._mwi_subscriber.resubscribe()
             self._pwi_subscriber.resubscribe()
-            self._dwi_subscriber.resubscribe()
             self._presence_subscriber.resubscribe()
             self._self_presence_subscriber.resubscribe()
-            self._dialog_subscriber.resubscribe()
+            #self._dialog_subscriber.resubscribe()
+            #self._dwi_subscriber.resubscribe()
 
     @property
     def credentials(self):
@@ -521,15 +521,15 @@ class Account(SettingsObject):
             self._registrar.start()
             self._mwi_subscriber.start()
             self._pwi_subscriber.start()
-            self._dwi_subscriber.start()
             self._presence_subscriber.start()
             self._self_presence_subscriber.start()
-            self._dialog_subscriber.start()
             self._presence_publisher.start()
-            self._dialog_publisher.start()
             if self.xcap.enabled:
                 self.xcap_manager.start()
             notification_center.post_notification('SIPAccountDidActivate', sender=self)
+            #self._dialog_publisher.start()
+            #self._dialog_subscriber.start()
+            #self._dwi_subscriber.start()
 
     def _deactivate(self):
         with self._activation_lock:
@@ -538,9 +538,12 @@ class Account(SettingsObject):
             notification_center = NotificationCenter()
             notification_center.post_notification('SIPAccountWillDeactivate', sender=self)
             self._active = False
-            handlers = [self._registrar, self._mwi_subscriber, self._pwi_subscriber, self._dwi_subscriber,
-                        self._presence_subscriber, self._self_presence_subscriber, self._dialog_subscriber,
-                        self._presence_publisher, self._dialog_publisher, self.xcap_manager]
+            #handlers = [self._registrar, self._mwi_subscriber, self._pwi_subscriber, self._dwi_subscriber,
+            #            self._presence_subscriber, self._self_presence_subscriber, self._dialog_subscriber,
+            #            self._presence_publisher, self._dialog_publisher, self.xcap_manager]
+            handlers = [self._registrar, self._mwi_subscriber, self._pwi_subscriber,
+                        self._presence_subscriber, self._self_presence_subscriber,
+                        self._presence_publisher, self.xcap_manager]
             proc.waitall([proc.spawn(handler.stop) for handler in handlers])
             notification_center.post_notification('SIPAccountDidDeactivate', sender=self)
 
