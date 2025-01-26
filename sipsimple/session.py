@@ -678,7 +678,7 @@ class TransferHandler(object):
                         refer_to_uri = SIPURI.new(target)
                         refer_to_uri.headers = {}
                         refer_to_uri.parameters = {}
-                        notification_center.post_notification('SIPSessionTransferNewIncoming', self.session, NotificationData(transfer_destination=refer_to_uri))
+                        notification_center.post_notification('SIPSessionTransferNewIncoming', self.session, NotificationData(transfer_destination=refer_to_uri, headers=command.data.headers))
                     elif notification.name == 'SIPSessionTransferDidStart':
                         break
                     elif notification.name == 'SIPSessionTransferDidFail':
