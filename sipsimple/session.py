@@ -1096,7 +1096,8 @@ class Session(object):
                     extra_headers.append(Header('Referred-By', self.transfer_info.referred_by))
                 if self.transfer_info.replaced_dialog_id is not None:
                     dialog_id = self.transfer_info.replaced_dialog_id
-                    extra_headers.append(ReplacesHeader(dialog_id.call_id, dialog_id.local_tag, dialog_id.remote_tag))
+                    # TODO fix crash in core
+                    #extra_headers.append(ReplacesHeader(dialog_id.call_id, dialog_id.local_tag, dialog_id.remote_tag))
             self._invitation.send_invite(to_header.uri, from_header, to_header, route_header, contact_header, local_sdp, self.account.credentials, extra_headers)
             try:
                 with api.timeout(settings.sip.invite_timeout):
