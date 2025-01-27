@@ -2,7 +2,6 @@ python3-sipsimple (5.3.2) unstable; urgency=medium
 
   * Critical fix for call transfers
   * Capture exception in audio bridge
-  * Update build dependencies with cython-legacy
   * Disable unused dialog subscriber for account
   * Post headers received in incoming transfer request
 
