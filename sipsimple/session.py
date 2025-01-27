@@ -991,6 +991,8 @@ class Session(object):
         self._invitation = invitation
         self.conference = ConferenceHandler(self)
         self.transfer_handler = TransferHandler(self)
+        replaced_dialog_id = None
+
         if 'isfocus' in invitation.remote_contact_header.parameters:
             self.remote_focus = True
         if 'Referred-By' in data.headers or 'Replaces' in data.headers:
@@ -1001,14 +1003,29 @@ class Session(object):
                 replaces_header = data.headers.get('Replaces')
                 # Because we only allow the remote tag to be optional, it can only match established dialogs and early outgoing dialogs, but not early incoming dialogs,
                 # which according to RFC3891 should be rejected with 481 (which will happen automatically by never matching them).
-                if replaces_header.early_only or replaces_header.from_tag == '0':
-                    replaced_dialog_id = DialogID(replaces_header.call_id, local_tag=replaces_header.to_tag, remote_tag=OptionalTag(replaces_header.from_tag))
+                try:
+                    call_id = replaces_header.call_id
+                    to_tag = replaces_header.to_tag
+                    from_tag = replaces_header.from_tag
+                except AttributeError as e:
+                    reason = 'Incomplete replaces header %s: %s' % (replaces_header.body, str(e))
+                    notification_center.post_notification('SIPSessionNewIncomingFromTransferFailed', sender=self, data=NotificationData(reason=reason))
+                    invitation.send_response(481)
+                    return
+
+                if from_tag == '0':
+                    replaced_dialog_id = DialogID(call_id, local_tag=to_tag, remote_tag=OptionalTag(from_tag))
                 else:
-                    replaced_dialog_id = DialogID(replaces_header.call_id, local_tag=replaces_header.to_tag, remote_tag=replaces_header.from_tag)
+                    replaced_dialog_id = DialogID(call_id, local_tag=to_tag, remote_tag=from_tag)
+
+                notification_center.post_notification('SIPSessionNewIncomingFromTransfer', sender=self, data=NotificationData(call_id=call_id, to_tag=to_tag, from_tag=from_tag, replaced_dialog=replaced_dialog_id))
+
                 session_manager = SessionManager()
+
                 try:
                     replaced_session = next(session for session in session_manager.sessions if session.dialog_id == replaced_dialog_id)
                 except StopIteration:
+                    notification_center.post_notification('SIPSessionNewIncomingFromTransferFailed', sender=self, data=NotificationData(reason='No dialog found with call-id %s from-tag %s and to-tag %s' % (call_id, from_tag, to_tag)))
                     invitation.send_response(481)
                     return
                 else:
@@ -1016,15 +1033,15 @@ class Session(object):
                     if replaced_session.state in ('terminating', 'terminated'):
                         invitation.send_response(603)
                         return
-                    elif replaced_session.dialog_id.remote_tag is not None and replaces_header.early_only:  # The replaced dialog is established, but the early-only flag is set
-                        invitation.send_response(486)
-                        return
+#                    elif replaced_session.dialog_id.remote_tag is not None and early_only:  # The replaced dialog is established, but the early-only flag is set
+#                        invitation.send_response(486)
+#                        return
                     self.replaced_session = replaced_session
                     self.transfer_info.replaced_dialog_id = replaced_dialog_id
                     replace_handler = SessionReplaceHandler(self)
                     replace_handler.start()
         notification_center.add_observer(self, sender=invitation)
-        notification_center.post_notification('SIPSessionNewIncoming', sender=self, data=NotificationData(streams=self.proposed_streams[:], headers=data.headers))
+        notification_center.post_notification('SIPSessionNewIncoming', sender=self, data=NotificationData(streams=self.proposed_streams[:], headers=data.headers, replaced_dialog=replaced_dialog_id))
 
     @transition_state(None, 'connecting')
     @run_in_green_thread
@@ -1096,7 +1113,8 @@ class Session(object):
                     extra_headers.append(Header('Referred-By', self.transfer_info.referred_by))
                 if self.transfer_info.replaced_dialog_id is not None:
                     dialog_id = self.transfer_info.replaced_dialog_id
-                    # TODO fix crash in core
+                    extra_headers.append(Header('Replaces', '%s;from-tag=%s;to-tag=%s' % (dialog_id.call_id, dialog_id.local_tag, dialog_id.remote_tag)))
+                    # TODO fix crash in core when building ReplacesHeader header
                     #extra_headers.append(ReplacesHeader(dialog_id.call_id, dialog_id.local_tag, dialog_id.remote_tag))
             self._invitation.send_invite(to_header.uri, from_header, to_header, route_header, contact_header, local_sdp, self.account.credentials, extra_headers)
             try:

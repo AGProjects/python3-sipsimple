@@ -1,7 +1,6 @@
 TODO
 ----
 
- - Fix attented call transfer see TODO entry in session.py
  - Remove use of gevent that doesnot work on Windows
  - Use individual TCP/TLS transport per SIP account
  - After ICE neg is completed we must send re-INVITE with the chosen RTP candidates

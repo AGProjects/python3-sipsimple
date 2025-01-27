@@ -231,6 +231,12 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
     cdef int buf_len, status
     headers = {}
     header = <pjsip_hdr *> (<pj_list *> &msg.hdr).next
+
+    try:
+        skip_replaces = info_dict['skip_replaces']
+    except KeyError:
+        skip_replaces = False
+
     while header != &msg.hdr:
         header_name = _pj_str_to_str(header.name)
         header_data = None
@@ -288,7 +294,7 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
             header_data = FrozenReferToHeader_create(<pjsip_generic_string_hdr *> header)
         elif header_name == "Subject":
             header_data = FrozenSubjectHeader_create(<pjsip_generic_string_hdr *> header)
-        elif header_name == "Replaces":
+        elif header_name == "Replaces" and not skip_replaces:
             header_data = FrozenReplacesHeader_create(<pjsip_replaces_hdr *> header)
         # skip the following headers:
         elif header_name not in ("Authorization", "Proxy-Authenticate", "Proxy-Authorization", "WWW-Authenticate"):

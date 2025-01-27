@@ -1453,6 +1453,9 @@ cdef void _Invitation_cb_state(pjsip_inv_session *inv, pjsip_event *e) with gil:
                 originator = "remote"
             if tdata != NULL:
                 tdata_dict = dict()
+                # for whatever reason, we cannot build a proper Replaces header
+                # for outgoing so we will make a generic one
+                tdata_dict['skip_replaces'] = True
                 _pjsip_msg_to_dict(tdata.msg, tdata_dict)
                 originator = "local"
             try:
