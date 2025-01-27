@@ -39,8 +39,7 @@ Depends: ${python3:Depends}, ${shlibs:Depends}, ${misc:Depends},
          python3-lxml,
          python3-msrplib,
          python3-twisted,
-         python3-xcaplib,
-         libopencore-amrnb0
+         python3-xcaplib
 Suggests: libavahi-compat-libdnssd1, python3-otr
 Provides: ${python3:Provides}
 Description: SIP SIMPLE SDK is a Python library for desktop operating
