@@ -14,6 +14,8 @@
 # Install C building dependencies
 sudo port install darcs yasm x264 gnutls openssl sqlite3 gnutls ffmpeg mpfr libmpc libvpx
 
+#sudo port uninstall libuuid <-- this conflicts with pjsip
+
 # Install Python building dependencies
 
 pip3 install --user cython==0.29.37 dnspython lxml twisted python-dateutil greenlet \
