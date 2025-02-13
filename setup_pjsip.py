@@ -44,7 +44,7 @@ if sys_platform == "darwin":
     vpx_ldflags = "-L/opt/local/lib"
     
     # Prepare final flags
-    arch_flags =  "-arch x86_64 -mmacosx-version-min=%s" % min_osx_version
+    arch_flags =  "-mmacosx-version-min=%s" % min_osx_version
     local_cflags = " %s %s %s %s %s -mmacosx-version-min=%s -isysroot %s" % (arch_flags, ossl_cflags, sqlite_cflags, opus_cflags, vpx_cflags, min_osx_version, osx_sdk_path)
     local_ldflags = " %s %s %s %s %s -headerpad_max_install_names -isysroot %s" % (arch_flags, ossl_ldflags, sqlite_ldflags, opus_ldflags, vpx_ldflags, osx_sdk_path)
     os.environ['CFLAGS'] = os.environ.get('CFLAGS', '') + local_cflags

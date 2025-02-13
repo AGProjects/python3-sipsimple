@@ -1,5 +1,5 @@
-Compiling on M1 processor
--------------------------
+Compiling on Apple Apple Silicon processor
+------------------------------------------
 
 1. aconfigure needs to be modified (the one from pjsip 2.11 worked) for webrtc
 echo canceller to build, without the Intel sse2 instructions.
@@ -84,5 +84,3 @@ export LDFLAGS="-arch arm64 -mmacosx-version-min=10.11 -L/opt/local/lib -headerp
 --disable-g7221-codec --disable-sdl --disable-ilbc-codec --disable-speex-codec \
 --disable-gsm-codec --disable-speex-aec
 make
-
-

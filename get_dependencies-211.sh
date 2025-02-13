@@ -1,6 +1,5 @@
 #!/bin/bash
 
-
 unamestr=$(uname)
 if [[ "$unamestr" == 'Linux' ]]; then
 sudo apt install python3 dh-python python3-all-dev cython3 libasound2-dev \
@@ -16,10 +15,10 @@ cd deps
 #
 # Update PJSIP 
 #
-echo "Preparing PJSIP sources..."
-if [ ! -f 2.10.tar.gz ]; then
-    echo Downloading PJSIP 2.10...
-    wget https://github.com/pjsip/pjproject/archive/2.10.tar.gz
+echo "Preparing PJSIP 2.11 sources..."
+if [ ! -f 2.11.tar.gz ]; then
+    echo Downloading PJSIP 2.11...
+    wget https://github.com/pjsip/pjproject/archive/2.11.tar.gz
     if [ $? -eq 0 ]; then
         echo "PJSIP downloaded"
     else
@@ -28,7 +27,7 @@ if [ ! -f 2.10.tar.gz ]; then
     fi
 fi
 
-tar xzf 2.10.tar.gz
+tar xzf 2.11.tar.gz
 
 if [ -d pjsip ]; then
    rm -r pjsip
@@ -73,11 +72,9 @@ cp -r ZRTPCPP/zrtp ./pjsip/third_party/zsrtp/zrtp/
 cp ZRTPCPP/COPYING ./pjsip/third_party/zsrtp/zrtp/
 cp ZRTPCPP/README.md ./pjsip/third_party/zsrtp/zrtp/
 
-
-for p in patches/0*.patch; do
+for p in patches/2.11/0*.patch; do
     echo "Applying patch $p"
     patch -p0 < $p > /dev/null
 done
 
 cd - > /dev/null
-
