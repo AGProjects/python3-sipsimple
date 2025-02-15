@@ -1,0 +1,15 @@
+cython==0.29.37
+dnspython
+lxml
+twisted
+python-dateutil
+greenlet
+zope.interface
+requests
+gmpy2
+wheel
+gevent
+pytz
+certifi
+cryptography
+python3-application @ https://github.com/AGProjects/python3-application/archive/refs/tags/release-3.0.7.tar.gz

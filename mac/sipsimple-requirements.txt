@@ -1,0 +1,5 @@
+python3-eventlib @ https://github.com/AGProjects/python3-eventlib/archive/refs/tags/0.3.0.tar.gz
+python3-gnutls @ https://github.com/AGProjects/python3-gnutls/archive/refs/tags/release-3.1.10.tar.gz
+python3-otr @ https://github.com/AGProjects/python3-otr/archive/refs/tags/2.0.2.tar.gz
+python3-xcaplib @ https://github.com/AGProjects/python3-xcaplib/archive/refs/tags/2.0.1.tar.gz
+python3-msrplib @ https://github.com/AGProjects/python3-msrplib/archive/refs/tags/0.21.0.tar.gz

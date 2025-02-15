@@ -2,9 +2,9 @@
 Installation procedure for SIP SIMPLE SDK on MacOSX
 ---------------------------------------------------
 
-Home page: http://sipsimpleclient.org
+This document is very old, see ../mac folder instead.
 
-This document describes the installation procedure on MacOSX >= 10.14
+This document describes the installation procedure on MacOSX < 10.14
 
 The installation procedure consists of the steps described below:
 
@@ -141,5 +141,4 @@ Same steps related to C dependencies must be taken for .so dynamic libraries
 that are part of Python packages on which the SDK depends.
 
 See install_osx_user.sh script in the top directory.
-
 
