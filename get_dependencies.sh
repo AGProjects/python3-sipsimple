@@ -12,13 +12,15 @@ fi
 
 cd deps
 
+PJSIP_VERSION="${1:-2.10}"
+
 #
 # Update PJSIP 
 #
-echo "Preparing PJSIP 2.10 sources..."
-if [ ! -f 2.10.tar.gz ]; then
-    echo Downloading PJSIP 2.10...
-    wget https://github.com/pjsip/pjproject/archive/2.10.tar.gz
+echo "Preparing PJSIP $PJSIP_VERSION sources..."
+if [ ! -f $PJSIP_VERSION.tar.gz ]; then
+    echo Downloading PJSIP $PJSIP_VERSION...
+    wget https://github.com/pjsip/pjproject/archive/$PJSIP_VERSION.tar.gz
     if [ $? -eq 0 ]; then
         echo "PJSIP downloaded"
     else
@@ -27,7 +29,7 @@ if [ ! -f 2.10.tar.gz ]; then
     fi
 fi
 
-tar xzf 2.10.tar.gz
+tar xzf $PJSIP_VERSION.tar.gz
 
 if [ -d pjsip ]; then
    rm -r pjsip
@@ -72,7 +74,13 @@ cp -r ZRTPCPP/zrtp ./pjsip/third_party/zsrtp/zrtp/
 cp ZRTPCPP/COPYING ./pjsip/third_party/zsrtp/zrtp/
 cp ZRTPCPP/README.md ./pjsip/third_party/zsrtp/zrtp/
 
-for p in patches/2.10/0*.patch; do
+patches_dir="patches"
+
+if [ -d patches/$PJSIP_VERSION ];then
+    patches_dir=patches/$PJSIP_VERSION
+fi
+
+for p in $patches_dir/0*.patch; do
     echo "Applying patch $p"
     patch -p0 < $p > /dev/null
 done
