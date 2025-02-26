@@ -6,13 +6,19 @@ Home page: http://sipsimpleclient.org
 
 SIP SIMPLE SDK depends upon the following third party C sources:
 
-- PJSIP base revision 210 from 2020-02-14
+- PJSIP base revision 2.10 from 2020-02-14
   https://github.com/pjsip/pjproject/archive/2.10.tar.gz
+
+  or PJSIP base revision 2.11
+  https://github.com/pjsip/pjproject/archive/2.11.tar.gz
 
 - ZRTP tag 6b3cd8e6783642292bad0c21e3e5e5ce45ff3e03
   https://github.com/wernerd/ZRTPCPP.git
 
 Fetch and patch the dependencies using get_dependencies.sh script
+
+./get_dependencies.sh will get 2.10 version of PJSIP
+./get_dependencies.sh 2.11 will get 2.11 version of PJSIP
 
 
 AMR codec
