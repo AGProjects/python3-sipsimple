@@ -199,7 +199,7 @@ class DNSLookup(object):
 
         try:
             # If the host part of the URI is an IP address, we will not do any lookup
-            if re.match("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", uri.host.decode()):
+            if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", uri.host.decode()):
                 return [(uri.host.decode(), uri.port or service_port)]
 
             resolver = DNSResolver()
@@ -266,7 +266,7 @@ class DNSLookup(object):
         try:
             # If the host part of the URI is an IP address, we will not do any lookup
             transport = uri.transport.decode() if isinstance(uri.transport, bytes) else uri.transport
-            if re.match("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", uri.host.decode()):
+            if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", uri.host.decode()):
                 transport = 'tls' if uri.secure else transport.lower()
                 if transport not in supported_transports:
                     reason = "IP transport %s dictated by URI is not supported" % transport
@@ -374,7 +374,7 @@ class DNSLookup(object):
 
         try:
             # If the host part of the URI is an IP address, we cannot not do any lookup
-            if re.match("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", uri.host.decode()):
+            if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", uri.host.decode()):
                 raise DNSLookupError("Cannot perform DNS query because the host is an IP address")
 
             resolver = DNSResolver()
