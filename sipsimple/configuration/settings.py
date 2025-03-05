@@ -26,7 +26,7 @@ class AudioSettings(SettingsGroup):
     alert_device = Setting(type=str, default='system_default', nillable=True)
     input_device = Setting(type=str, default='system_default', nillable=True)
     output_device = Setting(type=str, default='system_default', nillable=True)
-    sample_rate = Setting(type=SampleRate, default=44100)
+    sample_rate = Setting(type=SampleRate, default=32000)
     muted = RuntimeSetting(type=bool, default=False)
     silent = Setting(type=bool, default=False)
     echo_canceller = EchoCancellerSettings
