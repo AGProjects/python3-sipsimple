@@ -12,7 +12,7 @@ fi
 
 cd deps
 
-PJSIP_VERSION="${1:-2.10}"
+PJSIP_VERSION="${1:-2.12}"
 
 #
 # Update PJSIP 
