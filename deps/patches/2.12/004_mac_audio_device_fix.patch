@@ -1,0 +1,15 @@
+--- pjsip/pjmedia/src/pjmedia-audiodev/coreaudio_dev.m.old	2021-07-08 11:44:05.000000000 -0300
++++ pjsip/pjmedia/src/pjmedia-audiodev/coreaudio_dev.m	2021-07-08 11:45:16.000000000 -0300
+@@ -280,9 +280,12 @@
+     if (cf->io_comp == NULL)
+ 	return PJMEDIA_EAUD_INIT; // cannot find IO unit;
+ 
++    /*
++    This perhaps belongs to iOS? -adi
+     desc.componentSubType = kAudioUnitSubType_VoiceProcessingIO;
+     if (AudioComponentFindNext(NULL, &desc) != NULL)
+     	cf->has_vpio = PJ_TRUE;
++    */
+ 
+     status = ca_factory_refresh(f);
+     if (status != PJ_SUCCESS)
