@@ -149,7 +149,7 @@ class PJSIP_build_ext(build_ext):
     def get_makefile_variables(cls, makefile, silent=True):
         """Returns all variables in a makefile as a dict"""
         stdout = cls.distutils_exec_process([cls.get_make_cmd(), "-f", makefile, "-pR", makefile], silent=silent)
-        return dict(tup for tup in re.findall("(^[a-zA-Z]\w+)\s*:?=\s*(.*)$", stdout, re.MULTILINE))
+        return dict(tup for tup in re.findall(r"(^[a-zA-Z]\w+)\s*:?=\s*(.*)$", stdout, re.MULTILINE))
 
     @classmethod
     def makedirs(cls, path):
@@ -244,7 +244,7 @@ class PJSIP_build_ext(build_ext):
 
         if sys_platform == "darwin":
             extension.define_macros.append(("MACOSX_DEPLOYMENT_TARGET", min_osx_version))
-            frameworks = re.findall("-framework (\S+)(?:\s|$)", build_mak_vars["PJ_LDLIBS"])
+            frameworks = re.findall(r"-framework (\S+)(?:\s|$)", build_mak_vars["PJ_LDLIBS"])
             extension.extra_link_args = list(itertools.chain(*(("-framework", val) for val in frameworks)))
             extension.extra_link_args.append("-mmacosx-version-min=%s" % min_osx_version)
             extension.extra_compile_args.append("-mmacosx-version-min=%s" % min_osx_version)
