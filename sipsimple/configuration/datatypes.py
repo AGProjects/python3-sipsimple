@@ -225,7 +225,7 @@ class AudioCodecList(CodecList):
 
 
 class SampleRate(int):
-    valid_values = (16000, 32000, 44100, 48000)
+    valid_values = (16000, 32000, 48000)
 
     def __new__(cls, value):
         value = int(value)
