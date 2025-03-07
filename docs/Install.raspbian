@@ -21,6 +21,15 @@ Install building dependencies:
 
 ./get_dependencies.sh
 
+For arm64 architecture edit deps/pjsip/aconfigure and replace:
+
+       ac_webrtc_instset=sse2
+
+with:
+
+       ac_webrtc_instset=neon
+       ac_webrtc_cflags="-DWEBRTC_ARCH_ARM64"
+
 Obtain the source code from AG Projects using darcs command:
 
 darcs get --set-scripts-executable http://devel.ag-projects.com/repositories/project
@@ -53,10 +62,3 @@ The .deb and related files are built in one of the upper directories.
 
 Use dpkg -i package_name.deb command to install the software.
 
-
-WebRTC AEC note
----------------
-
-Before building python3-sipsimple, to enable WebRTC echo canceler on Raspbian apply the patch from:
-
-deps/patches/raspbian-webrtc.patch 
