@@ -19,7 +19,7 @@ Building the debian package
 
 Install building dependencies:
 
-./get_dependencies.sh
+./get_dependencies.sh 2.10
 
 For arm64 architecture edit deps/pjsip/aconfigure and replace:
 
@@ -48,17 +48,7 @@ Enter the directory where each project has been downloaded and run:
 
 ./makedeb.sh
 
-If makedeb.sh script is missing, run these commands:
-
-python3 setup.py sdist
-
-Go to the ./dist directory and untar the file created at the step above.
-
-Go to the newly created directory and type:
-
-debuild -us -uc --no-sign
-
-The .deb and related files are built in one of the upper directories.
+The .deb and related files are built in dist or one of the upper directories.
 
 Use dpkg -i package_name.deb command to install the software.
 
