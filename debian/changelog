@@ -1,4 +1,15 @@
-python3-sipsimple (5.3.2) unstable; urgency=medium
+python3-sipsimple (5.3.3bookworm) bookworm; urgency=medium
+
+  * Use pjsip 2.12 branch by default
+  * Added patches for pjsip 2.12 
+  * Fix automatic detection of audio devices changes
+  * Set default sample rate to 32000
+  * Fix regular expressions
+  * Added back missing 2.10 patches
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Fri, 07 Mar 2025 17:16:17 +0000
+
+python3-sipsimple (5.3.2bookworm) bookworm; urgency=medium
 
   * Critical fix for call transfers
   * Capture exception in audio bridge
