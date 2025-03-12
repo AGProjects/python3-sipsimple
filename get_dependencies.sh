@@ -80,6 +80,14 @@ if [ -d patches/$PJSIP_VERSION ];then
     patches_dir=patches/$PJSIP_VERSION
 fi
 
+uname -v|grep ARM64 |grep Darwin > /dev/null
+
+if [ $? -eq 0 ]; then
+   rm $patches_dir/005_fix_ffmpeg.patch 2> /dev/null
+   rm $patches_dir/007_video_support_dshow_mingw.patch 2> /dev/null
+   rm $patches_dir/008_support_mingw_w64.patch 2> /dev/null
+fi
+
 for p in $patches_dir/0*.patch; do
     echo "Applying patch $p"
     patch -p0 < $p > /dev/null
