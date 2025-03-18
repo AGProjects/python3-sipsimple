@@ -1,6 +1,6 @@
 #!/bin/bash
 
-version="5.2.3-mac2"
+version="5.3.3.1-mac"
 wget https://github.com/AGProjects/python3-sipsimple/archive/refs/tags/$version.tar.gz
 
 tar zxvf $version.tar.gz 
