@@ -4,7 +4,7 @@ if [ ! -d ~/work ]; then
 fi
 
 arch=`python3 -c "import platform; print(platform.processor())"`
-pver=`python3 -c "import sys; print(sys.version[0:4])"`
+pver=`python3 -c "import sys; print('%d.%d' % (sys.version_info[0], sys.version_info[1]))"`
 
 envdir=sipsimple-python-$pver-$arch-env
 
