@@ -43,6 +43,10 @@ if sys_platform == "darwin":
     vpx_cflags = "-I/opt/local/include"
     vpx_ldflags = "-L/opt/local/lib"
     
+    # for cross-compiling on Apple M processor for x86_64 architecture
+    # arch_flags =  "-arch x86_64 -mmacosx-version-min=%s" % min_osx_version
+    # and revert the patch deps/patches/009_aconfigure.patch that sets the CPU flags for webrtc AEC
+    
     # Prepare final flags
     arch_flags =  "-mmacosx-version-min=%s" % min_osx_version
     local_cflags = " %s %s %s %s %s -mmacosx-version-min=%s -isysroot %s" % (arch_flags, ossl_cflags, sqlite_cflags, opus_cflags, vpx_cflags, min_osx_version, osx_sdk_path)
