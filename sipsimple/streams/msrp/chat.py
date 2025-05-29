@@ -786,11 +786,13 @@ class SimplePayload(object):
 
     @classmethod
     def decode(cls, content, content_type):
-        if not isinstance(content, bytes):
-            raise TypeError("content should be an instance of bytes")
+        if not isinstance(content, bytes) and not isinstance(content, str):
+            raise TypeError("content should be an instance of bytes or string")
         type_helper = EmailParser().parsestr('Content-Type: {}'.format(content_type))
         content_type = type_helper.get_content_type()
         charset = type_helper.get_content_charset()
+        if isinstance(content, str):
+            content = content.encode(charset if charset else "ascii", "replace")
         return cls(content, content_type, charset)
 
 
