@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 
 if sys.platform.startswith('linux'):
     sys_platform = 'linux'
@@ -127,20 +128,55 @@ class PJSIP_build_ext(build_ext):
         Optionally prints stdout and stderr while running."""
 
         try:
-            sub = subprocess.Popen(cmdline, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
-            stdout, stderr = sub.communicate(input=input)
-            returncode = sub.returncode
-            if not silent:
-                sys.stdout.write(stdout.decode())
-                sys.stderr.write(stderr.decode())
+            sub = subprocess.Popen(
+                cmdline,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=1,  # Line-buffered
+                text=True,  # Automatically decode to str
+                **kwargs
+            )
+
+            stdout_lines = []
+            stderr_lines = []
+
+            def read_stream(stream, collector, writer):
+                for line in stream:
+                    collector.append(line)
+                    if not silent and writer:
+                        writer.write(line)
+                        writer.flush()
+
+            threads = []
+            threads.append(threading.Thread(target=read_stream, args=(sub.stdout, stdout_lines, sys.stdout)))
+            threads.append(threading.Thread(target=read_stream, args=(sub.stderr, stderr_lines, sys.stderr)))
+
+            for t in threads:
+                t.start()
+
+            if input:
+                sub.stdin.write(input)
+                sub.stdin.close()
+
+            for t in threads:
+                t.join()
+
+            returncode = sub.wait()
+
         except OSError as e:
             if e.errno == errno.ENOENT:
-                raise RuntimeError('"%s" is not present on this system' % cmdline[0])
+                raise RuntimeError(f'"{cmdline[0]}" is not present on this system')
             else:
                 raise
+
         if returncode != 0:
-            raise RuntimeError('Got return value %d while executing "%s", stderr output was:\n%s' % (returncode, " ".join(cmdline), stderr.decode()))
-        return stdout.decode()
+            raise RuntimeError(
+                f'Got return value {returncode} while executing "{" ".join(cmdline)}", '
+                    f'stderr output was:\n{"".join(stderr_lines)}'
+            )
+
+        return "".join(stdout_lines)
 
     @staticmethod
     def get_make_cmd():
