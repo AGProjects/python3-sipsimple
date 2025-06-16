@@ -64,9 +64,12 @@ if sys_platform == "win32":
     os.environ['CFLAGS'] = os.environ.get('CFLAGS', '') + local_cflags
     os.environ['LDFLAGS'] = os.environ.get('LDFLAGS', '') + local_ldflags
 
-from distutils import log
+import logging
 from distutils.dir_util import copy_tree
 from distutils.errors import DistutilsError
+
+logging.basicConfig(level=logging.DEBUG, format="%(message)s")
+log = logging.getLogger(__name__)
 
 from Cython import __version__ as cython_version
 from Cython.Distutils import build_ext
@@ -122,6 +125,7 @@ class PJSIP_build_ext(build_ext):
     def distutils_exec_process(cmdline, silent=True, input=None, **kwargs):
         """Execute a subprocess and returns the returncode, stdout buffer and stderr buffer.
         Optionally prints stdout and stderr while running."""
+
         try:
             sub = subprocess.Popen(cmdline, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
             stdout, stderr = sub.communicate(input=input)
