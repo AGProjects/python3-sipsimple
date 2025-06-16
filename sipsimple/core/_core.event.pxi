@@ -21,7 +21,7 @@ cdef struct _handler_queue:
 
 # callback functions
 
-cdef void _cb_log(int level, char_ptr_const data, int len):
+cdef void _cb_log(int level, char_ptr_const data, int len) noexcept:
     cdef _core_event *event
     event = <_core_event *> malloc(sizeof(_core_event))
     if event != NULL:

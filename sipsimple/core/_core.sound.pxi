@@ -445,7 +445,7 @@ cdef class AudioMixer:
                 pjmedia_master_port_destroy(master_port, 0)
             self._master_port = NULL
 
-    cdef int _add_port(self, PJSIPUA ua, pj_pool_t *pool, pjmedia_port *port) except -1 with gil:
+    cdef int _add_port(self, PJSIPUA ua, pj_pool_t *pool, pjmedia_port *port) except -1:
         cdef int input_device_i
         cdef int output_device_i
         cdef unsigned int slot
@@ -472,7 +472,7 @@ cdef class AudioMixer:
             with nogil:
                 pj_mutex_unlock(lock)
 
-    cdef int _remove_port(self, PJSIPUA ua, unsigned int slot) except -1 with gil:
+    cdef int _remove_port(self, PJSIPUA ua, unsigned int slot) except -1:
         cdef int status
         cdef pj_mutex_t *lock = self._lock
         cdef pjmedia_conf* conf_bridge
@@ -1369,7 +1369,7 @@ cdef int _AudioMixer_dealloc_handler(object obj) except -1:
     finally:
         pj_mutex_unlock(mixer._lock)
 
-cdef int cb_play_wav_eof(pjmedia_port *port, void *user_data) with gil:
+cdef int cb_play_wav_eof_impl(pjmedia_port *port, void *user_data) with gil:
     cdef Timer timer
     cdef WaveFile wav_file
 
@@ -1379,4 +1379,10 @@ cdef int cb_play_wav_eof(pjmedia_port *port, void *user_data) with gil:
         timer.schedule(0, <timer_callback>wav_file._cb_eof, wav_file)
     # do not return PJ_SUCCESS because if you do pjsip will access the just deallocated port
     return 1
+
+cdef int cb_play_wav_eof(pjmedia_port *port, void *user_data) noexcept nogil:
+    cdef int result
+    with gil:
+        result = cb_play_wav_eof_impl(port, user_data)
+    return result
 

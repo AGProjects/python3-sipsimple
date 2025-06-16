@@ -513,7 +513,7 @@ cdef class PJMEDIAEndpoint:
                 raise PJSIPError("Could not set video options", status)
 
 
-cdef void _transport_state_cb(pjsip_transport *tp, pjsip_transport_state state, pjsip_transport_state_info_ptr_const info) with gil:
+cdef void _transport_state_cb_impl(pjsip_transport *tp, pjsip_transport_state state, pjsip_transport_state_info_ptr_const info) with gil:
     cdef PJSIPUA ua
     cdef str local_address
     cdef str remote_address
@@ -541,6 +541,10 @@ cdef void _transport_state_cb(pjsip_transport *tp, pjsip_transport_state state, 
         event_dict['reason'] = reason
         _add_event("SIPEngineTransportDidDisconnect", event_dict)
 
+
+cdef void _transport_state_cb(pjsip_transport *tp, pjsip_transport_state state, pjsip_transport_state_info_ptr_const info) noexcept nogil:
+    with gil:
+        _transport_state_cb_impl(tp, state, info)
 
 # globals
 cdef PJSTR h264_profile_level_id = PJSTR(b"profile-level-id")

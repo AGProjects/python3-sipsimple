@@ -17,15 +17,19 @@ include "_core.referral.pxi"
 include "_core.sdp.pxi"
 include "_core.mediatransport.pxi"
 
+import cython
+
 # constants
 
 PJ_VERSION = pj_get_version()
 PJ_SVN_REVISION = int(PJ_SVN_REV)
 CORE_REVISION = 210
 
+CYTHON_VERSION = cython.__version__
+
 # exports
 
-__all__ = ["PJ_VERSION", "PJ_SVN_REVISION", "CORE_REVISION",
+__all__ = ["PJ_VERSION", "PJ_SVN_REVISION", "CORE_REVISION", "CYTHON_VERSION",
            "SIPCoreError", "PJSIPError", "PJSIPTLSError", "SIPCoreInvalidStateError",
            "AudioMixer", "ToneGenerator", "RecordingWaveFile", "WaveFile", "MixerPort",
            "VideoCamera", "FrameBufferVideoRenderer",

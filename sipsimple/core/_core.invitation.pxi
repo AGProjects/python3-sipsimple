@@ -1391,7 +1391,7 @@ cdef class Invitation:
 # Callback functions
 #
 
-cdef void _Invitation_cb_state(pjsip_inv_session *inv, pjsip_event *e) with gil:
+cdef void _Invitation_cb_state_impl(pjsip_inv_session *inv, pjsip_event *e) with gil:
     cdef pjsip_rx_data *rdata = NULL
     cdef pjsip_tx_data *tdata = NULL
     cdef object state
@@ -1466,7 +1466,11 @@ cdef void _Invitation_cb_state(pjsip_inv_session *inv, pjsip_event *e) with gil:
     except:
         ua._handle_exception(1)
 
-cdef void _Invitation_cb_sdp_done(pjsip_inv_session *inv, int status) with gil:
+cdef void _Invitation_cb_state(pjsip_inv_session *inv, pjsip_event *e) noexcept nogil:
+    with gil:
+        _Invitation_cb_state_impl(inv, e)
+
+cdef void _Invitation_cb_sdp_done_impl(pjsip_inv_session *inv, int status) with gil:
     cdef Invitation invitation
     cdef PJSIPUA ua
     cdef SDPCallbackTimer timer
@@ -1516,7 +1520,11 @@ cdef void _Invitation_cb_sdp_done(pjsip_inv_session *inv, int status) with gil:
     except:
         ua._handle_exception(1)
 
-cdef int _Invitation_cb_rx_reinvite(pjsip_inv_session *inv, pjmedia_sdp_session_ptr_const offer, pjsip_rx_data *rdata) with gil:
+cdef void _Invitation_cb_sdp_done(pjsip_inv_session *inv, int status) noexcept nogil:
+    with gil:
+        _Invitation_cb_sdp_done_impl(inv, status)
+
+cdef int _Invitation_cb_rx_reinvite_impl(pjsip_inv_session *inv, pjmedia_sdp_session_ptr_const offer, pjsip_rx_data *rdata) with gil:
     cdef int status
     cdef pjsip_tx_data *answer_tdata
     cdef object rdata_dict = None
@@ -1560,7 +1568,13 @@ cdef int _Invitation_cb_rx_reinvite(pjsip_inv_session *inv, pjmedia_sdp_session_
         ua._handle_exception(1)
         return 1
 
-cdef void _Invitation_cb_tsx_state_changed(pjsip_inv_session *inv, pjsip_transaction *tsx, pjsip_event *e) with gil:
+cdef int _Invitation_cb_rx_reinvite(pjsip_inv_session *inv, pjmedia_sdp_session_ptr_const offer, pjsip_rx_data *rdata) noexcept nogil:
+    cdef int result
+    with gil:
+        result = _Invitation_cb_rx_reinvite_impl(inv, offer, rdata)
+    return result
+
+cdef void _Invitation_cb_tsx_state_changed_impl(pjsip_inv_session *inv, pjsip_transaction *tsx, pjsip_event *e) with gil:
     cdef pjsip_rx_data *rdata = NULL
     cdef pjsip_tx_data *tdata = NULL
     cdef object rdata_dict = None
@@ -1628,11 +1642,19 @@ cdef void _Invitation_cb_tsx_state_changed(pjsip_inv_session *inv, pjsip_transac
     except:
         ua._handle_exception(1)
 
-cdef void _Invitation_cb_new(pjsip_inv_session *inv, pjsip_event *e) with gil:
+cdef void _Invitation_cb_tsx_state_changed(pjsip_inv_session *inv, pjsip_transaction *tsx, pjsip_event *e) noexcept nogil:
+    with gil:
+        _Invitation_cb_tsx_state_changed_impl(inv, tsx, e)
+
+cdef void _Invitation_cb_new_impl(pjsip_inv_session *inv, pjsip_event *e) with gil:
     # As far as I can tell this is never actually called!
     pass
 
-cdef void _Invitation_transfer_cb_state(pjsip_evsub *sub, pjsip_event *event) with gil:
+cdef void _Invitation_cb_new(pjsip_inv_session *inv, pjsip_event *e) noexcept nogil:
+    with gil:
+        _Invitation_cb_new_impl(inv, e)
+
+cdef void _Invitation_transfer_cb_state_impl(pjsip_evsub *sub, pjsip_event *event) with gil:
     cdef void *invitation_void
     cdef Invitation invitation
     cdef object state
@@ -1680,7 +1702,11 @@ cdef void _Invitation_transfer_cb_state(pjsip_evsub *sub, pjsip_event *event) wi
     except:
         ua._handle_exception(1)
 
-cdef void _Invitation_transfer_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) with gil:
+cdef void _Invitation_transfer_cb_state(pjsip_evsub *sub, pjsip_event *event) noexcept nogil:
+    with gil:
+        _Invitation_transfer_cb_state_impl(sub, event)
+
+cdef void _Invitation_transfer_cb_tsx_impl(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) with gil:
     cdef void *invitation_void
     cdef Invitation invitation
     cdef pjsip_rx_data *rdata
@@ -1714,7 +1740,11 @@ cdef void _Invitation_transfer_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, 
     except:
         ua._handle_exception(1)
 
-cdef void _Invitation_transfer_cb_notify(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
+cdef void _Invitation_transfer_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) noexcept nogil:
+    with gil:
+        _Invitation_transfer_cb_tsx_impl(sub, tsx, event)
+
+cdef void _Invitation_transfer_cb_notify_impl(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
                                     pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) with gil:
     cdef void *invitation_void
     cdef Invitation invitation
@@ -1742,11 +1772,20 @@ cdef void _Invitation_transfer_cb_notify(pjsip_evsub *sub, pjsip_rx_data *rdata,
     except:
         ua._handle_exception(1)
 
-cdef void _Invitation_transfer_cb_refresh(pjsip_evsub *sub) with gil:
+cdef void _Invitation_transfer_cb_notify(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
+                                    pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) noexcept nogil:
+    with gil:
+        _Invitation_transfer_cb_notify_impl(sub, rdata, p_st_code, p_st_text, res_hdr, p_body)
+
+cdef void _Invitation_transfer_cb_refresh_impl(pjsip_evsub *sub) with gil:
     # We want to handle the refresh timer oursevles, ignore the PJSIP provided timer
     pass
 
-cdef void _Invitation_transfer_in_cb_rx_refresh(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
+cdef void _Invitation_transfer_cb_refresh(pjsip_evsub *sub) noexcept nogil:
+    with gil:
+        _Invitation_transfer_cb_refresh_impl(sub)
+
+cdef void _Invitation_transfer_in_cb_rx_refresh_impl(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
                                             pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) with gil:
     cdef void *invitation_void
     cdef dict rdata_dict
@@ -1780,7 +1819,12 @@ cdef void _Invitation_transfer_in_cb_rx_refresh(pjsip_evsub *sub, pjsip_rx_data 
     except:
         ua._handle_exception(1)
 
-cdef void _Invitation_transfer_in_cb_server_timeout(pjsip_evsub *sub) with gil:
+cdef void _Invitation_transfer_in_cb_rx_refresh(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
+                                            pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) noexcept nogil:
+    with gil:
+        _Invitation_transfer_in_cb_rx_refresh_impl(sub, rdata, p_st_code, p_st_text, res_hdr, p_body)
+
+cdef void _Invitation_transfer_in_cb_server_timeout_impl(pjsip_evsub *sub) with gil:
     cdef void *invitation_void
     cdef Invitation invitation
     cdef Timer timer
@@ -1804,7 +1848,11 @@ cdef void _Invitation_transfer_in_cb_server_timeout(pjsip_evsub *sub) with gil:
     except:
         ua._handle_exception(1)
 
-cdef void _Invitation_transfer_in_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) with gil:
+cdef void _Invitation_transfer_in_cb_server_timeout(pjsip_evsub *sub) noexcept nogil:
+    with gil:
+        _Invitation_transfer_in_cb_server_timeout_impl(sub)
+
+cdef void _Invitation_transfer_in_cb_tsx_impl(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) with gil:
     cdef void *invitation_void
     cdef Invitation invitation
     cdef PJSIPUA ua
@@ -1839,6 +1887,10 @@ cdef void _Invitation_transfer_in_cb_tsx(pjsip_evsub *sub, pjsip_transaction *ts
     except:
         ua._handle_exception(1)
 
+
+cdef void _Invitation_transfer_in_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) noexcept nogil:
+    with gil:
+        _Invitation_transfer_in_cb_tsx_impl(sub, tsx, event)
 
 # Globals
 #

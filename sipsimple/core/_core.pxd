@@ -1884,7 +1884,7 @@ cdef int _cb_trace_tx(pjsip_tx_data *tdata) with gil
 cdef int _cb_add_user_agent_hdr(pjsip_tx_data *tdata) with gil
 cdef int _cb_add_server_hdr(pjsip_tx_data *tdata) with gil
 cdef PJSIPUA _get_ua()
-cdef int deallocate_weakref(object weak_ref, object timer) except -1 with gil
+cdef int deallocate_weakref(object weak_ref, object timer) except -1
 
 # core.sound
 
@@ -1913,8 +1913,8 @@ cdef class AudioMixer(object):
     # private methods
     cdef void _start_sound_device(self, PJSIPUA ua, unicode input_device, unicode output_device, int ec_tail_length)
     cdef void _stop_sound_device(self, PJSIPUA ua)
-    cdef int _add_port(self, PJSIPUA ua, pj_pool_t *pool, pjmedia_port *port) except -1 with gil
-    cdef int _remove_port(self, PJSIPUA ua, unsigned int slot) except -1 with gil
+    cdef int _add_port(self, PJSIPUA ua, pj_pool_t *pool, pjmedia_port *port) except -1
+    cdef int _remove_port(self, PJSIPUA ua, unsigned int slot) except -1
     cdef int _cb_postpoll_stop_sound(self, timer) except -1
 
 cdef class ToneGenerator(object):
@@ -2039,7 +2039,7 @@ cdef class RemoteVideoStream(VideoProducer):
 
 cdef LocalVideoStream_create(pjmedia_vid_stream *stream)
 cdef RemoteVideoStream_create(pjmedia_vid_stream *stream, format_change_handler=*)
-cdef int RemoteVideoStream_on_event(pjmedia_event *event, void *user_data) with gil
+cdef int RemoteVideoStream_on_event(pjmedia_event *event, void *user_data) noexcept nogil
 cdef void _start_video_port(pjmedia_vid_port *port)
 cdef void _stop_video_port(pjmedia_vid_port *port)
 
@@ -2105,8 +2105,8 @@ cdef class IncomingRequest(object):
     # methods
     cdef int init(self, PJSIPUA ua, pjsip_rx_data *rdata) except -1
 
-cdef void _Request_cb_tsx_state(pjsip_transaction *tsx, pjsip_event *event) with gil
-cdef void _Request_cb_timer(pj_timer_heap_t *timer_heap, pj_timer_entry *entry) with gil
+cdef void _Request_cb_tsx_state(pjsip_transaction *tsx, pjsip_event *event) noexcept nogil
+cdef void _Request_cb_timer(pj_timer_heap_t *timer_heap, pj_timer_entry *entry) noexcept nogil
 
 # core.referral
 
@@ -2130,7 +2130,9 @@ cdef class Referral(object):
     cdef readonly FrozenCredentials credentials
     cdef readonly FrozenContactHeader local_contact_header
     cdef readonly FrozenContactHeader remote_contact_header
-    cdef readonly int refresh
+    # Causes conflict in compilation as there is a function called refresh.
+    # There is no int and I don't think this is used. -- Tijmen
+    # cdef readonly int refresh
     cdef readonly frozenlist extra_headers
     cdef pj_time_val _request_timeout
     cdef int _want_end
@@ -2173,12 +2175,12 @@ cdef class IncomingReferral(object):
     cdef int _cb_server_timeout(self, PJSIPUA ua) except -1
     cdef int _cb_tsx(self, PJSIPUA ua, pjsip_event *event) except -1
 
-cdef void _Referral_cb_state(pjsip_evsub *sub, pjsip_event *event) with gil
-cdef void _Referral_cb_notify(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code, pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) with gil
-cdef void _Referral_cb_refresh(pjsip_evsub *sub) with gil
-cdef void _IncomingReferral_cb_rx_refresh(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code, pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) with gil
-cdef void _IncomingReferral_cb_server_timeout(pjsip_evsub *sub) with gil
-cdef void _IncomingReferral_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) with gil
+cdef void _Referral_cb_state(pjsip_evsub *sub, pjsip_event *event) noexcept nogil
+cdef void _Referral_cb_notify(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code, pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) noexcept nogil
+cdef void _Referral_cb_refresh(pjsip_evsub *sub) noexcept nogil
+cdef void _IncomingReferral_cb_rx_refresh(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code, pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) noexcept nogil
+cdef void _IncomingReferral_cb_server_timeout(pjsip_evsub *sub) noexcept nogil
+cdef void _IncomingReferral_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) noexcept nogil
 
 # core.subscription
 
@@ -2248,15 +2250,15 @@ cdef class IncomingSubscription(object):
     cdef int _cb_server_timeout(self, PJSIPUA ua) except -1
     cdef int _cb_tsx(self, PJSIPUA ua, pjsip_event *event) except -1
 
-cdef void _Subscription_cb_state(pjsip_evsub *sub, pjsip_event *event) with gil
+cdef void _Subscription_cb_state(pjsip_evsub *sub, pjsip_event *event) noexcept nogil
 cdef void _Subscription_cb_notify(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
-                                    pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) with gil
-cdef void _Subscription_cb_refresh(pjsip_evsub *sub) with gil
+                                    pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) noexcept nogil
+cdef void _Subscription_cb_refresh(pjsip_evsub *sub) noexcept nogil
 cdef void _IncomingSubscription_cb_rx_refresh(pjsip_evsub *sub, pjsip_rx_data *rdata,
                                               int *p_st_code, pj_str_t **p_st_text,
-                                              pjsip_hdr *res_hdr, pjsip_msg_body **p_body) with gil
-cdef void _IncomingSubscription_cb_server_timeout(pjsip_evsub *sub) with gil
-cdef void _IncomingSubscription_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) with gil
+                                              pjsip_hdr *res_hdr, pjsip_msg_body **p_body) noexcept nogil
+cdef void _IncomingSubscription_cb_server_timeout(pjsip_evsub *sub) noexcept nogil
+cdef void _IncomingSubscription_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) noexcept nogil
 
 # core.sdp
 
@@ -2513,19 +2515,19 @@ cdef class Invitation(object):
     cdef int _transfer_cb_notify(self, TransferRequestCallbackTimer timer) except -1
     cdef int _transfer_cb_server_timeout(self, timer) except -1
 
-cdef void _Invitation_cb_state(pjsip_inv_session *inv, pjsip_event *e) with gil
-cdef void _Invitation_cb_sdp_done(pjsip_inv_session *inv, int status) with gil
-cdef int _Invitation_cb_rx_reinvite(pjsip_inv_session *inv, pjmedia_sdp_session_ptr_const offer, pjsip_rx_data *rdata) with gil
-cdef void _Invitation_cb_tsx_state_changed(pjsip_inv_session *inv, pjsip_transaction *tsx, pjsip_event *e) with gil
-cdef void _Invitation_cb_new(pjsip_inv_session *inv, pjsip_event *e) with gil
-cdef void _Invitation_transfer_cb_state(pjsip_evsub *sub, pjsip_event *event) with gil
-cdef void _Invitation_transfer_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) with gil
+cdef void _Invitation_cb_state(pjsip_inv_session *inv, pjsip_event *e) noexcept nogil
+cdef void _Invitation_cb_sdp_done(pjsip_inv_session *inv, int status) noexcept nogil
+cdef int _Invitation_cb_rx_reinvite(pjsip_inv_session *inv, pjmedia_sdp_session_ptr_const offer, pjsip_rx_data *rdata) noexcept nogil
+cdef void _Invitation_cb_tsx_state_changed(pjsip_inv_session *inv, pjsip_transaction *tsx, pjsip_event *e) noexcept nogil
+cdef void _Invitation_cb_new(pjsip_inv_session *inv, pjsip_event *e) noexcept nogil
+cdef void _Invitation_transfer_cb_state(pjsip_evsub *sub, pjsip_event *event) noexcept nogil
+cdef void _Invitation_transfer_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) noexcept nogil
 cdef void _Invitation_transfer_cb_notify(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
-                                         pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) with gil
-cdef void _Invitation_transfer_cb_refresh(pjsip_evsub *sub) with gil
+                                         pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) noexcept nogil
+cdef void _Invitation_transfer_cb_refresh(pjsip_evsub *sub) noexcept nogil
 cdef void _Invitation_transfer_in_cb_rx_refresh(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
-                                                pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) with gil
-cdef void _Invitation_transfer_in_cb_server_timeout(pjsip_evsub *sub) with gil
+                                                pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) noexcept nogil
+cdef void _Invitation_transfer_in_cb_server_timeout(pjsip_evsub *sub) noexcept nogil
 
 # core.mediatransport
 
@@ -2623,19 +2625,19 @@ cdef class VideoTransport(object):
     cdef PJSIPUA _check_ua(self)
     cdef int _cb_check_rtp(self, MediaCheckTimer timer) except -1
 
-cdef void _RTPTransport_cb_ice_complete(pjmedia_transport *tp, pj_ice_strans_op op, int status) with gil
-cdef void _RTPTransport_cb_ice_state(pjmedia_transport *tp, pj_ice_strans_state prev, pj_ice_strans_state curr) with gil
-cdef void _RTPTransport_cb_ice_stop(pjmedia_transport *tp, char *reason, int err) with gil
-cdef void _RTPTransport_cb_zrtp_secure_on(pjmedia_transport *tp, char* cipher) with gil
-cdef void _RTPTransport_cb_zrtp_secure_off(pjmedia_transport *tp) with gil
-cdef void _RTPTransport_cb_zrtp_show_sas(pjmedia_transport *tp, char* sas, int verified) with gil
-cdef void _RTPTransport_cb_zrtp_confirm_goclear(pjmedia_transport *tp) with gil
-cdef void _RTPTransport_cb_zrtp_show_message(pjmedia_transport *tp, int severity, int subCode) with gil
-cdef void _RTPTransport_cb_zrtp_negotiation_failed(pjmedia_transport *tp, int severity, int subCode) with gil
-cdef void _RTPTransport_cb_zrtp_not_supported_by_other(pjmedia_transport *tp) with gil
-cdef void _RTPTransport_cb_zrtp_ask_enrollment(pjmedia_transport *tp, int info) with gil
-cdef void _RTPTransport_cb_zrtp_inform_enrollment(pjmedia_transport *tp, int info) with gil
-cdef void _AudioTransport_cb_dtmf(pjmedia_stream *stream, void *user_data, int digit) with gil
+cdef void _RTPTransport_cb_ice_complete(pjmedia_transport *tp, pj_ice_strans_op op, int status) noexcept nogil
+cdef void _RTPTransport_cb_ice_state(pjmedia_transport *tp, pj_ice_strans_state prev, pj_ice_strans_state curr) noexcept nogil
+cdef void _RTPTransport_cb_ice_stop(pjmedia_transport *tp, char *reason, int err) noexcept nogil
+cdef void _RTPTransport_cb_zrtp_secure_on(pjmedia_transport *tp, char* cipher) noexcept nogil
+cdef void _RTPTransport_cb_zrtp_secure_off(pjmedia_transport *tp) noexcept nogil
+cdef void _RTPTransport_cb_zrtp_show_sas(pjmedia_transport *tp, char* sas, int verified) noexcept nogil
+cdef void _RTPTransport_cb_zrtp_confirm_goclear(pjmedia_transport *tp) noexcept nogil
+cdef void _RTPTransport_cb_zrtp_show_message(pjmedia_transport *tp, int severity, int subCode) noexcept nogil
+cdef void _RTPTransport_cb_zrtp_negotiation_failed(pjmedia_transport *tp, int severity, int subCode) noexcept nogil
+cdef void _RTPTransport_cb_zrtp_not_supported_by_other(pjmedia_transport *tp) noexcept nogil
+cdef void _RTPTransport_cb_zrtp_ask_enrollment(pjmedia_transport *tp, int info) noexcept nogil
+cdef void _RTPTransport_cb_zrtp_inform_enrollment(pjmedia_transport *tp, int info) noexcept nogil
+cdef void _AudioTransport_cb_dtmf(pjmedia_stream *stream, void *user_data, int digit) noexcept nogil
 cdef ICECandidate ICECandidate_create(pj_ice_sess_cand *cand)
 cdef ICECheck ICECheck_create(pj_ice_sess_check *check)
 cdef str _ice_state_to_str(int state)

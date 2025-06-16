@@ -2186,7 +2186,7 @@ cdef object _extract_rtp_transport(pjmedia_transport *tp):
 
 # callback functions
 
-cdef void _RTPTransport_cb_ice_complete(pjmedia_transport *tp, pj_ice_strans_op op, int status) with gil:
+cdef void _RTPTransport_cb_ice_complete_impl(pjmedia_transport *tp, pj_ice_strans_op op, int status) with gil:
     # Despite the name this callback is not only called when ICE negotiation ends, it depends on the
     # op parameter
     cdef int lock_status
@@ -2253,7 +2253,11 @@ cdef void _RTPTransport_cb_ice_complete(pjmedia_transport *tp, pj_ice_strans_op 
             pj_mutex_unlock(lock)
 
 
-cdef void _RTPTransport_cb_ice_state(pjmedia_transport *tp, pj_ice_strans_state prev, pj_ice_strans_state curr) with gil:
+cdef void _RTPTransport_cb_ice_complete(pjmedia_transport *tp, pj_ice_strans_op op, int status) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_ice_complete_impl(tp, op, status)
+
+cdef void _RTPTransport_cb_ice_state_impl(pjmedia_transport *tp, pj_ice_strans_state prev, pj_ice_strans_state curr) with gil:
     cdef int status
     cdef pj_mutex_t *lock
     cdef RTPTransport rtp_transport
@@ -2282,7 +2286,11 @@ cdef void _RTPTransport_cb_ice_state(pjmedia_transport *tp, pj_ice_strans_state 
             pj_mutex_unlock(lock)
 
 
-cdef void _RTPTransport_cb_ice_stop(pjmedia_transport *tp, char *reason, int err) with gil:
+cdef void _RTPTransport_cb_ice_state(pjmedia_transport *tp, pj_ice_strans_state prev, pj_ice_strans_state curr) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_ice_state_impl(tp, prev, curr)
+
+cdef void _RTPTransport_cb_ice_stop_impl(pjmedia_transport *tp, char *reason, int err) with gil:
     cdef int status
     cdef pj_mutex_t *lock
     cdef RTPTransport rtp_transport
@@ -2312,7 +2320,11 @@ cdef void _RTPTransport_cb_ice_stop(pjmedia_transport *tp, char *reason, int err
             pj_mutex_unlock(lock)
 
 
-cdef void _RTPTransport_cb_zrtp_secure_on(pjmedia_transport *tp, char* cipher) with gil:
+cdef void _RTPTransport_cb_ice_stop(pjmedia_transport *tp, char *reason, int err) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_ice_stop_impl(tp, reason, err)
+
+cdef void _RTPTransport_cb_zrtp_secure_on_impl(pjmedia_transport *tp, char* cipher) with gil:
    cdef RTPTransport rtp_transport
    cdef PJSIPUA ua
    try:
@@ -2327,7 +2339,11 @@ cdef void _RTPTransport_cb_zrtp_secure_on(pjmedia_transport *tp, char* cipher) w
    except:
        ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_secure_off(pjmedia_transport *tp) with gil:
+cdef void _RTPTransport_cb_zrtp_secure_on(pjmedia_transport *tp, char* cipher) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_secure_on_impl(tp, cipher)
+
+cdef void _RTPTransport_cb_zrtp_secure_off_impl(pjmedia_transport *tp) with gil:
    cdef RTPTransport rtp_transport
    cdef PJSIPUA ua
    try:
@@ -2342,7 +2358,11 @@ cdef void _RTPTransport_cb_zrtp_secure_off(pjmedia_transport *tp) with gil:
    except:
        ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_show_sas(pjmedia_transport *tp, char* sas, int verified) with gil:
+cdef void _RTPTransport_cb_zrtp_secure_off(pjmedia_transport *tp) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_secure_off_impl(tp)
+
+cdef void _RTPTransport_cb_zrtp_show_sas_impl(pjmedia_transport *tp, char* sas, int verified) with gil:
    cdef RTPTransport rtp_transport
    cdef PJSIPUA ua
    try:
@@ -2357,7 +2377,11 @@ cdef void _RTPTransport_cb_zrtp_show_sas(pjmedia_transport *tp, char* sas, int v
    except:
        ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_confirm_goclear(pjmedia_transport *tp) with gil:
+cdef void _RTPTransport_cb_zrtp_show_sas(pjmedia_transport *tp, char* sas, int verified) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_show_sas_impl(tp, sas, verified)
+
+cdef void _RTPTransport_cb_zrtp_confirm_goclear_impl(pjmedia_transport *tp) with gil:
    cdef RTPTransport rtp_transport
    cdef PJSIPUA ua
    try:
@@ -2372,7 +2396,11 @@ cdef void _RTPTransport_cb_zrtp_confirm_goclear(pjmedia_transport *tp) with gil:
    except:
        ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_show_message(pjmedia_transport *tp, int severity, int sub_code) with gil:
+cdef void _RTPTransport_cb_zrtp_confirm_goclear(pjmedia_transport *tp) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_confirm_goclear_impl(tp)
+
+cdef void _RTPTransport_cb_zrtp_show_message_impl(pjmedia_transport *tp, int severity, int sub_code) with gil:
     global zrtp_message_levels, zrtp_error_messages
     cdef RTPTransport rtp_transport
     cdef PJSIPUA ua
@@ -2393,7 +2421,11 @@ cdef void _RTPTransport_cb_zrtp_show_message(pjmedia_transport *tp, int severity
     except:
         ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_negotiation_failed(pjmedia_transport *tp, int severity, int sub_code) with gil:
+cdef void _RTPTransport_cb_zrtp_show_message(pjmedia_transport *tp, int severity, int sub_code) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_show_message_impl(tp, severity, sub_code)
+
+cdef void _RTPTransport_cb_zrtp_negotiation_failed_impl(pjmedia_transport *tp, int severity, int sub_code) with gil:
     global zrtp_message_levels, zrtp_error_messages
     cdef RTPTransport rtp_transport
     cdef PJSIPUA ua
@@ -2411,7 +2443,11 @@ cdef void _RTPTransport_cb_zrtp_negotiation_failed(pjmedia_transport *tp, int se
     except:
         ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_not_supported_by_other(pjmedia_transport *tp) with gil:
+cdef void _RTPTransport_cb_zrtp_negotiation_failed(pjmedia_transport *tp, int severity, int sub_code) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_negotiation_failed_impl(tp, severity, sub_code)
+
+cdef void _RTPTransport_cb_zrtp_not_supported_by_other_impl(pjmedia_transport *tp) with gil:
     cdef RTPTransport rtp_transport
     cdef PJSIPUA ua
     try:
@@ -2426,7 +2462,11 @@ cdef void _RTPTransport_cb_zrtp_not_supported_by_other(pjmedia_transport *tp) wi
     except:
         ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_ask_enrollment(pjmedia_transport *tp, int info) with gil:
+cdef void _RTPTransport_cb_zrtp_not_supported_by_other(pjmedia_transport *tp) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_not_supported_by_other_impl(tp)
+
+cdef void _RTPTransport_cb_zrtp_ask_enrollment_impl(pjmedia_transport *tp, int info) with gil:
     cdef RTPTransport rtp_transport
     cdef PJSIPUA ua
     try:
@@ -2441,7 +2481,11 @@ cdef void _RTPTransport_cb_zrtp_ask_enrollment(pjmedia_transport *tp, int info) 
     except:
         ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_inform_enrollment(pjmedia_transport *tp, int info) with gil:
+cdef void _RTPTransport_cb_zrtp_ask_enrollment(pjmedia_transport *tp, int info) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_ask_enrollment_impl(tp, info)
+
+cdef void _RTPTransport_cb_zrtp_inform_enrollment_impl(pjmedia_transport *tp, int info) with gil:
     cdef RTPTransport rtp_transport
     cdef PJSIPUA ua
     try:
@@ -2456,7 +2500,11 @@ cdef void _RTPTransport_cb_zrtp_inform_enrollment(pjmedia_transport *tp, int inf
     except:
         ua._handle_exception(1)
 
-cdef void _AudioTransport_cb_dtmf(pjmedia_stream *stream, void *user_data, int digit) with gil:
+cdef void _RTPTransport_cb_zrtp_inform_enrollment(pjmedia_transport *tp, int info) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_inform_enrollment_impl(tp, info)
+
+cdef void _AudioTransport_cb_dtmf_impl(pjmedia_stream *stream, void *user_data, int digit) with gil:
     cdef AudioTransport audio_stream = (<object> user_data)()
     cdef PJSIPUA ua
     try:
@@ -2469,6 +2517,10 @@ cdef void _AudioTransport_cb_dtmf(pjmedia_stream *stream, void *user_data, int d
         _add_event("RTPAudioStreamGotDTMF", dict(obj=audio_stream, digit=chr(digit)))
     except:
         ua._handle_exception(1)
+
+cdef void _AudioTransport_cb_dtmf(pjmedia_stream *stream, void *user_data, int digit) noexcept nogil:
+    with gil:
+        _AudioTransport_cb_dtmf_impl(stream, user_data, digit)
 
 # globals
 

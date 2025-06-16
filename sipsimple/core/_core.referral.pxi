@@ -803,7 +803,7 @@ cdef class IncomingReferral:
                 self._obj = NULL
 
 
-cdef void _Referral_cb_state(pjsip_evsub *sub, pjsip_event *event) with gil:
+cdef void _Referral_cb_state_impl_impl(pjsip_evsub *sub, pjsip_event *event) with gil:
     cdef void *referral_void
     cdef Referral referral
     cdef object state
@@ -845,7 +845,15 @@ cdef void _Referral_cb_state(pjsip_evsub *sub, pjsip_event *event) with gil:
     except:
         ua._handle_exception(1)
 
-cdef void _Referral_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) with gil:
+cdef void _Referral_cb_state_impl(pjsip_evsub *sub, pjsip_event *event) noexcept nogil:
+    with gil:
+        _Referral_cb_state_impl_impl(sub, event)
+
+cdef void _Referral_cb_state(pjsip_evsub *sub, pjsip_event *event) noexcept nogil:
+    with gil:
+        _Referral_cb_state_impl(sub, event)
+
+cdef void _Referral_cb_tsx_impl_impl(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) with gil:
     cdef void *referral_void
     cdef Referral referral
     cdef pjsip_rx_data *rdata
@@ -876,7 +884,15 @@ cdef void _Referral_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event
     except:
         ua._handle_exception(1)
 
-cdef void _Referral_cb_notify(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
+cdef void _Referral_cb_tsx_impl(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) noexcept nogil:
+    with gil:
+        _Referral_cb_tsx_impl_impl(sub, tsx, event)
+
+cdef void _Referral_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) noexcept nogil:
+    with gil:
+        _Referral_cb_tsx_impl(sub, tsx, event)
+
+cdef void _Referral_cb_notify_impl(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
                                     pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) with gil:
     cdef void *referral_void
     cdef Referral referral
@@ -900,11 +916,24 @@ cdef void _Referral_cb_notify(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_
     except:
         ua._handle_exception(1)
 
-cdef void _Referral_cb_refresh(pjsip_evsub *sub) with gil:
+cdef void _Referral_cb_notify(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
+                                    pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) noexcept nogil:
+    with gil:
+        _Referral_cb_notify_impl(sub, rdata, p_st_code, p_st_text, res_hdr, p_body)
+
+cdef void _Referral_cb_refresh_impl_impl(pjsip_evsub *sub) with gil:
     # We want to handle the refresh timer oursevles, ignore the PJSIP provided timer
     pass
 
-cdef void _Referral_cb_timer(pj_timer_heap_t *timer_heap, pj_timer_entry *entry) with gil:
+cdef void _Referral_cb_refresh_impl(pjsip_evsub *sub) noexcept nogil:
+    with gil:
+        _Referral_cb_refresh_impl_impl(sub)
+
+cdef void _Referral_cb_refresh(pjsip_evsub *sub) noexcept nogil:
+    with gil:
+        _Referral_cb_refresh_impl(sub)
+
+cdef void _Referral_cb_timer_impl_impl(pj_timer_heap_t *timer_heap, pj_timer_entry *entry) with gil:
     cdef Referral referral
     cdef PJSIPUA ua
     try:
@@ -923,7 +952,15 @@ cdef void _Referral_cb_timer(pj_timer_heap_t *timer_heap, pj_timer_entry *entry)
     except:
         ua._handle_exception(1)
 
-cdef void _IncomingReferral_cb_rx_refresh(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code, pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) with gil:
+cdef void _Referral_cb_timer_impl(pj_timer_heap_t *timer_heap, pj_timer_entry *entry) noexcept nogil:
+    with gil:
+        _Referral_cb_timer_impl_impl(timer_heap, entry)
+
+cdef void _Referral_cb_timer(pj_timer_heap_t *timer_heap, pj_timer_entry *entry) noexcept nogil:
+    with gil:
+        _Referral_cb_timer_impl(timer_heap, entry)
+
+cdef void _IncomingReferral_cb_rx_refresh_impl_impl(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code, pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) with gil:
     cdef void *referral_void
     cdef IncomingReferral referral
     cdef PJSIPUA ua
@@ -947,7 +984,15 @@ cdef void _IncomingReferral_cb_rx_refresh(pjsip_evsub *sub, pjsip_rx_data *rdata
     except:
         ua._handle_exception(1)
 
-cdef void _IncomingReferral_cb_server_timeout(pjsip_evsub *sub) with gil:
+cdef void _IncomingReferral_cb_rx_refresh_impl(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code, pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) noexcept nogil:
+    with gil:
+        _IncomingReferral_cb_rx_refresh_impl_impl(sub, rdata, p_st_code, p_st_text, res_hdr, p_body)
+
+cdef void _IncomingReferral_cb_rx_refresh(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code, pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) noexcept nogil:
+    with gil:
+        _IncomingReferral_cb_rx_refresh_impl(sub, rdata, p_st_code, p_st_text, res_hdr, p_body)
+
+cdef void _IncomingReferral_cb_server_timeout_impl_impl(pjsip_evsub *sub) with gil:
     cdef void *referral_void
     cdef IncomingReferral referral
     cdef PJSIPUA ua
@@ -964,7 +1009,15 @@ cdef void _IncomingReferral_cb_server_timeout(pjsip_evsub *sub) with gil:
     except:
         ua._handle_exception(1)
 
-cdef void _IncomingReferral_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) with gil:
+cdef void _IncomingReferral_cb_server_timeout_impl(pjsip_evsub *sub) noexcept nogil:
+    with gil:
+        _IncomingReferral_cb_server_timeout_impl_impl(sub)
+
+cdef void _IncomingReferral_cb_server_timeout(pjsip_evsub *sub) noexcept nogil:
+    with gil:
+        _IncomingReferral_cb_server_timeout_impl(sub)
+
+cdef void _IncomingReferral_cb_tsx_impl_impl(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) with gil:
     cdef void *referral_void
     cdef IncomingReferral referral
     cdef PJSIPUA ua
@@ -981,6 +1034,14 @@ cdef void _IncomingReferral_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjs
     except:
         ua._handle_exception(1)
 
+
+cdef void _IncomingReferral_cb_tsx_impl(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) noexcept nogil:
+    with gil:
+        _IncomingReferral_cb_tsx_impl_impl(sub, tsx, event)
+
+cdef void _IncomingReferral_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) noexcept nogil:
+    with gil:
+        _IncomingReferral_cb_tsx_impl(sub, tsx, event)
 
 # Globals
 #

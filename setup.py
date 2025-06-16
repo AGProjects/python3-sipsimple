@@ -2,9 +2,9 @@
 
 import glob
 import os
-
 from distutils.core import setup
 from distutils.extension import Extension
+
 from setup_pjsip import PJSIP_build_ext
 
 
@@ -54,7 +54,7 @@ setup(
     },
 
     ext_modules=[
-        Extension(name="sipsimple.core._core", sources=["sipsimple/core/_core.pyx", "sipsimple/core/_core.pxd"] + glob.glob(os.path.join("sipsimple", "core", "_core.*.pxi"))),
+        Extension(name="sipsimple.core._core", sources=["sipsimple/core/_core.pyx"]),
         Extension(name="sipsimple.util._sha1", sources=["sipsimple/util/_sha1.pyx"], depends=["sipsimple/util/_sha1.h"])
     ],
 

@@ -466,7 +466,7 @@ cdef class IncomingRequest:
 
 # callback functions
 
-cdef void _Request_cb_tsx_state(pjsip_transaction *tsx, pjsip_event *event) with gil:
+cdef void _Request_cb_tsx_state_impl(pjsip_transaction *tsx, pjsip_event *event) with gil:
     cdef PJSIPUA ua
     cdef void *req_ptr
     cdef Request req
@@ -487,7 +487,11 @@ cdef void _Request_cb_tsx_state(pjsip_transaction *tsx, pjsip_event *event) with
     except:
         ua._handle_exception(1)
 
-cdef void _Request_cb_timer(pj_timer_heap_t *timer_heap, pj_timer_entry *entry) with gil:
+cdef void _Request_cb_tsx_state(pjsip_transaction *tsx, pjsip_event *event) noexcept nogil:
+    with gil:
+        _Request_cb_tsx_state_impl(tsx, event)
+
+cdef void _Request_cb_timer_impl(pj_timer_heap_t *timer_heap, pj_timer_entry *entry) with gil:
     cdef PJSIPUA ua
     cdef Request req
     try:
@@ -502,4 +506,8 @@ cdef void _Request_cb_timer(pj_timer_heap_t *timer_heap, pj_timer_entry *entry) 
     except:
         ua._handle_exception(1)
 
+
+cdef void _Request_cb_timer(pj_timer_heap_t *timer_heap, pj_timer_entry *entry) noexcept nogil:
+    with gil:
+        _Request_cb_timer_impl(timer_heap, entry)
 

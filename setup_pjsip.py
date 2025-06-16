@@ -67,6 +67,8 @@ if sys_platform == "win32":
 from distutils import log
 from distutils.dir_util import copy_tree
 from distutils.errors import DistutilsError
+
+from Cython import __version__ as cython_version
 from Cython.Distutils import build_ext
 
 
@@ -142,6 +144,7 @@ class PJSIP_build_ext(build_ext):
             return "gmake"
         else:
             return "make"
+
 
     @staticmethod
     def get_opts_from_string(line, prefix):
@@ -274,3 +277,19 @@ class PJSIP_build_ext(build_ext):
                 log.info("Error building %s: %s" % (extension.name, str(e)))
                 return None
         return build_ext.cython_sources(self, sources, extension)
+
+    def build_extension(self, ext):
+        log.info(f"Compiling Cython extension {ext.name}")
+        if cython_version.startswith('0.2'):
+            return super().build_extension(ext)
+
+        if ext.name == "sipsimple.core._core":
+            self.build_dir = os.path.join(self.build_temp, "pjsip")
+            if self.clean:
+                self.clean_pjsip()
+            copy_tree(self.pjsip_dir, self.build_dir, verbose=0)
+            if not os.path.exists(os.path.join(self.build_dir, "build.mak")):
+                self.configure_pjsip()
+            self.update_extension(ext)
+            self.compile_pjsip()
+        return super().build_extension(ext)
