@@ -1,4 +1,4 @@
-cython==0.29.37
+cython
 dnspython
 lxml
 twisted
