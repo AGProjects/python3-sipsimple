@@ -3,239 +3,6 @@ diff -ruN pjproject-2.10/base_rev pjsip/base_rev
 +++ pjsip/base_rev	2021-02-07 00:21:58.163902742 +0100
 @@ -0,0 +1 @@
 +211
-diff -ruN pjproject-2.10/pjlib/src/pj/os_core_unix.c pjsip/pjlib/src/pj/os_core_unix.c
---- pjproject-2.10/pjlib/src/pj/os_core_unix.c	2020-02-14 10:48:27.000000000 +0100
-+++ pjsip/pjlib/src/pj/os_core_unix.c	2021-02-06 23:59:38.145916811 +0100
-@@ -37,6 +37,11 @@
- 
- #if defined(PJ_HAS_SEMAPHORE_H) && PJ_HAS_SEMAPHORE_H != 0
- #  include <semaphore.h>
-+#  if defined(PJ_DARWINOS) && PJ_DARWINOS!=0
-+#    include <mach/mach.h>
-+#    include <mach/task.h>
-+#    include <mach/semaphore.h>
-+#  endif
- #endif
- 
- #include <unistd.h>	    // getpid()
-@@ -107,7 +112,11 @@
- #if defined(PJ_HAS_SEMAPHORE) && PJ_HAS_SEMAPHORE != 0
- struct pj_sem_t
- {
-+#if defined(PJ_DARWINOS) && PJ_DARWINOS!=0
-+    semaphore_t        *sem;
-+#else
-     sem_t	       *sem;
-+#endif
-     char		obj_name[PJ_MAX_OBJ_NAME];
- };
- #endif /* PJ_HAS_SEMAPHORE */
-@@ -1569,35 +1578,16 @@
-     PJ_ASSERT_RETURN(sem, PJ_ENOMEM);
- 
- #if defined(PJ_DARWINOS) && PJ_DARWINOS!=0
--    /* MacOS X doesn't support anonymous semaphore */
-     {
--	char sem_name[PJ_GUID_MAX_LENGTH+1];
--	pj_str_t nam;
--
--	/* We should use SEM_NAME_LEN, but this doesn't seem to be
--	 * declared anywhere? The value here is just from trial and error
--	 * to get the longest name supported.
--	 */
--#	define MAX_SEM_NAME_LEN	23
--
--	/* Create a unique name for the semaphore. */
--	if (PJ_GUID_STRING_LENGTH <= MAX_SEM_NAME_LEN) {
--	    nam.ptr = sem_name;
--	    pj_generate_unique_string(&nam);
--	    sem_name[nam.slen] = '\0';
--	} else {
--	    pj_create_random_string(sem_name, MAX_SEM_NAME_LEN);
--	    sem_name[MAX_SEM_NAME_LEN] = '\0';
--	}
--
--	/* Create semaphore */
--	sem->sem = sem_open(sem_name, O_CREAT|O_EXCL, S_IRUSR|S_IWUSR,
--			    initial);
--	if (sem->sem == SEM_FAILED)
--	    return PJ_RETURN_OS_ERROR(pj_get_native_os_error());
--
--	/* And immediately release the name as we don't need it */
--	sem_unlink(sem_name);
-+        kern_return_t err;
-+        sem->sem = PJ_POOL_ALLOC_T(pool, semaphore_t);
-+        err = semaphore_create(mach_task_self(), sem->sem, SYNC_POLICY_FIFO, initial);
-+        if (err != KERN_SUCCESS) {
-+            if (err == KERN_RESOURCE_SHORTAGE)
-+                return PJ_RETURN_OS_ERROR(ENOMEM);
-+            else
-+                return PJ_RETURN_OS_ERROR(EINVAL);
-+        }
-     }
- #else
-     sem->sem = PJ_POOL_ALLOC_T(pool, sem_t);
-@@ -1633,6 +1623,7 @@
- {
- #if PJ_HAS_THREADS
-     int result;
-+    //int error;
- 
-     PJ_CHECK_STACK();
-     PJ_ASSERT_RETURN(sem, PJ_EINVAL);
-@@ -1640,6 +1631,20 @@
-     PJ_LOG(6, (sem->obj_name, "Semaphore: thread %s is waiting",
- 			      pj_thread_this()->obj_name));
- 
-+#if defined(PJ_DARWINOS) && PJ_DARWINOS!=0
-+    {
-+        do
-+            result = semaphore_wait(*(sem->sem));
-+        while (result == KERN_ABORTED);
-+
-+        if (result == KERN_SUCCESS) {
-+            result = error = 0;
-+        } else {
-+            result = -1;
-+            error = EINVAL;
-+        }
-+    }
-+#else
-     result = sem_wait( sem->sem );
- 
-     if (result == 0) {
-@@ -1648,12 +1653,14 @@
-     } else {
- 	PJ_LOG(6, (sem->obj_name, "Semaphore: thread %s FAILED to acquire",
- 				  pj_thread_this()->obj_name));
-+	error = pj_get_native_os_error();
-     }
-+#endif
- 
-     if (result == 0)
- 	return PJ_SUCCESS;
-     else
--	return PJ_RETURN_OS_ERROR(pj_get_native_os_error());
-+	return PJ_RETURN_OS_ERROR(error);
- #else
-     pj_assert( sem == (pj_sem_t*) 1 );
-     return PJ_SUCCESS;
-@@ -1667,20 +1674,45 @@
- {
- #if PJ_HAS_THREADS
-     int result;
-+    int error;
- 
-     PJ_CHECK_STACK();
-     PJ_ASSERT_RETURN(sem, PJ_EINVAL);
- 
-+#if defined(PJ_DARWINOS) && PJ_DARWINOS!=0
-+    {
-+        mach_timespec_t interval;
-+        kern_return_t err;
-+
-+        interval.tv_sec = 0;
-+        interval.tv_nsec = 0;
-+
-+        err = semaphore_timedwait(*(sem->sem), interval);
-+        if (err == KERN_SUCCESS) {
-+            result = error = 0;
-+        } else if (err == KERN_OPERATION_TIMED_OUT) {
-+            result = -1;
-+            error = EAGAIN;
-+        } else {
-+            result = -1;
-+            error = EINVAL;
-+        }
-+    }
-+#else
-     result = sem_trywait( sem->sem );
- 
-     if (result == 0) {
- 	PJ_LOG(6, (sem->obj_name, "Semaphore acquired by thread %s",
- 				  pj_thread_this()->obj_name));
-+    } else {
-+        error = pj_get_native_os_error();
-     }
-+#endif
-+
-     if (result == 0)
- 	return PJ_SUCCESS;
-     else
--	return PJ_RETURN_OS_ERROR(pj_get_native_os_error());
-+	return PJ_RETURN_OS_ERROR(error);
- #else
-     pj_assert( sem == (pj_sem_t*)1 );
-     return PJ_SUCCESS;
-@@ -1694,14 +1726,30 @@
- {
- #if PJ_HAS_THREADS
-     int result;
-+    int error;
-     PJ_LOG(6, (sem->obj_name, "Semaphore released by thread %s",
- 			      pj_thread_this()->obj_name));
-+#if defined(PJ_DARWINOS) && PJ_DARWINOS!=0
-+    {
-+        kern_return_t err;
-+        err = semaphore_signal(*(sem->sem));
-+        if (err == KERN_SUCCESS) {
-+            result = error = 0;
-+        } else {
-+            result = -1;
-+            error = EINVAL;
-+        }
-+    }
-+#else
-     result = sem_post( sem->sem );
-+    if (result != 0)
-+        error = pj_get_native_os_error();
-+#endif
- 
-     if (result == 0)
- 	return PJ_SUCCESS;
-     else
--	return PJ_RETURN_OS_ERROR(pj_get_native_os_error());
-+	return PJ_RETURN_OS_ERROR(error);
- #else
-     pj_assert( sem == (pj_sem_t*) 1);
-     return PJ_SUCCESS;
-@@ -1715,6 +1763,7 @@
- {
- #if PJ_HAS_THREADS
-     int result;
-+    int error;
- 
-     PJ_CHECK_STACK();
-     PJ_ASSERT_RETURN(sem, PJ_EINVAL);
-@@ -1722,15 +1771,26 @@
-     PJ_LOG(6, (sem->obj_name, "Semaphore destroyed by thread %s",
- 			      pj_thread_this()->obj_name));
- #if defined(PJ_DARWINOS) && PJ_DARWINOS!=0
--    result = sem_close( sem->sem );
-+    {
-+        kern_return_t err;
-+        err = semaphore_destroy(mach_task_self(), *(sem->sem));
-+        if (err == KERN_SUCCESS) {
-+            result = error = -1;
-+        } else {
-+            result = -1;
-+            error = EINVAL;
-+        }
-+    }
- #else
-     result = sem_destroy( sem->sem );
-+    if (result != 0)
-+        error = pj_get_native_os_error();
- #endif
- 
-     if (result == 0)
- 	return PJ_SUCCESS;
-     else
--	return PJ_RETURN_OS_ERROR(pj_get_native_os_error());
-+	return PJ_RETURN_OS_ERROR(error);
- #else
-     pj_assert( sem == (pj_sem_t*) 1 );
-     return PJ_SUCCESS;
 --- pjproject-2.10/pjmedia/include/pjmedia/config_auto.h.in	2021-02-05 09:00:45.241108718 +0100
 +++ pjsip/pjmedia/include/pjmedia/config_auto.h.in	2021-02-22 21:46:52.232215546 +0100
 @@ -36,6 +36,22 @@
@@ -2385,27 +2152,6 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/transport_ice.c pjsip/pjmedia/src/p
      if (tp_ice->ice_st) {
  	pj_ice_strans_stop_ice(tp_ice->ice_st);
      }
-@@ -1745,17 +1765,17 @@
-     if (status != PJ_SUCCESS)
- 	return status;
- 
--    pj_sockaddr_cp(&info->sock_info.rtp_addr_name, &cand.addr);
-+    pj_sockaddr_cp(&info->sock_info.rtp_addr_name, &cand.base_addr);
- 
-     /* Get RTCP default address */
-     if (tp_ice->use_rtcp_mux) {
--	pj_sockaddr_cp(&info->sock_info.rtcp_addr_name, &cand.addr);
-+	pj_sockaddr_cp(&info->sock_info.rtcp_addr_name, &cand.base_addr);
-     } else if (tp_ice->comp_cnt > 1) {
- 	status = pj_ice_strans_get_def_cand(tp_ice->ice_st, 2, &cand);
- 	if (status != PJ_SUCCESS)
- 	    return status;
- 
--	pj_sockaddr_cp(&info->sock_info.rtcp_addr_name, &cand.addr);
-+	pj_sockaddr_cp(&info->sock_info.rtcp_addr_name, &cand.base_addr);
-     }
- 
-     /* Set remote address originating RTP & RTCP if this transport has 
 @@ -2115,6 +2135,19 @@
      }
  }
@@ -3691,6 +3437,110 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/transport_zrtp.c pjsip/pjmedia/src/
 +
 +
 +
+diff -ruN pjproject-2.10/pjmedia/src/pjmedia/vid_stream.c pjsip/pjmedia/src/pjmedia/vid_stream.c
+--- pjproject-2.10/pjmedia/src/pjmedia/vid_stream.c	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/src/pjmedia/vid_stream.c	2021-02-06 21:17:10.577365678 +0100
+@@ -139,9 +139,15 @@
+     unsigned		     dec_delay_cnt; /**< Decoding delay (in frames).*/
+     pjmedia_event            fmt_event;	    /**< Buffered fmt_changed event
+                                                  to avoid deadlock	    */
++    pjmedia_event            found_keyframe_event;
++                                           /**< Buffered found keyframe
++                                                 event for delayed republish*/
+     pjmedia_event            miss_keyframe_event;
+ 					    /**< Buffered missing keyframe
+                                                  event for delayed republish*/
++    pjmedia_event            keyframe_req_event; 
++                                           /**< Buffered keyframe request
++                                                 event for delayed republish*/
+ 
+     unsigned		     frame_size;    /**< Size of encoded base frame.*/
+     unsigned		     frame_ts_len;  /**< Frame length in timestamp. */
+@@ -410,6 +416,11 @@
+ 	    pj_memcpy(&stream->fmt_event, event, sizeof(*event));
+ 	    return PJ_SUCCESS;
+ 
++	case PJMEDIA_EVENT_KEYFRAME_FOUND:
++           /* Republish this event later from get_frame(). */
++           pj_memcpy(&stream->found_keyframe_event, event, sizeof(*event));
++           return PJ_SUCCESS;
++
+ 	case PJMEDIA_EVENT_KEYFRAME_MISSING:
+ 	    /* Republish this event later from get_frame(). */
+ 	    pj_memcpy(&stream->miss_keyframe_event, event, sizeof(*event));
+@@ -1028,6 +1039,14 @@
+     }
+ 
+     pjmedia_rtcp_rx_rtcp(&stream->rtcp, pkt, bytes_read);
++
++    /* XXX: posting some event from the RTCP session might be a better option */
++    if (stream->rtcp.keyframe_requested) {
++        pjmedia_event event;
++        pjmedia_event_init(&event, PJMEDIA_EVENT_KEYFRAME_REQUESTED, NULL, stream);
++       pj_memcpy(&stream->keyframe_req_event, &event, sizeof(event));
++    }
++
+ }
+ 
+ static pj_status_t put_frame(pjmedia_port *port,
+@@ -1419,8 +1438,8 @@
+ 		new_fps.denum = ts_diff;
+ 	    }
+ 
+-	    /* Only apply the new FPS when it is >0, <=100, and increasing */
+-	    if (new_fps.num/new_fps.denum <= 100 &&
++	    /* Only apply the new FPS when it is >0, <=60, and increasing */
++	    if (new_fps.num/new_fps.denum <= 60 &&
+ 		new_fps.num/new_fps.denum > 0 &&
+ 		new_fps.num*1.0/new_fps.denum >
+ 		stream->dec_max_fps.num*1.0/stream->dec_max_fps.denum)
+@@ -1516,8 +1535,10 @@
+ 	    /* Override the framerate to be 1.5x higher in the event
+ 	     * for the renderer.
+ 	     */
++#if 0
+ 	    fmt_chg_data->new_fmt.det.vid.fps.num *= 3;
+ 	    fmt_chg_data->new_fmt.det.vid.fps.num /= 2;
++#endif
+ 	} else {
+ 	    pjmedia_format_copy(&stream->info.codec_param->enc_fmt,
+ 				&fmt_chg_data->new_fmt);
+@@ -1534,12 +1555,25 @@
+ 	stream->fmt_event.type = PJMEDIA_EVENT_NONE;
+     }
+ 
++    if (stream->found_keyframe_event.type != PJMEDIA_EVENT_NONE) {
++       pjmedia_event_publish(NULL, port, &stream->found_keyframe_event,
++                             PJMEDIA_EVENT_PUBLISH_POST_EVENT);
++       stream->found_keyframe_event.type = PJMEDIA_EVENT_NONE;
++    }
++
+     if (stream->miss_keyframe_event.type != PJMEDIA_EVENT_NONE) {
+ 	pjmedia_event_publish(NULL, port, &stream->miss_keyframe_event,
+ 			      PJMEDIA_EVENT_PUBLISH_POST_EVENT);
+ 	stream->miss_keyframe_event.type = PJMEDIA_EVENT_NONE;
+     }
+ 
++    if (stream->keyframe_req_event.type != PJMEDIA_EVENT_NONE) {
++       pjmedia_event_publish(NULL, port, &stream->keyframe_req_event,
++                             PJMEDIA_EVENT_PUBLISH_POST_EVENT);
++       stream->keyframe_req_event.type = PJMEDIA_EVENT_NONE;
++    }
++
++
+     pj_mutex_lock( stream->jb_mutex );
+ 
+     if (stream->dec_frame.size == 0) {
+@@ -1846,7 +1880,9 @@
+      * local renderer clock) or video setup lag. Note that the actual framerate
+      * will be continuously calculated based on the incoming RTP timestamps.
+      */
++#if 0
+     vfd_dec->fps.num = vfd_dec->fps.num * 3 / 2;
++#endif
+     stream->dec_max_fps = vfd_dec->fps;
+ 
+     /* Create decoder channel */
 diff -ruN pjproject-2.10/pjmedia/src/pjmedia/vid_tee.c pjsip/pjmedia/src/pjmedia/vid_tee.c
 --- pjproject-2.10/pjmedia/src/pjmedia/vid_tee.c	2020-02-14 10:48:27.000000000 +0100
 +++ pjsip/pjmedia/src/pjmedia/vid_tee.c	2021-02-06 21:28:30.516675163 +0100
@@ -4818,21 +4668,6 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c pjsip/pjm
  
      /* Init packet, the container of the encoded data */
      av_init_packet(&avpacket);
-@@ -1705,12 +1700,12 @@
-     avpacket.size = (int)input->size;
- 
-     /* ffmpeg warns:
--     * - input buffer padding, at least FF_INPUT_BUFFER_PADDING_SIZE
-+     * - input buffer padding, at least AV_INPUT_BUFFER_PADDING_SIZE
-      * - null terminated
-      * Normally, encoded buffer is allocated more than needed, so lets just
-      * bzero the input buffer end/pad, hope it will be just fine.
-      */
--    pj_bzero(avpacket.data+avpacket.size, FF_INPUT_BUFFER_PADDING_SIZE);
-+    pj_bzero(avpacket.data+avpacket.size, AV_INPUT_BUFFER_PADDING_SIZE);
- 
-     output->bit_info = 0;
-     output->timestamp = input->timestamp;
 diff -ruN pjproject-2.10/pjmedia/src/pjmedia-videodev/avf_dev.m pjsip/pjmedia/src/pjmedia-videodev/avf_dev.m
 --- pjproject-2.10/pjmedia/src/pjmedia-videodev/avf_dev.m	1970-01-01 01:00:00.000000000 +0100
 +++ pjsip/pjmedia/src/pjmedia-videodev/avf_dev.m	2021-02-06 18:46:39.045322874 +0100
@@ -5522,7 +5357,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-videodev/avf_dev.m pjsip/pjmedia/sr
 diff -ruN pjproject-2.10/pjmedia/src/pjmedia-videodev/dshow_dev.c pjsip/pjmedia/src/pjmedia-videodev/dshow_dev.c
 --- pjproject-2.10/pjmedia/src/pjmedia-videodev/dshow_dev.c	2020-02-14 10:48:27.000000000 +0100
 +++ pjsip/pjmedia/src/pjmedia-videodev/dshow_dev.c	2021-02-06 22:51:16.641714862 +0100
-@@ -20,30 +20,24 @@
+@@ -20,32 +20,26 @@
  #include <pj/assert.h>
  #include <pj/log.h>
  #include <pj/os.h>
@@ -5550,6 +5385,8 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-videodev/dshow_dev.c pjsip/pjmedia/
 +# define DIBWIDTHBYTES(BI) (DWORD)(BI).biBitCount) * (DWORD)WIDTHBYTES((DWORD)(BI).biWidth
 +# define _DIBSIZE(BI) (DIBWIDTHBYTES(BI) * (DWORD)(BI).biHeight)
 +# define DIBSIZE(BI) ((BI).biHeight < 0 ? (-1)*(_DIBSIZE(BI)) : _DIBSIZE(BI))
+ #else
+ #include <amvideo2.h>
  #endif
  
 -#pragma comment(lib, "Strmiids.lib")
