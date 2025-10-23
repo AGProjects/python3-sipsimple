@@ -17,7 +17,7 @@ from eventlib import coros, proc
 from gnutls.crypto import X509Certificate, X509PrivateKey
 from gnutls.errors import GNUTLSError
 from gnutls.interfaces.twisted import X509Credentials
-from ondewo.logging.logger import logger_console as logger
+from loguru import logger as logger
 from zope.interface import implementer
 
 from sipsimple.account.bonjour import BonjourServices, _bonjour
