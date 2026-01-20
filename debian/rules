@@ -6,6 +6,9 @@ export PYBUILD_NAME = sipsimple
 %:
 	dh $@ --with python3 --buildsystem=pybuild
 
+override_dh_auto_test:
+	# Tests require optional dependencies; skip
+
 override_dh_clean:
 	dh_clean
 	rm -rf build dist MANIFEST
