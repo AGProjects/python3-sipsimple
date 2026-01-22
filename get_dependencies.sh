@@ -1,7 +1,8 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -eu -o pipefail
 
 unamestr=$(uname)
-if [[ "$unamestr" == 'Linux' ]]; then
+if [[ "$unamestr" == 'Linux' && ${AUTOINSTALL:-1} != 0 ]]; then
 sudo apt install python3 dh-python python3-all-dev cython3 libasound2-dev \
 python3-dateutil python3-dnspython libssl-dev libv4l-dev libavcodec-dev \
 libavformat-dev libopencore-amrnb-dev libopencore-amrwb-dev libavutil-dev \
@@ -15,7 +16,7 @@ cd deps
 PJSIP_VERSION="${1:-2.10}"
 
 #
-# Update PJSIP 
+# Update PJSIP
 #
 echo "Preparing PJSIP $PJSIP_VERSION sources..."
 if [ ! -f $PJSIP_VERSION.tar.gz ]; then
@@ -76,21 +77,38 @@ cp ZRTPCPP/README.md ./pjsip/third_party/zsrtp/zrtp/
 
 patches_dir="patches"
 
-if [ -d patches/$PJSIP_VERSION ];then
-    patches_dir=patches/$PJSIP_VERSION
+if [[ "${PJSIP_VERSION}" =~ [0-9]+\.[0-9]+ ]];
+then
+	PJSIP_VERSION_MINOR="${BASH_REMATCH[0]}"
+else
+	PJSIP_VERSION_MINOR="${PJSIP_VERSION}"
 fi
 
-uname -v|grep ARM64 |grep Darwin > /dev/null
-
-if [ $? -eq 0 ]; then
-   rm $patches_dir/005_fix_ffmpeg.patch 2> /dev/null
-   rm $patches_dir/007_video_support_dshow_mingw.patch 2> /dev/null
-   rm $patches_dir/008_support_mingw_w64.patch 2> /dev/null
+if [ -d "patches/${PJSIP_VERSION_MINOR}" ];
+then
+	patches_dir="patches/${PJSIP_VERSION_MINOR}"
 fi
 
-for p in $patches_dir/0*.patch; do
-    echo "Applying patch $p"
-    patch -p0 < $p > /dev/null
+patches=( "${patches_dir}"/0*.patch )
+
+# Remove unnecessary patches on aarch64-darwin
+if uname -v | grep ARM64 | grep Darwin >/dev/null;
+then
+	patches_subset=()
+	for path in "${patches[@]}";
+	do
+		case "${path}" in
+			"${patches_dir}/005_fix_ffmpeg.patch") ;;
+			"${patches_dir}/007_video_support_dshow_mingw.patch") ;;
+			"${patches_dir}/008_support_mingw_w64.patch") ;;
+			*) patches_subset+=( "${path}" ) ;;
+		esac
+	done
+	patches=( "${patches_subset[@]}" )
+fi
+
+for p in "${patches[@]}";
+do
+	echo "Applying patch ${p}"
+	patch -p0 <"${p}"
 done
-
-cd - > /dev/null
