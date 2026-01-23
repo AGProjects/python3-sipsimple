@@ -3781,8 +3781,8 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/vid_tee.c pjsip/pjmedia/src/pjmedia
      if (tee->buf_pool)
          pj_pool_release(tee->buf_pool);
 diff -ruN pjproject-2.10/pjmedia/src/pjmedia-audiodev/alsa_dev.c pjsip/pjmedia/src/pjmedia-audiodev/alsa_dev.c
---- pjproject-2.10/pjmedia/src/pjmedia-audiodev/alsa_dev.c	2020-02-14 10:48:27.000000000 +0100
-+++ pjsip/pjmedia/src/pjmedia-audiodev/alsa_dev.c	2021-02-06 23:08:42.203153000 +0100
+--- pjproject-2.11/pjmedia/src/pjmedia-audiodev/alsa_dev.c	2021-03-17 08:34:46.000000000 +0100
++++ pjsip/pjmedia/src/pjmedia-audiodev/alsa_dev.c	2026-01-22 16:58:14.647578243 +0100
 @@ -43,7 +43,7 @@
  #define ALSASOUND_CAPTURE  		2
  #define MAX_SOUND_CARDS 		5
@@ -4015,7 +4015,16 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-audiodev/alsa_dev.c pjsip/pjmedia/s
  			   SND_PCM_STREAM_PLAYBACK,
  			   0);
      if (result < 0)
-@@ -722,7 +794,7 @@
+@@ -677,7 +749,7 @@
+     if (result < 0) {
+ 	PJ_LOG (3,(THIS_FILE, "Unable to set a channel count of %d for "
+ 		   "playback device '%s'", param->channel_count,
+-		   stream->af->devs[param->play_id].name));
++		   stream->af->devs[param->play_id].alsa_name));
+ 	snd_pcm_close (stream->pb_pcm);
+ 	return PJMEDIA_EAUD_SYSERR;
+     }
+@@ -734,7 +806,7 @@
  
      PJ_LOG (5,(THIS_FILE, "Opened device alsa(%s) for playing, sample rate=%d"
  	       ", ch=%d, bits=%d, period size=%d frames, latency=%d ms",
@@ -4024,7 +4033,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-audiodev/alsa_dev.c pjsip/pjmedia/s
  	       rate, param->channel_count,
  	       param->bits_per_sample, stream->pb_frames,
  	       (int)stream->param.output_latency_ms));
-@@ -746,9 +818,9 @@
+@@ -758,9 +830,9 @@
  
      /* Open PCM for capture */
      PJ_LOG (5,(THIS_FILE, "open_capture: Open capture device '%s'",
@@ -4036,7 +4045,16 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-audiodev/alsa_dev.c pjsip/pjmedia/s
  			   SND_PCM_STREAM_CAPTURE,
  			   0);
      if (result < 0)
-@@ -842,7 +914,7 @@
+@@ -809,7 +881,7 @@
+     if (result < 0) {
+ 	PJ_LOG (3,(THIS_FILE, "Unable to set a channel count of %d for "
+ 		   "capture device '%s'", param->channel_count,
+-		   stream->af->devs[param->rec_id].name));
++		   stream->af->devs[param->rec_id].alsa_name));
+ 	snd_pcm_close (stream->ca_pcm);
+ 	return PJMEDIA_EAUD_SYSERR;
+     }
+@@ -866,7 +938,7 @@
  
      PJ_LOG (5,(THIS_FILE, "Opened device alsa(%s) for capture, sample rate=%d"
  	       ", ch=%d, bits=%d, period size=%d frames, latency=%d ms",
@@ -4045,7 +4063,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-audiodev/alsa_dev.c pjsip/pjmedia/s
  	       rate, param->channel_count,
  	       param->bits_per_sample, stream->ca_frames,
  	       (int)stream->param.input_latency_ms));
-@@ -903,6 +975,27 @@
+@@ -927,6 +999,27 @@
      return PJ_SUCCESS;
  }
  
