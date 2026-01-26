@@ -1,3 +1,26 @@
+python3-sipsimple (5.3.4) unstable; urgency=medium
+
+  * Fixed changlog
+  * Fix ZRTP EmojiBase32 compilation error due to undefined uint8_t
+  * Fix ALSA audio backend compilation on PJSIP 2.11
+  * Drop patches already applied in PJSIP 2.11/2.12
+  * Improved get_dependencies.sh script
+  * Skip testing in debian builds
+  * Fixed syntax warnings
+  * Updated patch for PJSIP 2.11, fixes video support
+  * Use thread to read from compilation process so output is printed line by line
+  * Use python logging module in build process
+  * Initial port to Cython 3 with backwards compatibilty
+  * Fix handling content of non-CPIM messages
+  * Added cros compilation notes
+  * Added patch for 2.10 webrtc arm arch
+  * Updated mac requirements
+  * Skip some patches for M processor
+  * Use pjsip 2.10 by default
+  * Updated docs
+
+ -- Tijmen de Mes <tijmen@ag-projects.com>  Mon, 26 Jan 2026 13:24:20 +0100
+
 python3-sipsimple (5.3.3) unstable; urgency=medium
 
   * Use pjsip 2.12 branch by default
