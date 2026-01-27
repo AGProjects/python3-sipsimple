@@ -1,6 +1,6 @@
 python3-sipsimple (5.3.4) unstable; urgency=medium
 
-  * Fixed changlog
+  * Fixed changelog
   * Fix ZRTP EmojiBase32 compilation error due to undefined uint8_t
   * Fix ALSA audio backend compilation on PJSIP 2.11
   * Drop patches already applied in PJSIP 2.11/2.12
