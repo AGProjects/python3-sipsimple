@@ -214,10 +214,25 @@ class PJSIP_build_ext(build_ext):
         self.pjsip_dir = os.path.join(os.path.dirname(__file__), "deps", "pjsip")
 
     def configure_pjsip(self, silent=True):
+        # Detect optional codec libraries that need both a config_site #define
+        # and a ./configure flag below.  FDK-AAC enables PJSIP's AAC codec.
+        extra_config = []
+
+        fdk_aac_path = os.environ.get("SIPSIMPLE_FDK_AAC_PATH")
+        if fdk_aac_path is None:
+            for cand in ("/opt/local", "/opt/homebrew", "/usr/local", "/usr"):
+                if os.path.exists(os.path.join(cand, "include", "fdk-aac", "aacdecoder_lib.h")):
+                    fdk_aac_path = cand
+                    break
+        if fdk_aac_path is not None:
+            log.info("Found FDK-AAC at %s; enabling AAC codec" % fdk_aac_path)
+            extra_config.append("#define PJMEDIA_HAS_FDKAAC_CODEC 1")
+        self._fdk_aac_path = fdk_aac_path  # remembered for the configure cmd below
+
         path = os.path.join(self.build_dir, "pjlib", "include", "pj", "config_site.h")
         log.info("Configuring PJSIP in %s" % path)
         with open(path, "w") as f:
-            s = "\n".join(self.config_site+[""])
+            s = "\n".join(self.config_site + extra_config + [""])
             f.write(s)
             
         cflags = "-DNDEBUG -g -fPIC -fno-omit-frame-pointer -fno-strict-aliasing -Wno-unused-label"
@@ -254,6 +269,9 @@ class PJSIP_build_ext(build_ext):
         amr_wb_path = env.get("SIPSIMPLE_AMR_WB_PATH", None)
         if amr_wb_path is not None:
             cmd.append("--with-opencore-amrwbenc=%s" % os.path.abspath(os.path.expanduser(amr_wb_path)))
+
+        if self._fdk_aac_path is not None:
+            cmd.append("--with-fdk-aac=%s" % os.path.abspath(os.path.expanduser(self._fdk_aac_path)))
 
         if self.verbose:
             log.info(" ".join(cmd))

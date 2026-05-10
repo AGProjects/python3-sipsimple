@@ -13,6 +13,7 @@ sudo apt-get install -y \
     libv4l-dev libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
     libopencore-amrnb-dev libopencore-amrwb-dev \
     libx264-dev libvpx-dev libopus-dev \
+    libfdk-aac-dev \
     uuid-dev \
     devscripts debhelper
 

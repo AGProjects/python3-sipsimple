@@ -3,7 +3,8 @@
 # Install C building dependencies
 echo "Installing port dependencies..."
 
-sudo port install yasm x264 gnutls openssl sqlite3 ffmpeg mpfr libmpc libvpx wget gmp mpc libuuid
+sudo port install yasm x264 gnutls openssl sqlite3 ffmpeg mpfr libmpc libvpx wget gmp libuuid \
+                  libopus fdk-aac pkgconfig
 
 # This will conflict with buildin MacOS
 sudo mv /opt/local/include/uuid/uuid.h /opt/local/include/uuid/uuid.h.old
