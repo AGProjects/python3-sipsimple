@@ -24,9 +24,53 @@ cdef class PJLIB:
                 pj_shutdown()
 
 
+# Non-throwing OOM callback for the pool factory.
+#
+# PJSIP's stock pj_pool_factory_default_policy installs an OOM callback
+# (default_pool_callback in pool_policy_malloc.c) that calls
+# PJ_THROW(PJ_NO_MEMORY_EXCEPTION), which is implemented as longjmp() to
+# the per-thread exception handler set up by PJ_TRY/PJ_CATCH. The vast
+# majority of PJSIP code paths -- including pj_ssl_sock_create and
+# pj_ssl_sock_param_copy, which are exercised heavily after wake from
+# sleep when many TLS subscriptions reconnect at once -- do NOT have a
+# PJ_TRY frame on the stack. When the throw fires with no handler, the
+# longjmp dereferences a NULL/garbage pj_exception_state_t and the
+# process segfaults inside libsystem_platform.dylib's longjmp+12.
+#
+# Replacing the callback with a non-throwing version turns those crashes
+# into clean NULL returns from pj_pool_alloc, which most callers handle.
+cdef extern from *:
+    """
+    #include <pjlib.h>
+
+    static void _sipsimple_oom_pool_callback(pj_pool_t *pool, pj_size_t size)
+    {
+        PJ_LOG(1, ("sipsimple",
+                   "pool '%s' failed to allocate %lu bytes (suppressed throw)",
+                   pj_pool_getobjname(pool), (unsigned long)size));
+    }
+
+    static pj_pool_factory_policy _sipsimple_pool_factory_policy_storage;
+    static int _sipsimple_pool_factory_policy_inited = 0;
+
+    static pj_pool_factory_policy *_sipsimple_get_pool_factory_policy(void)
+    {
+        if (!_sipsimple_pool_factory_policy_inited) {
+            _sipsimple_pool_factory_policy_storage =
+                pj_pool_factory_default_policy;
+            _sipsimple_pool_factory_policy_storage.callback =
+                &_sipsimple_oom_pool_callback;
+            _sipsimple_pool_factory_policy_inited = 1;
+        }
+        return &_sipsimple_pool_factory_policy_storage;
+    }
+    """
+    pj_pool_factory_policy *_sipsimple_get_pool_factory_policy() nogil
+
+
 cdef class PJCachingPool:
     def __cinit__(self):
-        pj_caching_pool_init(&self._obj, &pj_pool_factory_default_policy, 0)
+        pj_caching_pool_init(&self._obj, _sipsimple_get_pool_factory_policy(), 0)
         self._init_done = 1
 
     def __dealloc__(self):
