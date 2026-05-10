@@ -1,54 +1,59 @@
 
-SIP SIMPLE client SDK installation on Raspbian
-----------------------------------------------
+SIP SIMPLE client SDK installation on Raspbian / Raspberry Pi OS
+----------------------------------------------------------------
 
-Home page: http://sipsimpleclient.org
+http://sipsimpleclient.org
 
-This document describes the installation procedure on Raspbian Linux
-operating system on a Rasberry Pi (armhf architecture).
+This document describes the installation procedure on Raspbian / Raspberry
+Pi OS, on either armhf (32-bit) or arm64 (64-bit) Raspberry Pi hardware.
 
 
 Installation from AG Projects repository
 ----------------------------------------
 
-Follow the instructions from https://packages.ag-projects.com
+Follow the instructions at https://packages.ag-projects.com to add the
+repository, then:
+
+    sudo apt-get install python3-sipsimple sipclients3
 
 
-Building the debian package
----------------------------
+Building from source (numbered installer scripts)
+-------------------------------------------------
 
-Install building dependencies:
+Same flow as on any Debian-based Linux: see Install.linux. From inside
+the python3-sipsimple checkout:
 
-./get_dependencies.sh 2.10
+    cd linux
+    ./01-install-build-env.sh
+    ./02-install-c-deps.sh
+    ./03-install-python-deps.sh
+    ./04-install_sipsimple.sh
+    ./05-install_sipclients.sh
 
-For arm64 architecture edit deps/pjsip/aconfigure and replace:
+The build defaults to PJSIP 2.12 and applies the patch series from
+deps/patches/. On 64-bit Raspberry Pi OS no aconfigure edits are needed —
+the WebRTC AEC arm64 detection is already covered by the upstream pjsip
+2.12 sources we patch.
 
-       ac_webrtc_instset=sse2
 
-with:
+Building a debian package
+-------------------------
 
-       ac_webrtc_instset=neon
-       ac_webrtc_cflags="-DWEBRTC_ARCH_ARM64"
+For each project below, in this order, clone the repo and run
+`./makedeb.sh`, then `sudo dpkg -i dist/*.deb`:
 
-Obtain the source code from AG Projects using darcs command:
+  1. python3-application
+  2. python3-otr
+  3. python3-eventlib
+  4. python3-xcaplib
+  5. python3-msrplib
+  6. python3-sipsimple
+  7. sipclients3
 
-darcs get --set-scripts-executable http://devel.ag-projects.com/repositories/project
+Sources can be cloned with darcs:
 
-For each of the projects listed bellow:
+    darcs clone http://devel.ag-projects.com/repositories/PROJECT
 
- * python3-application
- * python3-otr
- * python3-eventlib
- * python3-xcap
- * python3-msrp
- * python3-sipsimple (see WebRTC AEC note below)
- * sipclients3
+or git:
 
-Enter the directory where each project has been downloaded and run:
-
-./makedeb.sh
-
-The .deb and related files are built in dist or one of the upper directories.
-
-Use dpkg -i package_name.deb command to install the software.
-
+    git clone https://github.com/AGProjects/PROJECT
