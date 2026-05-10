@@ -13,7 +13,7 @@ fi
 
 cd deps
 
-PJSIP_VERSION="${1:-2.10}"
+PJSIP_VERSION="${1:-2.12}"
 
 #
 # Update PJSIP
@@ -75,32 +75,21 @@ cp -r ZRTPCPP/zrtp ./pjsip/third_party/zsrtp/zrtp/
 cp ZRTPCPP/COPYING ./pjsip/third_party/zsrtp/zrtp/
 cp ZRTPCPP/README.md ./pjsip/third_party/zsrtp/zrtp/
 
+# Single patch series: patches/01..19_*.patch.
+# 01..12 are the pjsip 2.12 functional patches (split out from the old monolith).
+# 13..19 are the auxiliary fixes (zsrtp, tls log, vpx, mac audio, ffmpeg, etc).
 patches_dir="patches"
+patches=( "${patches_dir}"/[0-9][0-9]_*.patch )
 
-if [[ "${PJSIP_VERSION}" =~ [0-9]+\.[0-9]+ ]];
-then
-	PJSIP_VERSION_MINOR="${BASH_REMATCH[0]}"
-else
-	PJSIP_VERSION_MINOR="${PJSIP_VERSION}"
-fi
-
-if [ -d "patches/${PJSIP_VERSION_MINOR}" ];
-then
-	patches_dir="patches/${PJSIP_VERSION_MINOR}"
-fi
-
-patches=( "${patches_dir}"/0*.patch )
-
-# Remove unnecessary patches on aarch64-darwin
+# Skip the FFmpeg-build patch on Apple Silicon — it doesn't apply cleanly there
+# (see patches/apple-silicon.txt for background).
 if uname -v | grep ARM64 | grep Darwin >/dev/null;
 then
 	patches_subset=()
 	for path in "${patches[@]}";
 	do
 		case "${path}" in
-			"${patches_dir}/005_fix_ffmpeg.patch") ;;
-			"${patches_dir}/007_video_support_dshow_mingw.patch") ;;
-			"${patches_dir}/008_support_mingw_w64.patch") ;;
+			"${patches_dir}/17_fix_ffmpeg.patch") ;;
 			*) patches_subset+=( "${path}" ) ;;
 		esac
 	done

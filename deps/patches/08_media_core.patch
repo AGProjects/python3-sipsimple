@@ -1,0 +1,737 @@
+diff -ruN pjproject-2.10/pjmedia/include/pjmedia/event.h pjsip/pjmedia/include/pjmedia/event.h
+--- pjproject-2.10/pjmedia/include/pjmedia/event.h	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/include/pjmedia/event.h	2021-02-06 16:57:17.374166159 +0100
+@@ -83,6 +83,11 @@
+     PJMEDIA_EVENT_KEYFRAME_MISSING = PJMEDIA_FOURCC('I', 'F', 'R', 'M'),
+ 
+     /**
++     * Remote video decoder asked for a keyframe.
++     */
++    PJMEDIA_EVENT_KEYFRAME_REQUESTED = PJMEDIA_FOURCC('I', 'F', 'R', 'R'),
++
++    /**
+      * Video orientation has been changed event.
+      */
+     PJMEDIA_EVENT_ORIENT_CHANGED = PJMEDIA_FOURCC('O', 'R', 'N', 'T'),
+diff -ruN pjproject-2.10/pjmedia/include/pjmedia/format.h pjsip/pjmedia/include/pjmedia/format.h
+--- pjproject-2.10/pjmedia/include/pjmedia/format.h	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/include/pjmedia/format.h	2021-02-06 18:30:18.321176790 +0100
+@@ -97,6 +97,7 @@
+     /**
+      * 32bit RGB with alpha channel
+      */
++    PJMEDIA_FORMAT_ARGB     = PJMEDIA_FORMAT_PACK('A', 'R', 'G', 'B'),
+     PJMEDIA_FORMAT_RGBA     = PJMEDIA_FORMAT_PACK('R', 'G', 'B', 'A'),
+     PJMEDIA_FORMAT_BGRA     = PJMEDIA_FORMAT_PACK('B', 'G', 'R', 'A'),
+ 
+diff -ruN pjproject-2.10/pjmedia/include/pjmedia/mixer_port.h pjsip/pjmedia/include/pjmedia/mixer_port.h
+--- pjproject-2.10/pjmedia/include/pjmedia/mixer_port.h	1970-01-01 01:00:00.000000000 +0100
++++ pjsip/pjmedia/include/pjmedia/mixer_port.h	2021-02-06 18:42:19.161906996 +0100
+@@ -0,0 +1,69 @@
++/* 
++ * Copyright (C) 2010 AG Projects
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA 
++ */
++
++#ifndef __PJMEDIA_MIXER_PORT_H__
++#define __PJMEDIA_MIXER_PORT_H__
++
++/**
++ * @file mixer_port.h
++ * @brief Mixer media port.
++ */
++#include <pjmedia/port.h>
++
++
++
++/**
++ * @defgroup PJMEDIA_MIXER_PORT Mixer Port
++ * @ingroup PJMEDIA_PORT
++ * @brief The second simplest type of media port which forwards the frames it
++ *        gets unchanged.
++ * @{
++ */
++
++
++PJ_BEGIN_DECL
++
++
++/**
++ * Create Mixer port.
++ *
++ * @param pool              Pool to allocate memory.
++ * @param sampling_rate     Sampling rate of the port.
++ * @param channel_count     Number of channels.
++ * @param samples_per_frame Number of samples per frame.
++ * @param bits_per_sample   Number of bits per sample.
++ * @param p_port            Pointer to receive the port instance.
++ *
++ * @return                  PJ_SUCCESS on success.
++ */
++PJ_DECL(pj_status_t) pjmedia_mixer_port_create(pj_pool_t *pool,
++                                               unsigned sampling_rate,
++                                               unsigned channel_count,
++                                               unsigned samples_per_frame,
++                                               unsigned bits_per_sample,
++                                               pjmedia_port **p_port);
++
++
++PJ_END_DECL
++
++/**
++ * @}
++ */
++
++
++#endif	/* __PJMEDIA_MIXER_PORT_H__ */
+diff -ruN pjproject-2.10/pjmedia/include/pjmedia/rtcp.h pjsip/pjmedia/include/pjmedia/rtcp.h
+--- pjproject-2.10/pjmedia/include/pjmedia/rtcp.h	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/include/pjmedia/rtcp.h	2021-02-06 18:32:46.933482520 +0100
+@@ -256,6 +256,8 @@
+     
+     pjmedia_rtcp_stat	    stat;	/**< Bidirectional stream stat.	    */
+ 
++    pj_bool_t               keyframe_requested;    /** Set to true when RTCP PLI is received */
++
+ #if defined(PJMEDIA_HAS_RTCP_XR) && (PJMEDIA_HAS_RTCP_XR != 0)
+     /**
+      * Specify whether RTCP XR processing is enabled on this session.
+@@ -462,6 +464,23 @@
+ 					    pj_size_t *length,
+ 					    const pj_str_t *reason);
+ 
++/**
++ * Build an RTCP PLI packet. This packet can be appended to other RTCP
++ * packets, e.g: RTCP RR/SR, to compose a compound RTCP packet.
++ *
++ * @param session   The RTCP session.
++ * @param buf      The buffer to receive RTCP PLI packet.
++ * @param length    On input, it will contain the buffer length.
++ *                 On output, it will contain the generated RTCP PLI
++ *                 packet length.
++ *
++ * @return         PJ_SUCCESS on success.
++ */
++PJ_DECL(pj_status_t) pjmedia_rtcp_build_rtcp_pli(
++                                           pjmedia_rtcp_session *session,
++                                           void *buf,
++                                           pj_size_t *length);
++
+ 
+ /**
+  * Call this function if RTCP XR needs to be enabled/disabled in the 
+diff -ruN pjproject-2.10/pjmedia/include/pjmedia/signatures.h pjsip/pjmedia/include/pjmedia/signatures.h
+--- pjproject-2.10/pjmedia/include/pjmedia/signatures.h	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/include/pjmedia/signatures.h	2021-02-06 18:33:45.139162846 +0100
+@@ -153,6 +153,7 @@
+ #define PJMEDIA_SIG_PORT_ECHO		PJMEDIA_SIG_CLASS_PORT_AUD('E','C')
+ #define PJMEDIA_SIG_PORT_MEM_CAPTURE	PJMEDIA_SIG_CLASS_PORT_AUD('M','C')
+ #define PJMEDIA_SIG_PORT_MEM_PLAYER	PJMEDIA_SIG_CLASS_PORT_AUD('M','P')
++#define PJMEDIA_SIG_PORT_MIXER		PJMEDIA_SIG_CLASS_PORT_AUD('M','X')
+ #define PJMEDIA_SIG_PORT_NULL		PJMEDIA_SIG_CLASS_PORT_AUD('N','U')
+ #define PJMEDIA_SIG_PORT_RESAMPLE	PJMEDIA_SIG_CLASS_PORT_AUD('R','E')
+ #define PJMEDIA_SIG_PORT_SPLIT_COMB	PJMEDIA_SIG_CLASS_PORT_AUD('S','C')
+diff -ruN pjproject-2.10/pjmedia/include/pjmedia/sound_port.h pjsip/pjmedia/include/pjmedia/sound_port.h
+--- pjproject-2.10/pjmedia/include/pjmedia/sound_port.h	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/include/pjmedia/sound_port.h	2021-02-06 18:34:38.880711750 +0100
+@@ -344,6 +344,16 @@
+ 
+ 
+ /**
++ * Reset the EC state in the sound port.
++ *
++ * @param snd_port         The sound device port.
++ *
++ * @return                 PJ_SUCCESS on success.
++ */
++PJ_DECL(pj_status_t) pjmedia_snd_port_reset_ec_state(pjmedia_snd_port *snd_port);
++
++
++/**
+  * Connect a port to the sound device port. If the sound device port has a
+  * sound recorder device, then this will start periodic function call to
+  * the port's put_frame() function. If the sound device has a sound player
+diff -ruN pjproject-2.10/pjmedia/include/pjmedia.h pjsip/pjmedia/include/pjmedia.h
+--- pjproject-2.10/pjmedia/include/pjmedia.h	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/include/pjmedia.h	2021-02-06 18:40:23.766607985 +0100
+@@ -44,6 +44,7 @@
+ #include <pjmedia/jbuf.h>
+ #include <pjmedia/master_port.h>
+ #include <pjmedia/mem_port.h>
++#include <pjmedia/mixer_port.h>
+ #include <pjmedia/null_port.h>
+ #include <pjmedia/plc.h>
+ #include <pjmedia/port.h>
+@@ -67,6 +68,7 @@
+ #include <pjmedia/transport_ice.h>
+ #include <pjmedia/transport_loop.h>
+ #include <pjmedia/transport_srtp.h>
++#include <pjmedia/transport_zrtp.h>
+ #include <pjmedia/transport_udp.h>
+ #include <pjmedia/vid_codec.h>
+ #include <pjmedia/vid_conf.h>
+@@ -72,7 +74,7 @@
+ #include <pjmedia/vid_conf.h>
+ #include <pjmedia/vid_port.h>
+ #include <pjmedia/vid_stream.h>
+-//#include <pjmedia/vid_tee.h>
++#include <pjmedia/vid_tee.h>
+ #include <pjmedia/wav_playlist.h>
+ #include <pjmedia/wav_port.h>
+ #include <pjmedia/wave.h>
+diff -ruN pjproject-2.10/pjmedia/src/pjmedia/converter.c pjsip/pjmedia/src/pjmedia/converter.c
+--- pjproject-2.10/pjmedia/src/pjmedia/converter.c	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/src/pjmedia/converter.c	2021-02-06 20:19:28.491163002 +0100
+@@ -19,6 +19,7 @@
+ #include <pjmedia/converter.h>
+ #include <pj/assert.h>
+ #include <pj/errno.h>
++#include <pj/log.h>
+ 
+ #define THIS_FILE	"converter.c"
+ 
+@@ -174,6 +175,24 @@
+     if (status != PJ_SUCCESS)
+ 	return status;
+ 
++    if (param->src.type == PJMEDIA_TYPE_VIDEO) {
++        char src_fourcc_name[5];
++        char dst_fourcc_name[5];
++        PJ_LOG(4, (THIS_FILE, "Converter %p (%s) created for video: %dx%d %s -> %dx%d %s",
++                              cv,
++                              f->name,
++                              param->src.det.vid.size.w,
++                              param->src.det.vid.size.h,
++                              pjmedia_fourcc_name(param->src.id, src_fourcc_name),
++                              param->dst.det.vid.size.w,
++                              param->dst.det.vid.size.h,
++                              pjmedia_fourcc_name(param->dst.id, dst_fourcc_name)));
++    } else if (param->src.type == PJMEDIA_TYPE_AUDIO) {
++        PJ_LOG(4, (THIS_FILE, "Converter %p created for audio", cv));
++    } else {
++        PJ_LOG(4, (THIS_FILE, "Converter %p created for unknown", cv));
++    }
++
+     *p_cv = cv;
+ 
+     return PJ_SUCCESS;
+@@ -188,6 +207,7 @@
+ 
+ PJ_DEF(void) pjmedia_converter_destroy(pjmedia_converter *cv)
+ {
++    PJ_LOG(4, (THIS_FILE, "Converter %p destroyed", cv));
+     (*cv->op->destroy)(cv);
+ }
+ 
+diff -ruN pjproject-2.10/pjmedia/src/pjmedia/endpoint.c pjsip/pjmedia/src/pjmedia/endpoint.c
+--- pjproject-2.10/pjmedia/src/pjmedia/endpoint.c	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/src/pjmedia/endpoint.c	2021-02-06 20:23:26.353848918 +0100
+@@ -688,6 +688,7 @@
+     /* Put bandwidth info in media level using bandwidth modifier "TIAS"
+      * (RFC3890).
+      */
++#if 0
+     if (max_bitrate && pjmedia_add_bandwidth_tias_in_sdp) {
+ 	const pj_str_t STR_BANDW_MODIFIER = { "TIAS", 4 };
+ 	pjmedia_sdp_bandw *b;
+@@ -697,6 +698,7 @@
+ 	b->value = max_bitrate;
+ 	m->bandw[m->bandw_count++] = b;
+     }
++#endif
+ 
+     *p_m = m;
+     return PJ_SUCCESS;
+diff -ruN pjproject-2.10/pjmedia/src/pjmedia/format.c pjsip/pjmedia/src/pjmedia/format.c
+--- pjproject-2.10/pjmedia/src/pjmedia/format.c	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/src/pjmedia/format.c	2021-02-06 20:25:25.677209428 +0100
+@@ -77,6 +77,7 @@
+ static pjmedia_video_format_info built_in_vid_fmt_info[] =
+ {
+     {PJMEDIA_FORMAT_RGB24, "RGB24", PJMEDIA_COLOR_MODEL_RGB, 24, 1, &apply_packed_fmt},
++    {PJMEDIA_FORMAT_ARGB,  "ARGB", PJMEDIA_COLOR_MODEL_RGB, 32, 1, &apply_packed_fmt},
+     {PJMEDIA_FORMAT_RGBA,  "RGBA", PJMEDIA_COLOR_MODEL_RGB, 32, 1, &apply_packed_fmt},
+     {PJMEDIA_FORMAT_BGRA,  "BGRA", PJMEDIA_COLOR_MODEL_RGB, 32, 1, &apply_packed_fmt},
+     {PJMEDIA_FORMAT_DIB ,  "DIB ", PJMEDIA_COLOR_MODEL_RGB, 24, 1, &apply_packed_fmt},
+diff -ruN pjproject-2.10/pjmedia/src/pjmedia/mixer_port.c pjsip/pjmedia/src/pjmedia/mixer_port.c
+--- pjproject-2.10/pjmedia/src/pjmedia/mixer_port.c	1970-01-01 01:00:00.000000000 +0100
++++ pjsip/pjmedia/src/pjmedia/mixer_port.c	2021-02-06 18:45:36.859549796 +0100
+@@ -0,0 +1,141 @@
++/*
++ * Copyright (C) 2010 AG Projects
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA 
++ */
++
++#include <string.h>
++
++#include <pjmedia/mixer_port.h>
++#include <pjmedia/errno.h>
++#include <pj/assert.h>
++#include <pj/pool.h>
++#include <pj/string.h>
++
++
++#define SIGNATURE   PJMEDIA_SIG_PORT_MIXER
++#define MIN(a, b)   ((a)>(b)?(b):(a))
++
++struct mixer_port
++{
++    pjmedia_port        base;
++    pjmedia_frame_type  last_frame_type;
++    pj_size_t           last_frame_size;
++    pj_timestamp        last_frame_timestamp;
++    pj_int16_t*         buffer;
++    pj_size_t           buffer_size;
++};
++
++static pj_status_t mixer_get_frame(pjmedia_port *port, pjmedia_frame *frame);
++static pj_status_t mixer_put_frame(pjmedia_port *port, pjmedia_frame *frame);
++static pj_status_t mixer_on_destroy(pjmedia_port *port);
++
++
++PJ_DEF(pj_status_t) pjmedia_mixer_port_create(pj_pool_t *pool,
++                                              unsigned sampling_rate,
++                                              unsigned channel_count,
++                                              unsigned samples_per_frame,
++                                              unsigned bits_per_sample,
++                                              pjmedia_port **p_port)
++{
++    struct mixer_port *port;
++    const pj_str_t name = pj_str("mixer-port");
++
++    PJ_ASSERT_RETURN(pool && p_port, PJ_EINVAL);
++
++    port = PJ_POOL_ZALLOC_T(pool, struct mixer_port);
++    PJ_ASSERT_RETURN(port != NULL, PJ_ENOMEM);
++
++    pjmedia_port_info_init(&port->base.info, &name, SIGNATURE, sampling_rate,
++                           channel_count, bits_per_sample, samples_per_frame);
++
++    port->base.get_frame = &mixer_get_frame;
++    port->base.put_frame = &mixer_put_frame;
++    port->base.on_destroy = &mixer_on_destroy;
++    port->last_frame_type = PJMEDIA_FRAME_TYPE_NONE;
++    port->last_frame_size = 0;
++    port->last_frame_timestamp.u64 = 0;
++    port->buffer = (pj_int16_t*) pj_pool_calloc(pool, samples_per_frame, sizeof(pj_int16_t));
++    port->buffer_size = sizeof(pj_int16_t) * samples_per_frame;
++
++    *p_port = &port->base;
++
++    return PJ_SUCCESS;
++}
++
++
++
++/*
++ * Put frame to file.
++ */
++static pj_status_t mixer_put_frame(pjmedia_port *this_port, pjmedia_frame *frame)
++{
++    struct mixer_port* port = (struct mixer_port*) this_port;
++
++    if (!frame->size || frame->type != PJMEDIA_FRAME_TYPE_AUDIO) {
++        port->last_frame_type = PJMEDIA_FRAME_TYPE_NONE;
++        port->last_frame_size = 0;
++        port->last_frame_timestamp.u64 = 0;
++        return PJ_SUCCESS;
++    }
++
++    PJ_ASSERT_RETURN(frame->size <= port->buffer_size, PJ_EINVAL);
++
++    port->last_frame_type = frame->type;
++    pj_get_timestamp(&port->last_frame_timestamp);
++    port->last_frame_size = MIN(port->buffer_size, frame->size);
++    memcpy(port->buffer, frame->buf, port->last_frame_size);
++
++    return PJ_SUCCESS;
++}
++
++
++/*
++ * Get frame from file.
++ */
++static pj_status_t mixer_get_frame(pjmedia_port *this_port, pjmedia_frame *frame)
++{
++    struct mixer_port* port = (struct mixer_port*) this_port;
++    pj_timestamp now;
++    pj_uint32_t frame_age;
++
++    pj_get_timestamp(&now);
++    frame_age = pj_elapsed_usec(&port->last_frame_timestamp, &now);
++
++    if (port->last_frame_timestamp.u64 != 0 && frame_age <= 100000) {
++        frame->type = port->last_frame_type;
++        frame->size = port->last_frame_size;
++        frame->timestamp.u64 = 0;
++        if (port->last_frame_size > 0) {
++            memcpy(frame->buf, port->buffer, port->last_frame_size);
++        }
++    } else {
++        frame->type = PJMEDIA_FRAME_TYPE_NONE;
++        frame->size = 0;
++        frame->timestamp.u64 = 0;
++    }
++
++    return PJ_SUCCESS;
++}
++
++
++/*
++ * Destroy port.
++ */
++static pj_status_t mixer_on_destroy(pjmedia_port *this_port)
++{
++    return PJ_SUCCESS;
++}
++
+diff -ruN pjproject-2.10/pjmedia/src/pjmedia/rtcp.c pjsip/pjmedia/src/pjmedia/rtcp.c
+--- pjproject-2.10/pjmedia/src/pjmedia/rtcp.c	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/src/pjmedia/rtcp.c	2021-02-06 20:30:29.245771690 +0100
+@@ -1003,6 +1003,33 @@
+     sess->stat.rx.update_cnt++;
+ }
+ 
++PJ_DEF(pj_status_t) pjmedia_rtcp_build_rtcp_pli(pjmedia_rtcp_session *session,
++                                               void *buf,
++                                               pj_size_t *length)
++{
++    pjmedia_rtcp_common *hdr;
++    pj_uint8_t *p;
++    pj_size_t len = 12;    /* pjmedia_rtcp_common + media SSRC (uint32_t) */
++
++    PJ_ASSERT_RETURN(session && buf && length, PJ_EINVAL);
++
++    /* Verify buffer length */
++    if (len > *length)
++       return PJ_ETOOSMALL;
++
++    /* Build RTCP PLI */
++    hdr = (pjmedia_rtcp_common*)buf;
++    pj_memcpy(hdr, &session->rtcp_sr_pkt.common,  sizeof(*hdr));
++    hdr->pt = RTCP_PSFB;
++    hdr->count = 1;    /* FMT: 1 == Picture Loss Indication (PLI) */
++    hdr->length = pj_htons((pj_uint16_t)(len/4 - 1));
++
++    p = (pj_uint8_t*)hdr + sizeof(*hdr);
++    pj_memset(p, 0, (pj_uint8_t*)hdr + len - p);
++    *length = len;
++    return PJ_SUCCESS;
++}
++
+ 
+ PJ_DEF(pj_status_t) pjmedia_rtcp_build_rtcp_sdes(
+ 					    pjmedia_rtcp_session *session, 
+diff -ruN pjproject-2.10/pjmedia/src/pjmedia/sound_port.c pjsip/pjmedia/src/pjmedia/sound_port.c
+--- pjproject-2.10/pjmedia/src/pjmedia/sound_port.c	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/src/pjmedia/sound_port.c	2021-02-06 21:42:52.101118944 +0100
+@@ -98,7 +98,7 @@
+     if (snd_port->ec_state) {
+ 	if (snd_port->ec_suspended) {
+ 	    snd_port->ec_suspended = PJ_FALSE;
+-	    //pjmedia_echo_state_reset(snd_port->ec_state);
++	    pjmedia_echo_reset(snd_port->ec_state);
+ 	    PJ_LOG(4,(THIS_FILE, "EC activated"));
+ 	}
+ 	snd_port->ec_suspend_count = 0;
+@@ -312,14 +312,9 @@
+ 				 snd_port->aud_param.ec_tail_ms));
+ 	}
+ 	    
+-	status = pjmedia_snd_port_set_ec(snd_port, pool, 
+-					 snd_port->aud_param.ec_tail_ms,
+-					 snd_port->prm_ec_options);
+-	if (status != PJ_SUCCESS) {
+-	    pjmedia_aud_stream_destroy(snd_port->aud_stream);
+-	    snd_port->aud_stream = NULL;
+-	    return status;
+-	}
++	pjmedia_snd_port_set_ec(snd_port, pool, 
++				 snd_port->aud_param.ec_tail_ms,
++				 snd_port->prm_ec_options);
+     }
+ 
+     /* Start sound stream. */
+@@ -550,6 +545,17 @@
+ }
+ 
+ 
++/* Reset EC state */
++PJ_DEF(pj_status_t) pjmedia_snd_port_reset_ec_state( pjmedia_snd_port *snd_port )
++{
++    PJ_ASSERT_RETURN(snd_port, PJ_EINVAL);
++    if (snd_port->ec_state) {
++       pjmedia_echo_reset(snd_port->ec_state);
++       PJ_LOG(4,(THIS_FILE, "EC reset"));
++    }
++    return PJ_SUCCESS;
++}
++
+ /*
+  * Change EC settings.
+  */
+diff -ruN pjproject-2.10/pjmedia/src/pjmedia/vid_tee.c pjsip/pjmedia/src/pjmedia/vid_tee.c
+--- pjproject-2.10/pjmedia/src/pjmedia/vid_tee.c	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/src/pjmedia/vid_tee.c	2021-02-06 21:28:30.516675163 +0100
+@@ -52,6 +52,7 @@
+     unsigned		 dst_port_cnt;
+     vid_tee_dst_port	*dst_ports;
+     pj_uint8_t		*put_frm_flag;
++    pj_mutex_t          *lock;
+     
+     struct vid_tee_conv_t {
+         pjmedia_converter   *conv;
+@@ -86,6 +87,11 @@
+     tee->pf = pool->factory;
+     tee->pool = pj_pool_create(tee->pf, "video tee", 500, 500, NULL);
+ 
++    /* Create lock */
++    status = pj_mutex_create_simple(pool, "vid-tee-mutex", &tee->lock);
++    if (status != PJ_SUCCESS)
++        return status;
++
+     /* Initialize video tee structure */
+     tee->dst_port_maxcnt = max_dst_cnt;
+     tee->dst_ports = (vid_tee_dst_port*)
+@@ -100,14 +106,16 @@
+ 
+     /* Initialize video tee buffer, its size is one frame */
+     vfi = pjmedia_get_video_format_info(NULL, fmt->id);
+-    if (vfi == NULL)
+-	return PJMEDIA_EBADFMT;
++    if (vfi == NULL) {
++       status = PJMEDIA_EBADFMT;
++       goto on_error;
++    }
+ 
+     pj_bzero(&vafp, sizeof(vafp));
+     vafp.size = fmt->det.vid.size;
+     status = vfi->apply_fmt(vfi, &vafp);
+     if (status != PJ_SUCCESS)
+-	return status;
++	goto on_error;
+ 
+     tee->buf_size = vafp.framebytes;
+ 
+@@ -118,7 +126,7 @@
+ 				     PJMEDIA_DIR_ENCODING,
+ 				     fmt);
+     if (status != PJ_SUCCESS)
+-	return status;
++	goto on_error;;
+ 
+     tee->base.get_frame = &tee_get_frame;
+     tee->base.put_frame = &tee_put_frame;
+@@ -128,6 +136,12 @@
+     *p_vid_tee = &tee->base;
+ 
+     return PJ_SUCCESS;
++
++on_error:
++    pj_mutex_destroy(tee->lock);
++    tee->lock = NULL;
++    return status;
++
+ }
+ 
+ static void realloc_buf(vid_tee_port *vid_tee,
+@@ -169,21 +183,29 @@
+ {
+     vid_tee_port *tee = (vid_tee_port*)vid_tee;
+     pjmedia_video_format_detail *vfd;
++    pj_status_t status;
+ 
+     PJ_ASSERT_RETURN(vid_tee && vid_tee->info.signature==TEE_PORT_SIGN,
+ 		     PJ_EINVAL);
+ 
+-    if (tee->dst_port_cnt >= tee->dst_port_maxcnt)
+-	return PJ_ETOOMANY;
+-    
+-    if (vid_tee->info.fmt.id != port->info.fmt.id)
+-	return PJMEDIA_EBADFMT;
++    pj_mutex_lock(tee->lock);
++
++    if (tee->dst_port_cnt >= tee->dst_port_maxcnt) {
++       status = PJ_ETOOMANY;
++       goto end;
++    }
++
++    if (vid_tee->info.fmt.id != port->info.fmt.id) {
++       status = PJMEDIA_EBADFMT;
++       goto end;
++    }
+ 
+     vfd = pjmedia_format_get_video_format_detail(&port->info.fmt, PJ_TRUE);
+     if (vfd->size.w != vid_tee->info.fmt.det.vid.size.w ||
+ 	vfd->size.h != vid_tee->info.fmt.det.vid.size.h)
+     {
+-        return PJMEDIA_EBADFMT;
++        status = PJMEDIA_EBADFMT;
++        goto end;
+     }
+     
+     realloc_buf(tee, (option & PJMEDIA_VID_TEE_DST_DO_IN_PLACE_PROC)?
+@@ -194,7 +216,12 @@
+     tee->dst_ports[tee->dst_port_cnt].option = option;
+     ++tee->dst_port_cnt;
+ 
+-    return PJ_SUCCESS;
++    status = PJ_SUCCESS;
++
++end:
++    pj_mutex_unlock(tee->lock);
++    return status;
++
+ }
+ 
+ 
+@@ -208,12 +235,17 @@
+ {
+     vid_tee_port *tee = (vid_tee_port*)vid_tee;
+     pjmedia_video_format_detail *vfd;
++    pj_status_t status;
+     
+     PJ_ASSERT_RETURN(vid_tee && vid_tee->info.signature==TEE_PORT_SIGN,
+ 		     PJ_EINVAL);
+-    
+-    if (tee->dst_port_cnt >= tee->dst_port_maxcnt)
+-	return PJ_ETOOMANY;
++   
++    pj_mutex_lock(tee->lock);
++
++    if (tee->dst_port_cnt >= tee->dst_port_maxcnt) {
++       status = PJ_ETOOMANY;
++       goto end;
++    }
+     
+     pj_bzero(&tee->tee_conv[tee->dst_port_cnt], sizeof(tee->tee_conv[0]));
+     
+@@ -226,17 +258,18 @@
+         const pjmedia_video_format_info *vfi;
+         pjmedia_video_apply_fmt_param vafp;
+         pjmedia_conversion_param conv_param;
+-        pj_status_t status;
+ 
+         vfi = pjmedia_get_video_format_info(NULL, port->info.fmt.id);
+-        if (vfi == NULL)
++        if (vfi == NULL) {
+-            return PJMEDIA_EBADFMT;
++            status = PJMEDIA_EBADFMT;
++            goto end;
++        }
+ 
+         pj_bzero(&vafp, sizeof(vafp));
+         vafp.size = port->info.fmt.det.vid.size;
+         status = vfi->apply_fmt(vfi, &vafp);
+         if (status != PJ_SUCCESS)
+-            return status;
++	    goto end;
+         
+         realloc_buf(tee, (option & PJMEDIA_VID_TEE_DST_DO_IN_PLACE_PROC)?
+                     2: 1, vafp.framebytes);
+@@ -248,7 +280,7 @@
+                      NULL, tee->pool, &conv_param,
+                      &tee->tee_conv[tee->dst_port_cnt].conv);
+         if (status != PJ_SUCCESS)
+-            return status;
++            goto end;
+         
+         tee->tee_conv[tee->dst_port_cnt].conv_buf_size = vafp.framebytes;
+     } else {
+@@ -259,8 +291,12 @@
+     tee->dst_ports[tee->dst_port_cnt].dst = port;
+     tee->dst_ports[tee->dst_port_cnt].option = option;
+     ++tee->dst_port_cnt;
+-    
+-    return PJ_SUCCESS;
++
++    status = PJ_SUCCESS;
++
++end:
++    pj_mutex_unlock(tee->lock);
++    return status;
+ }
+ 
+ 
+@@ -276,6 +312,8 @@
+     PJ_ASSERT_RETURN(vid_tee && vid_tee->info.signature==TEE_PORT_SIGN,
+ 		     PJ_EINVAL);
+ 
++    pj_mutex_lock(tee->lock);
++
+     for (i = 0; i < tee->dst_port_cnt; ++i) {
+ 	if (tee->dst_ports[i].dst == port) {
+             if (tee->tee_conv[i].conv)
+@@ -286,10 +324,13 @@
+             pj_array_erase(tee->tee_conv, sizeof(tee->tee_conv[0]),
+ 			   tee->dst_port_cnt, i);
+ 	    --tee->dst_port_cnt;
++
++	    pj_mutex_unlock(tee->lock);
+ 	    return PJ_SUCCESS;
+ 	}
+     }
+ 
++    pj_mutex_unlock(tee->lock);
+     return PJ_ENOTFOUND;
+ }
+ 
+@@ -300,6 +341,12 @@
+     unsigned i, j;
+     const pj_uint8_t PUT_FRM_DONE = 1;
+ 
++    if (pj_mutex_trylock(tee->lock) != PJ_SUCCESS) {
++        /* we are busy adding / removing consumers */
++        return PJ_SUCCESS;
++    }
++
++
+     pj_bzero(tee->put_frm_flag, tee->dst_port_cnt *
+ 				sizeof(tee->put_frm_flag[0]));
+ 
+@@ -364,6 +411,7 @@
+         }
+     }
+ 
++    pj_mutex_unlock(tee->lock);
+     return PJ_SUCCESS;
+ }
+ 
+@@ -383,6 +431,11 @@
+ 
+     PJ_ASSERT_RETURN(port && port->info.signature==TEE_PORT_SIGN, PJ_EINVAL);
+ 
++    if (tee->lock) {
++        pj_mutex_destroy(tee->lock);
++        tee->lock = NULL;
++    }
++
+     pj_pool_release(tee->pool);
+     if (tee->buf_pool)
+         pj_pool_release(tee->buf_pool);

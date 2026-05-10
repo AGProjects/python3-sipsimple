@@ -1,0 +1,99 @@
+--- pjproject-2.10/pjmedia/src/pjmedia-codec/opus.c	2021-03-19 04:55:21.491267756 +0100
++++ pjsip/pjmedia/src/pjmedia-codec/opus.c	2021-03-19 05:48:19.457507442 +0100
+@@ -542,7 +542,7 @@ static pj_status_t factory_enum_codecs( pjmedia_codec_factory *factory,
+          */	
+ 	codecs[0].encoding_name = pj_str("opus");
+ 	codecs[0].clock_rate    = 48000;
+-	codecs[0].channel_cnt   = 2;
++	codecs[0].channel_cnt   = 1;
+ 	*count = 1;
+     }
+
+diff -ruN pjproject-2.10/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c pjsip/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c
+--- pjproject-2.10/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c	2021-02-06 22:51:16.641714862 +0100
+@@ -62,16 +62,7 @@
+ #endif
+ 
+ #if LIBAVCODEC_VER_AT_LEAST(53,61)
+-#  if LIBAVCODEC_VER_AT_LEAST(54,59)
+-   /* Not sure when AVCodec::encode is obsoleted/removed. */
+-#      define AVCODEC_HAS_ENCODE(c)	(c->encode2)
+-#  else
+-   /* Not sure when AVCodec::encode2 is introduced. It appears in 
+-    * libavcodec 53.61 where some codecs actually still use AVCodec::encode
+-    * (e.g: H263, H264).
+-    */
+-#      define AVCODEC_HAS_ENCODE(c)	(c->encode || c->encode2)
+-#  endif
++#  define AVCODEC_HAS_ENCODE(c)	(c->encode2)
+ #  define AV_OPT_SET(obj,name,val,opt)	(av_opt_set(obj,name,val,opt)==0)
+ #  define AV_OPT_SET_INT(obj,name,val)	(av_opt_set_int(obj,name,val,0)==0)
+ #else
+@@ -266,6 +257,7 @@
+ /* H264 constants */
+ #define PROFILE_H264_BASELINE		66
+ #define PROFILE_H264_MAIN		77
++#define PROFILE_H264_HIGH		100
+ 
+ /* Codec specific functions */
+ #if PJMEDIA_HAS_FFMPEG_CODEC_H264
+@@ -404,6 +396,9 @@
+ 	case PROFILE_H264_MAIN:
+ 	    profile = "main";
+ 	    break;
++	case PROFILE_H264_HIGH:
++	    profile = "high";
++	    break;
+ 	default:
+ 	    break;
+ 	}
+@@ -440,11 +435,11 @@
+ 	/* Misc x264 settings (performance, quality, latency, etc).
+ 	 * Let's just use the x264 predefined preset & tune.
+ 	 */
+-	if (!AV_OPT_SET(ctx->priv_data, "preset", "veryfast", 0)) {
++	if (!AV_OPT_SET(ctx->priv_data, "preset", "ultrafast", 0)) {
+ 	    PJ_LOG(3, (THIS_FILE, "Failed to set x264 preset 'veryfast'"));
+ 	}
+-	if (!AV_OPT_SET(ctx->priv_data, "tune", "animation+zerolatency", 0)) {
+-	    PJ_LOG(3, (THIS_FILE, "Failed to set x264 tune 'zerolatency'"));
++	if (!AV_OPT_SET(ctx->priv_data, "tune", "fastdecode+zerolatency", 0)) {
++	    PJ_LOG(3, (THIS_FILE, "Failed to set x264 tune 'fastdecode+zerolatency'"));
+ 	}
+     }
+ 
+@@ -1430,12 +1425,12 @@
+     /* Check if encoder has been opened */
+     PJ_ASSERT_RETURN(ff->enc_ctx, PJ_EINVALIDOP);
+ 
+-#ifdef PJMEDIA_USE_OLD_FFMPEG
+-    avcodec_get_frame_defaults(&avframe);
+-#else
++//#ifdef PJMEDIA_USE_OLD_FFMPEG
++//    avcodec_get_frame_defaults(&avframe);
++//#else
+     pj_bzero(&avframe, sizeof(avframe));
+     av_frame_unref(&avframe);
+-#endif
++//#endif
+ 
+     // Let ffmpeg manage the timestamps
+     /*
+@@ -1692,12 +1687,12 @@
+      * whole decoding session, and seems to be freed when the codec context
+      * closed).
+      */
+-#ifdef PJMEDIA_USE_OLD_FFMPEG
+-    avcodec_get_frame_defaults(&avframe);
+-#else
++//#ifdef PJMEDIA_USE_OLD_FFMPEG
++//    avcodec_get_frame_defaults(&avframe);
++//#else
+     pj_bzero(&avframe, sizeof(avframe));
+     av_frame_unref(&avframe);
+-#endif
++//#endif
+ 
+     /* Init packet, the container of the encoded data */
+     av_init_packet(&avpacket);
