@@ -12,4 +12,5 @@ gevent
 pytz
 certifi
 cryptography
+pgpy
 python3-application @ https://github.com/AGProjects/python3-application/archive/refs/tags/release-3.0.7.tar.gz

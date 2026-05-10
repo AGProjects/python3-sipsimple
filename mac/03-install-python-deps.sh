@@ -22,4 +22,4 @@ export LDFLAGS="-L/opt/local/lib"
 
 pip3 install --upgrade pip
 pip3 install -r python-requirements.txt
-pip3 install -r sipsimple-requirements.txt
+pip3 install --no-build-isolation -r sipsimple-requirements.txt
