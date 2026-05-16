@@ -493,6 +493,95 @@ cdef class RTPTransport:
             with nogil:
                 pj_mutex_unlock(lock)
 
+    def set_aead_keys(self, bytes send_key, bytes send_salt,
+                            bytes recv_key, bytes recv_salt, int key_id=1):
+        """Activate the Sylk AES-128-GCM transport adapter for this RTP transport.
+
+        Called after the in-dialog ZRTP handshake completes and Python has
+        derived per-direction keys + salts via HKDF. The adapter (installed
+        at set_INIT() time, sitting between the stream and the SRTP layer)
+        switches from passthrough to active mode: outgoing RTP payload is
+        AES-128-GCM encrypted, incoming RTP payload is decrypted + tag-
+        verified. Permissive decrypt — payload that doesn't look like ours
+        passes through unchanged so audio survives a mid-call rekey window.
+
+        Wire format: [RTP header][1B v|keyId][4B counter_be][ciphertext][16B tag]
+        Matches sylk-mobile's MediaEncryptorJni.cpp byte-for-byte.
+
+        send_key / recv_key: 16 bytes (AES-128).
+        send_salt / recv_salt: 8 bytes (prepended to counter to form 12-byte GCM IV).
+        key_id: 0..15 (low 4 bits of header byte; peer must agree).
+        """
+        cdef int status
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjmedia_transport *tp
+        cdef unsigned char *p_send_key
+        cdef unsigned char *p_send_salt
+        cdef unsigned char *p_recv_key
+        cdef unsigned char *p_recv_salt
+
+        if len(send_key) != 16 or len(recv_key) != 16:
+            raise ValueError("send_key and recv_key must each be 16 bytes")
+        if len(send_salt) != 8 or len(recv_salt) != 8:
+            raise ValueError("send_salt and recv_salt must each be 8 bytes")
+        if key_id < 0 or key_id > 15:
+            raise ValueError("key_id must be in [0, 15]")
+
+        _get_ua()
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            tp = self._obj
+            if tp == NULL:
+                raise SIPCoreError("RTPTransport has no underlying media transport")
+            p_send_key  = <unsigned char *> send_key
+            p_send_salt = <unsigned char *> send_salt
+            p_recv_key  = <unsigned char *> recv_key
+            p_recv_salt = <unsigned char *> recv_salt
+            with nogil:
+                status = sylk_aead_transport_set_keys(tp, p_send_key, p_send_salt,
+                                                         p_recv_key, p_recv_salt,
+                                                         <unsigned char> key_id)
+            if status != 0:
+                raise PJSIPError("Could not install Sylk AEAD keys", status)
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
+    def get_aead_stats(self):
+        """Return (encrypted_frames, decrypted_frames, passthrough_frames).
+
+        - encrypted_frames   : RTP packets WE encrypted on the outbound path.
+        - decrypted_frames   : inbound RTP packets whose AES-GCM tag verified
+                               (peer is actually emitting our ciphertext).
+        - passthrough_frames : inbound packets the permissive decryptor
+                               bypassed (peer not encrypting, header
+                               mismatch, or tag failure).
+
+        Returns (0, 0, 0) if the adapter isn't installed (transport already
+        torn down, or non-SDES encryption).
+        """
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjmedia_transport *tp
+        cdef unsigned long long enc = 0
+        cdef unsigned long long dec = 0
+        cdef unsigned long long passthrough = 0
+
+        _get_ua()
+        with nogil:
+            pj_mutex_lock(lock)
+        try:
+            tp = self._obj
+            if tp != NULL:
+                with nogil:
+                    sylk_aead_transport_get_stats(tp, &enc, &dec, &passthrough)
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+        return int(enc), int(dec), int(passthrough)
+
     def set_INIT(self):
         global _ice_cb
         cdef int af
@@ -509,6 +598,7 @@ cdef class RTPTransport:
         cdef pjmedia_srtp_setting srtp_setting
         cdef pjmedia_transport **transport_address
         cdef pjmedia_transport *wrapped_transport
+        cdef pjmedia_transport *srtp_transport
         cdef pjsip_endpoint *sip_endpoint
         cdef bytes zid_file
         cdef char *c_zid_file
@@ -598,6 +688,25 @@ cdef class RTPTransport:
                                 pjmedia_transport_close(wrapped_transport)
                             self._wrapped_transport = NULL
                             raise PJSIPError("Could not create SRTP media transport", status)
+                        # Always wrap the SRTP transport with our Sylk AEAD
+                        # adapter. Starts in passthrough mode — RTP packets
+                        # go through unchanged until set_aead_keys() is
+                        # called (typically after the in-dialog ZRTP
+                        # handshake completes). Once active, the adapter
+                        # adds AES-128-GCM on the RTP payload BEFORE handing
+                        # to SRTP. Final wire stack: payload → AES-GCM
+                        # adapter → SRTP → UDP. Mirrors what react-native-
+                        # webrtc does on Sylk Mobile with its FrameEncryptor
+                        # between codec and SRTP.
+                        srtp_transport = self._obj
+                        self._obj = NULL
+                        with nogil:
+                            status = sylk_aead_transport_create(media_endpoint, NULL, srtp_transport, 1, transport_address)
+                        if status != 0:
+                            with nogil:
+                                pjmedia_transport_close(srtp_transport)
+                            self._wrapped_transport = NULL
+                            raise PJSIPError("Could not create Sylk AEAD adapter", status)
                     elif self._encryption == 'zrtp':
                         with nogil:
                             status = pjmedia_transport_zrtp_create(media_endpoint, pjsip_endpt_get_timer_heap(sip_endpoint), wrapped_transport, transport_address, 1)
@@ -689,6 +798,29 @@ cdef class RTPTransport:
                             self._zrtp_transport = NULL
                             self._wrapped_transport = NULL
                             raise PJSIPError("Could not create SRTP media transport for opportunistic encryption", status)
+                        # Wrap the outermost transport (the SRTP_OPTIONAL
+                        # layer) with our Sylk AEAD adapter so the same
+                        # set_aead_keys path that works for plain 'sdes'
+                        # also works in 'opportunistic' mode. Final stack
+                        # then becomes:
+                        #     Sylk AEAD adapter (passthrough until keys)
+                        #         SRTP(OPTIONAL)
+                        #             ZRTP
+                        #                 UDP / ICE
+                        # The adapter starts in passthrough so if SDES wins
+                        # the answer, nothing changes on the wire until
+                        # Python flips it to active via set_aead_keys
+                        # (post Sylk-ZRTP-over-SIP-MESSAGE handshake).
+                        srtp_transport = self._obj
+                        self._obj = NULL
+                        with nogil:
+                            status = sylk_aead_transport_create(media_endpoint, NULL, srtp_transport, 1, transport_address)
+                        if status != 0:
+                            with nogil:
+                                pjmedia_transport_close(srtp_transport)
+                            self._zrtp_transport = NULL
+                            self._wrapped_transport = NULL
+                            raise PJSIPError("Could not create Sylk AEAD adapter (opportunistic)", status)
                     else:
                         raise RuntimeError('invalid SRTP key negotiation specified: %s' % self._encryption)
                     self._obj.user_data = <void *> self.weakref

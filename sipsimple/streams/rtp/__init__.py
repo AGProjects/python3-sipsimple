@@ -413,6 +413,28 @@ class RTPStream(object, metaclass=RTPStreamType):
     def on_hold(self):
         return self.on_hold_by_local or self.on_hold_by_remote
 
+    # ---- Sylk AEAD (AES-128-GCM on RTP payload, above SRTP) -----------
+    #
+    # The underlying RTPTransport always wraps its SRTP transport with the
+    # Sylk AEAD adapter at create time. The adapter sits passthrough until
+    # set_aead_keys is called with the HKDF-derived per-direction keys.
+    # After that call, outgoing RTP is AES-128-GCM-encrypted on the payload
+    # before SRTP wraps it, and incoming RTP is decrypted after SRTP unwraps.
+    # See sipsimple/core/_core.mediatransport.pxi:RTPTransport.set_aead_keys.
+
+    def set_aead_keys(self, send_key, send_salt, recv_key, recv_salt, key_id=1):
+        rtp_transport = self._rtp_transport
+        if rtp_transport is None:
+            raise RuntimeError('cannot set AEAD keys: stream has no RTP transport yet')
+        rtp_transport.set_aead_keys(send_key, send_salt, recv_key, recv_salt, key_id)
+
+    def get_aead_stats(self):
+        """(encrypted_frames, decrypted_frames, passthrough_frames) — see RTPTransport."""
+        rtp_transport = self._rtp_transport
+        if rtp_transport is None:
+            return (0, 0, 0)
+        return rtp_transport.get_aead_stats()
+
     @abstractmethod
     def start(self, local_sdp, remote_sdp, stream_index):
         raise NotImplementedError

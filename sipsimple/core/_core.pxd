@@ -887,6 +887,32 @@ cdef extern from "pjmedia.h":
     int pjmedia_tonegen_stop(pjmedia_port *tonegen) nogil
     int pjmedia_tonegen_is_busy(pjmedia_port *tonegen) nogil
 
+cdef extern from "pjmedia/sylk_aead_transport.h":
+    # Sylk AEAD transport adapter — AES-128-GCM on RTP payload, on top of
+    # the SRTP transport. See the header for wire format and lifecycle.
+    # The adapter is installed at SRTP-create time in RTPTransport.set_INIT
+    # and starts in passthrough mode; Python flips it to active via
+    # sylk_aead_transport_set_keys after the in-dialog ZRTP handshake
+    # completes. Permissive decrypt — non-matching incoming frames pass
+    # through unchanged so audio survives the install transition window.
+    #
+    # Declared in its OWN cdef extern block so Cython emits a separate
+    # `#include "pjmedia/sylk_aead_transport.h"` in the generated _core.c.
+    # If these were merged with the broader pjmedia.h block, the umbrella
+    # header would have to grow an include line to find our prototypes —
+    # an upstream PJSIP modification we want to avoid.
+    int sylk_aead_transport_create(pjmedia_endpt *endpt, const char *name,
+                                   pjmedia_transport *base_tp, int del_base,
+                                   pjmedia_transport **p_tp) nogil
+    int sylk_aead_transport_set_keys(pjmedia_transport *tp,
+                                     unsigned char *send_key, unsigned char *send_salt,
+                                     unsigned char *recv_key, unsigned char *recv_salt,
+                                     unsigned char key_id) nogil
+    void sylk_aead_transport_get_stats(pjmedia_transport *tp,
+                                       unsigned long long *encrypted_frames,
+                                       unsigned long long *decrypted_frames,
+                                       unsigned long long *passthrough_frames) nogil
+
 cdef extern from "pjmedia_videodev.h":
     ctypedef void (*pjmedia_vid_dev_fb_frame_cb)(pjmedia_frame_ptr_const frame, pjmedia_rect_size size, void *user_data)
     int pjmedia_vid_dev_fb_set_callback(pjmedia_vid_dev_stream *strm, pjmedia_vid_dev_fb_frame_cb cb, void *user_data)
