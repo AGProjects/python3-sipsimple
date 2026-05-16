@@ -211,6 +211,17 @@ class RTPStreamEncryption(object):
             elif encryption == 'zrtp':
                 self.__dict__['type'] = 'ZRTP'
                 self.__dict__['zrtp'] = ZRTPStreamOptions(stream)
+            elif encryption == 'opportunistic':
+                # The underlying RTPTransport is the stacked chain
+                # UDP -> ZRTP -> SRTP(OPTIONAL). We don't know yet
+                # which keying will be selected -- that is decided
+                # by the remote answer. Type is resolved later in
+                # _resolve_opportunistic_type(), called just before
+                # MediaStreamDidStart fires. ZRTP options are
+                # pre-allocated so the ZRTP leg has its plumbing
+                # ready if it ends up winning.
+                self.__dict__['type'] = None
+                self.__dict__['zrtp'] = ZRTPStreamOptions(stream)
 
     def _NH_MediaStreamDidNotInitialize(self, notification):
         if notification.sender is self._stream_ref():
@@ -219,7 +230,43 @@ class RTPStreamEncryption(object):
             self._stream_ref = None
             self._stream = None
 
+    def _resolve_opportunistic_type(self):
+        # Called by the stream just before MediaStreamDidStart is posted
+        # (from AudioStream.start() / VideoStream.start() and from the ICE
+        # negotiation handlers in RTPStream). After this returns, self.type
+        # will be 'SRTP/SDES', 'ZRTP', or None (neither leg available).
+        # Calling it more than once is safe; only the first call has effect.
+        if self.__dict__['type'] is not None:
+            return
+        rtp_transport = self._rtp_transport
+        if rtp_transport is None:
+            return
+        # PJSIP populates srtp_info after pjmedia_transport_media_start
+        # has consumed the remote SDP. For the stacked transport, that
+        # happens inside AudioTransport.start() (or VideoTransport.start()),
+        # which the stream calls before posting MediaStreamDidStart.
+        if rtp_transport.srtp_active:
+            # The remote answered with a=crypto. SDES won; the ZRTP layer
+            # below stays dormant because we never call set_zrtp_enabled.
+            self.__dict__['type'] = 'SRTP/SDES'
+            self.__dict__['zrtp'] = None
+        else:
+            # SDES did not negotiate. Fall back to ZRTP -- the existing
+            # session-level _NH_MediaStreamDidStart handler will then call
+            # stream.encryption.zrtp._enable() and the ZRTP transport will
+            # take it from there (success fires RTPTransportZRTPSecureOn,
+            # failure fires RTPTransportZRTPNotSupportedByRemote, both of
+            # which the existing observer methods already handle).
+            self.__dict__['type'] = 'ZRTP'
+
     def _NH_MediaStreamDidStart(self, notification):
+        # Defensive: if the stream forgot to resolve the type for the
+        # opportunistic chain, resolve it now so that downstream observers
+        # (notably Session._NH_MediaStreamDidStart, which checks
+        # encryption.type to decide whether to enable ZRTP) see a final
+        # value.
+        if self.type is None:
+            self._resolve_opportunistic_type()
         if self.type == 'SRTP/SDES':
             stream = notification.sender
             if self.active:
@@ -449,12 +496,20 @@ class RTPStream(object, metaclass=RTPStreamType):
                 else:
                     incoming_stream_encryption = None
                 if incoming_stream_encryption is not None and local_encryption_policy == 'opportunistic':
+                    # We already know what the remote offered; pick that
+                    # specific keying so the transport is built as a single
+                    # SRTP or ZRTP wrapper (cheaper than the stacked chain).
                     self._srtp_encryption = incoming_stream_encryption
                 else:
-                    self._srtp_encryption = 'zrtp' if local_encryption_policy == 'opportunistic' else local_encryption_policy
+                    # No incoming SDP yet. Pass 'opportunistic' through so the
+                    # RTPTransport builds a stacked chain (UDP -> ZRTP -> SRTP
+                    # in OPTIONAL mode) and offers both a=zrtp-hash and
+                    # a=crypto in the INVITE.
+                    self._srtp_encryption = local_encryption_policy
             else:
                 self._try_ice = self.session.account.nat_traversal.use_ice
-                self._srtp_encryption = 'zrtp' if local_encryption_policy == 'opportunistic' else local_encryption_policy
+                # Outgoing call without an incoming SDP. Same reasoning as above.
+                self._srtp_encryption = local_encryption_policy
 
             if self._try_ice:
                 if self.session.account.nat_traversal.stun_server_list:
@@ -553,6 +608,9 @@ class RTPStream(object, metaclass=RTPStreamType):
             self._ice_state = "IN_USE"
             self.state = 'ESTABLISHED'
         self.notification_center.post_notification('RTPStreamICENegotiationDidSucceed', sender=self, data=notification.data)
+        # Make sure encryption.type is resolved before MediaStreamDidStart
+        # so other observers (e.g. Session) see the final value.
+        self.encryption._resolve_opportunistic_type()
         self.notification_center.post_notification('MediaStreamDidStart', sender=self)
 
     def _NH_RTPTransportICENegotiationDidFail(self, notification):
@@ -562,6 +620,9 @@ class RTPStream(object, metaclass=RTPStreamType):
             self._ice_state = "FAILED"
             self.state = 'ESTABLISHED'
         self.notification_center.post_notification('RTPStreamICENegotiationDidFail', sender=self, data=notification.data)
+        # Make sure encryption.type is resolved before MediaStreamDidStart
+        # so other observers (e.g. Session) see the final value.
+        self.encryption._resolve_opportunistic_type()
         self.notification_center.post_notification('MediaStreamDidStart', sender=self)
 
     # Private methods

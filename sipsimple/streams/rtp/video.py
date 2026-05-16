@@ -57,6 +57,10 @@ class VideoStream(RTPStream):
             else:
                 self._send_keyframes()
                 self.state = 'ESTABLISHED'
+                # For an opportunistic transport chain, decide which keying
+                # actually won (SDES vs ZRTP) BEFORE other observers run, so
+                # Session._NH_MediaStreamDidStart sees the resolved type.
+                self.encryption._resolve_opportunistic_type()
                 self.notification_center.post_notification('MediaStreamDidStart', sender=self)
 
     def validate_update(self, remote_sdp, stream_index):

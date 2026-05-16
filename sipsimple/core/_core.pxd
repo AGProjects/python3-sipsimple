@@ -752,6 +752,8 @@ cdef extern from "pjmedia.h":
         int active
         pjmedia_srtp_crypto tx_policy
     enum pjmedia_srtp_use:
+        PJMEDIA_SRTP_DISABLED
+        PJMEDIA_SRTP_OPTIONAL
         PJMEDIA_SRTP_MANDATORY
     struct pjmedia_srtp_setting:
         pjmedia_srtp_use use
@@ -2564,6 +2566,14 @@ cdef class RTPTransport(object):
     cdef pj_pool_t *_pool
     cdef pjmedia_transport *_obj
     cdef pjmedia_transport *_wrapped_transport
+    # When _encryption == 'opportunistic' we build a stacked chain
+    # UDP -> ZRTP -> SRTP(OPTIONAL). _obj is the outer SRTP transport,
+    # _wrapped_transport is the bottom UDP/ICE transport (closed via
+    # close_member_tp in the ZRTP and SRTP wrappers), and
+    # _zrtp_transport is the middle ZRTP transport on which all ZRTP
+    # control calls (enable, SAS verify, multistream, peer name/zid)
+    # must be issued. For non-opportunistic encryption this stays NULL.
+    cdef pjmedia_transport *_zrtp_transport
     cdef ICECheck _rtp_valid_pair
     cdef object _encryption
     cdef readonly object ice_stun_address

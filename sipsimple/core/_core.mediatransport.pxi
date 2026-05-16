@@ -28,6 +28,7 @@ cdef class RTPTransport:
 
         pool = ua.create_memory_pool(pool_name, 4096, 4096)
         self._pool = pool
+        self._zrtp_transport = NULL
         self.state = "NULL"
 
     def __init__(self, encryption=None, use_ice=False, ice_stun_address=None, ice_stun_port=PJ_STUN_PORT):
@@ -56,11 +57,18 @@ cdef class RTPTransport:
             transport.user_data = NULL
             if self._wrapped_transport != NULL:
                 self._wrapped_transport.user_data = NULL
+            if self._zrtp_transport != NULL:
+                # Middle layer of the opportunistic stacked chain. The
+                # outermost SRTP transport will cascade-close it via
+                # close_member_tp; we only need to NULL out user_data so
+                # late ZRTP callbacks don't try to resolve a dead weakref.
+                self._zrtp_transport.user_data = NULL
             with nogil:
                 pjmedia_transport_media_stop(transport)
                 pjmedia_transport_close(transport)
             self._obj = NULL
             self._wrapped_transport = NULL
+            self._zrtp_transport = NULL
         ua.release_memory_pool(self._pool)
         self._pool = NULL
         if self._lock != NULL:
@@ -604,6 +612,83 @@ cdef class RTPTransport:
                                 pjmedia_transport_close(wrapped_transport)
                             self._wrapped_transport = NULL
                             raise PJSIPError("Could not create ZRTP media transport", status)
+                    elif self._encryption == 'opportunistic':
+                        # Build a stacked transport chain so the offer
+                        # advertises BOTH SDES (a=crypto) and ZRTP
+                        # (a=zrtp-hash), and the SDK can fall back between
+                        # them based on the remote's answer.
+                        #
+                        # Stack (outside-in):
+                        #     SRTP(OPTIONAL)  <- self._obj after this block
+                        #         ZRTP        <- self._zrtp_transport
+                        #             UDP/ICE <- wrapped_transport
+                        #
+                        # Behaviour:
+                        #  - SRTP in OPTIONAL mode keeps the offer at
+                        #    RTP/AVP and only activates when the answer
+                        #    contains a=crypto.
+                        #  - If SDES does NOT activate, packets pass
+                        #    through the SRTP layer to ZRTP underneath.
+                        #    ZRTP is initialised with autoEnable=0; the
+                        #    Python layer calls set_zrtp_enabled(True)
+                        #    once it has confirmed that SDES did not win.
+                        #  - pjmedia_transport_encode_sdp recurses through
+                        #    the chain, so the resulting offer carries
+                        #    both a=crypto and a=zrtp-hash lines.
+                        with nogil:
+                            status = pjmedia_transport_zrtp_create(media_endpoint, pjsip_endpt_get_timer_heap(sip_endpoint), wrapped_transport, &self._zrtp_transport, 1)
+                        if status != 0:
+                            with nogil:
+                                pjmedia_transport_close(wrapped_transport)
+                            self._wrapped_transport = NULL
+                            raise PJSIPError("Could not create ZRTP media transport for opportunistic encryption", status)
+                        zid_file = ua.zrtp_cache.encode(sys.getfilesystemencoding())
+                        c_zid_file = zid_file
+                        with nogil:
+                            # autoEnable=0: ZRTP only starts when the Python
+                            # layer explicitly calls set_zrtp_enabled(True)
+                            # after observing that SDES did not negotiate.
+                            status = pjmedia_transport_zrtp_initialize(self._zrtp_transport, c_zid_file, 0, &_zrtp_cb)
+                        if status != 0:
+                            with nogil:
+                                pjmedia_transport_close(self._zrtp_transport)
+                            self._zrtp_transport = NULL
+                            self._wrapped_transport = NULL
+                            raise PJSIPError("Could not initialize ZRTP for opportunistic encryption", status)
+                        # Now wrap the ZRTP transport with SRTP in OPTIONAL
+                        # mode so a=crypto is added to the offer too. The
+                        # default `use` value populated by
+                        # pjmedia_srtp_setting_default is OPTIONAL; we set
+                        # it explicitly below for clarity. close_member_tp
+                        # defaults to PJ_TRUE, which is what we want.
+                        with nogil:
+                            pjmedia_srtp_setting_default(&srtp_setting)
+                        srtp_setting.use = PJMEDIA_SRTP_OPTIONAL
+                        # Offer only AES_CM_128_HMAC_SHA1_80 (matches the
+                        # plain 'sdes' arm above and works around peers
+                        # that mishandle multi-crypto offers).
+                        srtp_setting.crypto_count = 1
+                        _str_to_pj_str(b"AES_CM_128_HMAC_SHA1_80", &srtp_setting.crypto[0].name)
+                        srtp_setting.crypto[0].key.ptr = NULL
+                        srtp_setting.crypto[0].key.slen = 0
+                        srtp_setting.crypto[0].flags = 0
+                        # ZRTP callbacks (secure_on, show_sas, ...) receive
+                        # the ZRTP transport pointer; _extract_rtp_transport
+                        # reads tp->user_data to find the Python wrapper, so
+                        # we set it on the ZRTP transport too. The outermost
+                        # transport's user_data is set below (line ~681).
+                        self._zrtp_transport.user_data = <void *> self.weakref
+                        with nogil:
+                            status = pjmedia_transport_srtp_create(media_endpoint, self._zrtp_transport, &srtp_setting, transport_address)
+                        if status != 0:
+                            with nogil:
+                                # Closing ZRTP also closes its slave UDP
+                                # because close_slave=1 was passed to
+                                # pjmedia_transport_zrtp_create above.
+                                pjmedia_transport_close(self._zrtp_transport)
+                            self._zrtp_transport = NULL
+                            self._wrapped_transport = NULL
+                            raise PJSIPError("Could not create SRTP media transport for opportunistic encryption", status)
                     else:
                         raise RuntimeError('invalid SRTP key negotiation specified: %s' % self._encryption)
                     self._obj.user_data = <void *> self.weakref
@@ -632,6 +717,7 @@ cdef class RTPTransport:
         cdef pj_mutex_t *lock = self._lock
         cdef pjmedia_zrtp_info *zrtp_info
         cdef pjmedia_transport_info info
+        cdef pjmedia_transport *zrtp_tp
         cdef PJSIPUA ua
 
         ua = self._check_ua()
@@ -650,8 +736,12 @@ cdef class RTPTransport:
             if zrtp_info == NULL or not bool(zrtp_info.active):
                 return False
             c_verified = int(verified)
+            # When the chain is stacked (opportunistic encryption), the ZRTP
+            # transport sits underneath self._obj (the outer SRTP wrapper).
+            # ZRTP control calls must target the ZRTP transport directly.
+            zrtp_tp = self._zrtp_transport if self._zrtp_transport != NULL else self._obj
             with nogil:
-                pjmedia_transport_zrtp_setSASVerified(self._obj, c_verified)
+                pjmedia_transport_zrtp_setSASVerified(zrtp_tp, c_verified)
             return True
         finally:
             with nogil:
@@ -663,6 +753,8 @@ cdef class RTPTransport:
         cdef pj_mutex_t *lock = self._lock
         cdef pjmedia_zrtp_info *zrtp_info
         cdef pjmedia_transport_info info
+        cdef pjmedia_transport *zrtp_tp
+        cdef pjmedia_transport *master_zrtp_tp
         cdef PJSIPUA ua
         cdef bytes multistream_params
         cdef char *c_multistream_params
@@ -684,6 +776,9 @@ cdef class RTPTransport:
             zrtp_info = <pjmedia_zrtp_info *> pjmedia_transport_info_get_spc_info(&info, PJMEDIA_TRANSPORT_TYPE_ZRTP)
             if zrtp_info == NULL:
                 return
+            # When the chain is stacked (opportunistic encryption), the ZRTP
+            # transport sits underneath self._obj. Route control calls there.
+            zrtp_tp = self._zrtp_transport if self._zrtp_transport != NULL else self._obj
             if master_stream is not None:
                 master_transport = master_stream._rtp_transport
                 assert master_transport is not None
@@ -693,11 +788,12 @@ cdef class RTPTransport:
                     # set multistream mode in ourselves
                     c_multistream_params = multistream_params
                     length = len(multistream_params)
+                    master_zrtp_tp = master_transport._zrtp_transport if master_transport._zrtp_transport != NULL else master_transport._obj
                     with nogil:
-                        pjmedia_transport_zrtp_setMultiStreamParameters(self._obj, c_multistream_params, length, master_transport._obj)
+                        pjmedia_transport_zrtp_setMultiStreamParameters(zrtp_tp, c_multistream_params, length, master_zrtp_tp)
             c_enabled = int(enabled)
             with nogil:
-                pjmedia_transport_zrtp_setEnableZrtp(self._obj, c_enabled)
+                pjmedia_transport_zrtp_setEnableZrtp(zrtp_tp, c_enabled)
         finally:
             with nogil:
                 pj_mutex_unlock(lock)
@@ -710,6 +806,7 @@ cdef class RTPTransport:
             cdef pj_mutex_t *lock = self._lock
             cdef pjmedia_zrtp_info *zrtp_info
             cdef pjmedia_transport_info info
+            cdef pjmedia_transport *zrtp_tp
             cdef PJSIPUA ua
             cdef char *multistr_params
             cdef int length
@@ -729,8 +826,10 @@ cdef class RTPTransport:
                 zrtp_info = <pjmedia_zrtp_info *> pjmedia_transport_info_get_spc_info(&info, PJMEDIA_TRANSPORT_TYPE_ZRTP)
                 if zrtp_info == NULL or not bool(zrtp_info.active):
                     return None
+                # Route through the inner ZRTP transport when stacked.
+                zrtp_tp = self._zrtp_transport if self._zrtp_transport != NULL else self._obj
                 with nogil:
-                    multistr_params = pjmedia_transport_zrtp_getMultiStreamParameters(self._obj, &length)
+                    multistr_params = pjmedia_transport_zrtp_getMultiStreamParameters(zrtp_tp, &length)
                 if length > 0:
                     ret = _pj_buf_len_to_str(multistr_params, length)
                     free(multistr_params)
@@ -779,6 +878,7 @@ cdef class RTPTransport:
             cdef pj_mutex_t *lock = self._lock
             cdef pjmedia_zrtp_info *zrtp_info
             cdef pjmedia_transport_info info
+            cdef pjmedia_transport *zrtp_tp
             cdef PJSIPUA ua
 
             ua = self._check_ua()
@@ -796,8 +896,10 @@ cdef class RTPTransport:
                 zrtp_info = <pjmedia_zrtp_info *> pjmedia_transport_info_get_spc_info(&info, PJMEDIA_TRANSPORT_TYPE_ZRTP)
                 if zrtp_info == NULL or not bool(zrtp_info.active):
                     return ''
+                # Route through the inner ZRTP transport when stacked.
+                zrtp_tp = self._zrtp_transport if self._zrtp_transport != NULL else self._obj
                 with nogil:
-                    c_name = pjmedia_transport_zrtp_getPeerName(self._obj)
+                    c_name = pjmedia_transport_zrtp_getPeerName(zrtp_tp)
                 if c_name == NULL:
                     return ''
                 else:
@@ -814,6 +916,7 @@ cdef class RTPTransport:
             cdef pj_mutex_t *lock = self._lock
             cdef pjmedia_zrtp_info *zrtp_info
             cdef pjmedia_transport_info info
+            cdef pjmedia_transport *zrtp_tp
             cdef PJSIPUA ua
 
             ua = self._check_ua()
@@ -832,8 +935,10 @@ cdef class RTPTransport:
                 if zrtp_info == NULL or not bool(zrtp_info.active):
                     return
                 c_name = name
+                # Route through the inner ZRTP transport when stacked.
+                zrtp_tp = self._zrtp_transport if self._zrtp_transport != NULL else self._obj
                 with nogil:
-                    pjmedia_transport_zrtp_putPeerName(self._obj, c_name)
+                    pjmedia_transport_zrtp_putPeerName(zrtp_tp, c_name)
             finally:
                 with nogil:
                     pj_mutex_unlock(lock)
@@ -846,6 +951,7 @@ cdef class RTPTransport:
             cdef pj_mutex_t *lock = self._lock
             cdef pjmedia_zrtp_info *zrtp_info
             cdef pjmedia_transport_info info
+            cdef pjmedia_transport *zrtp_tp
             cdef PJSIPUA ua
 
             ua = self._check_ua()
@@ -863,8 +969,10 @@ cdef class RTPTransport:
                 zrtp_info = <pjmedia_zrtp_info *> pjmedia_transport_info_get_spc_info(&info, PJMEDIA_TRANSPORT_TYPE_ZRTP)
                 if zrtp_info == NULL or not bool(zrtp_info.active):
                     return None
+                # Route through the inner ZRTP transport when stacked.
+                zrtp_tp = self._zrtp_transport if self._zrtp_transport != NULL else self._obj
                 with nogil:
-                    status = pjmedia_transport_zrtp_getPeerZid(self._obj, name)
+                    status = pjmedia_transport_zrtp_getPeerZid(zrtp_tp, name)
                 if status <= 0:
                     return None
                 else:
