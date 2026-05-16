@@ -907,7 +907,8 @@ cdef extern from "pjmedia/sylk_aead_transport.h":
     int sylk_aead_transport_set_keys(pjmedia_transport *tp,
                                      unsigned char *send_key, unsigned char *send_salt,
                                      unsigned char *recv_key, unsigned char *recv_salt,
-                                     unsigned char key_id) nogil
+                                     unsigned char key_id,
+                                     unsigned char video_prefix) nogil
     void sylk_aead_transport_get_stats(pjmedia_transport *tp,
                                        unsigned long long *encrypted_frames,
                                        unsigned long long *decrypted_frames,

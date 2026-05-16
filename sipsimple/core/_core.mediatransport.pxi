@@ -494,7 +494,8 @@ cdef class RTPTransport:
                 pj_mutex_unlock(lock)
 
     def set_aead_keys(self, bytes send_key, bytes send_salt,
-                            bytes recv_key, bytes recv_salt, int key_id=1):
+                            bytes recv_key, bytes recv_salt,
+                            int key_id=1, int video_prefix=0):
         """Activate the Sylk AES-128-GCM transport adapter for this RTP transport.
 
         Called after the in-dialog ZRTP handshake completes and Python has
@@ -505,12 +506,19 @@ cdef class RTPTransport:
         verified. Permissive decrypt — payload that doesn't look like ours
         passes through unchanged so audio survives a mid-call rekey window.
 
-        Wire format: [RTP header][1B v|keyId][4B counter_be][ciphertext][16B tag]
+        Wire format:
+          [RTP header][video_prefix bytes plaintext][1B v|keyId]
+          [4B counter_be][ciphertext][16B tag]
         Matches sylk-mobile's MediaEncryptorJni.cpp byte-for-byte.
 
         send_key / recv_key: 16 bytes (AES-128).
         send_salt / recv_salt: 8 bytes (prepended to counter to form 12-byte GCM IV).
         key_id: 0..15 (low 4 bits of header byte; peer must agree).
+        video_prefix: codec-metadata bytes left UNENCRYPTED at start of payload.
+                      Audio = 0. Video: VP8/VP9 = 3, H264 = 2, AV1 = 1.
+                      Must match what the peer's decryptor uses for the same
+                      negotiated codec, or every frame fails the tag check
+                      and falls through to permissive passthrough.
         """
         cdef int status
         cdef pj_mutex_t *lock = self._lock
@@ -526,6 +534,8 @@ cdef class RTPTransport:
             raise ValueError("send_salt and recv_salt must each be 8 bytes")
         if key_id < 0 or key_id > 15:
             raise ValueError("key_id must be in [0, 15]")
+        if video_prefix < 0 or video_prefix > 32:
+            raise ValueError("video_prefix must be in [0, 32]")
 
         _get_ua()
         with nogil:
@@ -543,7 +553,8 @@ cdef class RTPTransport:
             with nogil:
                 status = sylk_aead_transport_set_keys(tp, p_send_key, p_send_salt,
                                                          p_recv_key, p_recv_salt,
-                                                         <unsigned char> key_id)
+                                                         <unsigned char> key_id,
+                                                         <unsigned char> video_prefix)
             if status != 0:
                 raise PJSIPError("Could not install Sylk AEAD keys", status)
         finally:

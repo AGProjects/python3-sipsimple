@@ -422,11 +422,20 @@ class RTPStream(object, metaclass=RTPStreamType):
     # before SRTP wraps it, and incoming RTP is decrypted after SRTP unwraps.
     # See sipsimple/core/_core.mediatransport.pxi:RTPTransport.set_aead_keys.
 
-    def set_aead_keys(self, send_key, send_salt, recv_key, recv_salt, key_id=1):
+    def set_aead_keys(self, send_key, send_salt, recv_key, recv_salt,
+                      key_id=1, video_prefix=0):
+        """Install per-direction AES-128-GCM keys on this stream's adapter.
+
+        video_prefix is the number of codec-metadata bytes left plaintext
+        at the start of each RTP payload (audio = 0, VP8/VP9 = 3, H264 = 2,
+        AV1 = 1). Must match what the peer's decryptor uses or every frame
+        fails its GCM tag and falls through to permissive passthrough.
+        """
         rtp_transport = self._rtp_transport
         if rtp_transport is None:
             raise RuntimeError('cannot set AEAD keys: stream has no RTP transport yet')
-        rtp_transport.set_aead_keys(send_key, send_salt, recv_key, recv_salt, key_id)
+        rtp_transport.set_aead_keys(send_key, send_salt, recv_key, recv_salt,
+                                    key_id, video_prefix)
 
     def get_aead_stats(self):
         """(encrypted_frames, decrypted_frames, passthrough_frames) — see RTPTransport."""
