@@ -1278,6 +1278,8 @@ cdef extern from "pjsip.h":
                                   int st_code, pj_str_t *st_text, pjsip_tx_data **tdata) nogil
     int pjsip_dlg_modify_response(pjsip_dialog *dlg, pjsip_tx_data *tdata, int st_code, pj_str_t *st_text) nogil
     int pjsip_dlg_send_response(pjsip_dialog *dlg, pjsip_transaction *tsx, pjsip_tx_data *tdata) nogil
+    int pjsip_dlg_create_request(pjsip_dialog *dlg, pjsip_method *method, int cseq, pjsip_tx_data **tdata) nogil
+    int pjsip_dlg_send_request(pjsip_dialog *dlg, pjsip_tx_data *tdata, int mod_data_index, void *mod_data) nogil
     void pjsip_dlg_inc_lock(pjsip_dialog *dlg) nogil
     void pjsip_dlg_dec_lock(pjsip_dialog *dlg) nogil
     int pjsip_dlg_inc_session(pjsip_dialog *dlg, pjsip_module *mod) nogil
@@ -2456,6 +2458,9 @@ cdef class TransferResponseCallbackTimer(Timer):
 cdef class TransferRequestCallbackTimer(Timer):
     cdef object rdata
 
+cdef class MessageCallbackTimer(Timer):
+    cdef object rdata_dict
+
 cdef class Invitation(object):
     # attributes
     cdef object __weakref__
@@ -2495,11 +2500,13 @@ cdef class Invitation(object):
     cdef int init_incoming(self, PJSIPUA ua, pjsip_rx_data *rdata, unsigned int inv_options) except -1
     cdef int process_incoming_transfer(self, PJSIPUA ua, pjsip_rx_data *rdata) except -1
     cdef int process_incoming_options(self, PJSIPUA ua, pjsip_rx_data *rdata) except -1
+    cdef int process_incoming_message(self, PJSIPUA ua, pjsip_rx_data *rdata) except -1
     cdef PJSIPUA _check_ua(self)
     cdef int _do_dealloc(self) except -1
     cdef int _update_contact_header(self, BaseContactHeader contact_header) except -1
     cdef int _fail(self, PJSIPUA ua) except -1
     cdef int _cb_state(self, StateCallbackTimer timer) except -1
+    cdef int _cb_message(self, MessageCallbackTimer timer) except -1
     cdef int _cb_sdp_done(self, SDPCallbackTimer timer) except -1
     cdef int _cb_timer_disconnect(self, timer) except -1
     cdef int _cb_postpoll_fail(self, timer) except -1

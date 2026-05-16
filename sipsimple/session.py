@@ -1320,6 +1320,26 @@ class Session(object):
         except SIPCoreInvalidStateError:
             pass # The INVITE session might have already been cancelled; ignore the error
 
+    def send_message(self, content_type, content, extra_headers=None):
+        """Send an in-dialog SIP MESSAGE on this established session.
+
+        Goes via pjsip_dlg_create_request so the Request-URI is the peer's
+        recorded Contact, the Route headers are the dialog's reversed
+        Record-Route stack, and From/To/Call-ID/CSeq are dialog-bound. The
+        peer's other registrations are NOT contacted — only the device
+        party to this call. Pairs with the SIPSessionGotMessage event the
+        SDK now posts for in-dialog MESSAGE on the inbound side.
+
+        Allowed only after the session is connected (the dialog isn't yet
+        established in earlier states). Synchronous wrt the calling thread;
+        raises SIPCoreError on any failure.
+        """
+        if self._invitation is None:
+            raise IllegalStateError('cannot send message: session has no invitation')
+        if extra_headers is None:
+            extra_headers = []
+        self._invitation.send_message(content_type, content, extra_headers)
+
     @transition_state('incoming', 'accepting')
     @run_in_green_thread
     def accept(self, streams, is_focus=False, extra_headers=None):
@@ -2421,6 +2441,15 @@ class Session(object):
     def handle_notification(self, notification):
         handler = getattr(self, '_NH_%s' % notification.name, Null)
         handler(notification)
+
+    def _NH_SIPInvitationGotMessage(self, notification):
+        # In-dialog MESSAGE received on an established session. The SDK has
+        # already responded 200 OK (in Invitation.process_incoming_message).
+        # We just re-emit on the Session sender so applications can subscribe
+        # per-session without also having to handle SIPApplicationGotMessage.
+        # This is the path Sylk Mobile's application/sylk-zrtp-negotiation
+        # probe arrives on (Call.sendMessage, in-dialog transport).
+        notification.center.post_notification('SIPSessionGotMessage', sender=self, data=notification.data)
 
     def _NH_SIPInvitationChangedState(self, notification):
         if self.state == 'terminated':
