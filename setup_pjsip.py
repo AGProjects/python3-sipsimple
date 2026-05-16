@@ -91,6 +91,7 @@ class PJSIP_build_ext(build_ext):
                    "#define PJMEDIA_HAS_ILBC_CODEC 0",
                    "#define PJMEDIA_HAS_OPENCORE_AMRNB_CODEC 0",
                    "#define PJMEDIA_HAS_OPENCORE_AMRWB_CODEC 0",
+                   "#define PJMEDIA_HAS_BCG729 1",
                    "#define PJMEDIA_HAS_WEBRTC_AEC 1",
                    "#define PJMEDIA_RTP_PT_TELEPHONE_EVENTS 101",
                    "#define PJMEDIA_RTP_PT_TELEPHONE_EVENTS_STR \"101\"",
@@ -229,6 +230,26 @@ class PJSIP_build_ext(build_ext):
             extra_config.append("#define PJMEDIA_HAS_FDKAAC_CODEC 1")
         self._fdk_aac_path = fdk_aac_path  # remembered for the configure cmd below
 
+        # bcg729 (Belledonne G.729) detection.  Search candidate prefixes (or
+        # honour SIPSIMPLE_BCG729_PATH) for bcg729/encoder.h.  When found we
+        # pass --with-bcg729=PREFIX to PJSIP's configure script so its own
+        # autoconf test can locate <bcg729/encoder.h> and -lbcg729; PJSIP then
+        # writes PJMEDIA_HAS_BCG729=1 into confdefs.h and links libbcg729 in.
+        bcg729_path = os.environ.get("SIPSIMPLE_BCG729_PATH")
+        if bcg729_path is None:
+            for cand in ("/opt/local", "/opt/homebrew", "/usr/local", "/mingw64", "/usr"):
+                if os.path.exists(os.path.join(cand, "include", "bcg729", "encoder.h")):
+                    bcg729_path = cand
+                    break
+        if bcg729_path is not None:
+            log.info("Found bcg729 at %s; enabling G.729 codec" % bcg729_path)
+        else:
+            log.info("bcg729 development headers not found; G.729 codec will be disabled. "
+                     "Install libbcg729-dev (Debian/Ubuntu), run mac/02b-install-bcg729.sh "
+                     "(macOS, builds bcg729 into /opt/local), or set SIPSIMPLE_BCG729_PATH "
+                     "to a prefix containing include/bcg729/encoder.h.")
+        self._bcg729_path = bcg729_path
+
         path = os.path.join(self.build_dir, "pjlib", "include", "pj", "config_site.h")
         log.info("Configuring PJSIP in %s" % path)
         with open(path, "w") as f:
@@ -272,6 +293,9 @@ class PJSIP_build_ext(build_ext):
 
         if self._fdk_aac_path is not None:
             cmd.append("--with-fdk-aac=%s" % os.path.abspath(os.path.expanduser(self._fdk_aac_path)))
+
+        if self._bcg729_path is not None:
+            cmd.append("--with-bcg729=%s" % os.path.abspath(os.path.expanduser(self._bcg729_path)))
 
         if self.verbose:
             log.info(" ".join(cmd))

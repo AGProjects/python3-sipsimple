@@ -221,7 +221,7 @@ class CodecList(List):
 # Audio datatypes
 
 class AudioCodecList(CodecList):
-    available_values = {'opus', 'speex', 'G722', 'GSM', 'iLBC', 'PCMU', 'PCMA', 'AMR-WB'}
+    available_values = {'opus', 'speex', 'G722', 'G729', 'GSM', 'iLBC', 'PCMU', 'PCMA', 'AMR-WB'}
 
 
 class SampleRate(int):

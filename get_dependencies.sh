@@ -6,7 +6,7 @@ if [[ "$unamestr" == 'Linux' && ${AUTOINSTALL:-1} != 0 ]]; then
 sudo apt install python3 dh-python python3-all-dev cython3 libasound2-dev \
 python3-dateutil python3-dnspython libssl-dev libv4l-dev libavcodec-dev \
 libavformat-dev libopencore-amrnb-dev libopencore-amrwb-dev libavutil-dev \
-libswscale-dev libx264-dev libvpx-dev libopus-dev libsqlite3-dev pkg-config \
+libswscale-dev libx264-dev libvpx-dev libopus-dev libbcg729-dev libsqlite3-dev pkg-config \
 uuid-dev cython3 cython3-dbg python3-setuptools devscripts debhelper dh-python \
 python3-all-dev python3-all-dbg libasound2-dev libssl-dev libsqlite3-dev
 fi
