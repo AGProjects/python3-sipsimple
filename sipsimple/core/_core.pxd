@@ -755,6 +755,8 @@ cdef extern from "pjmedia.h":
         PJMEDIA_SRTP_MANDATORY
     struct pjmedia_srtp_setting:
         pjmedia_srtp_use use
+        unsigned int crypto_count
+        pjmedia_srtp_crypto crypto[16]
     void pjmedia_srtp_setting_default(pjmedia_srtp_setting *opt) nogil
     int pjmedia_transport_srtp_create(pjmedia_endpt *endpt, pjmedia_transport *tp,
                                       pjmedia_srtp_setting *opt, pjmedia_transport **p_tp) nogil

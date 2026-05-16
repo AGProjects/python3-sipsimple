@@ -574,6 +574,15 @@ cdef class RTPTransport:
                             pjmedia_srtp_setting_default(&srtp_setting)
                         if self._encryption == 'sdes_mandatory':
                             srtp_setting.use = PJMEDIA_SRTP_MANDATORY
+                        # Offer only AES_CM_128_HMAC_SHA1_80. This is the
+                        # SDES baseline (RFC 4568) and works around peers
+                        # that mishandle multi-crypto offers (e.g. Janus's
+                        # sofia-sip-based SIP plugin before PR-2727).
+                        srtp_setting.crypto_count = 1
+                        _str_to_pj_str(b"AES_CM_128_HMAC_SHA1_80", &srtp_setting.crypto[0].name)
+                        srtp_setting.crypto[0].key.ptr = NULL
+                        srtp_setting.crypto[0].key.slen = 0
+                        srtp_setting.crypto[0].flags = 0
                         with nogil:
                             status = pjmedia_transport_srtp_create(media_endpoint, wrapped_transport, &srtp_setting, transport_address)
                         if status != 0:
