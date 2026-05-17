@@ -80,6 +80,7 @@ cdef class Request:
         cdef pjsip_contact_hdr *contact_hdr
         cdef pjsip_cid_hdr *cid_hdr
         cdef pjsip_cseq_hdr *cseq_hdr
+        cdef pjsip_cred_info *cred_info
         cdef int status
         cdef dict event_dict
         cdef PJSIPUA ua = _get_ua()
@@ -180,13 +181,16 @@ cdef class Request:
             status = pjsip_auth_clt_init(&self._auth, ua._pjsip_endpoint._obj, self._tdata.pool, 0)
             if status != 0:
                 raise PJSIPError("Could not init authentication credentials", status)
-            status = pjsip_auth_clt_set_credentials(&self._auth, 1, self.credentials.get_cred_info())
+            cred_info = self.credentials.get_cred_info()
+            with nogil:
+                status = pjsip_auth_clt_set_credentials(&self._auth, 1, cred_info)
             if status != 0:
                 raise PJSIPError("Could not set authentication credentials", status)
             self._need_auth = 1
         else:
             self._need_auth = 0
-        status = pjsip_tsx_create_uac(&ua._module, self._tdata, &self._tsx)
+        with nogil:
+            status = pjsip_tsx_create_uac(&ua._module, self._tdata, &self._tsx)
         if status != 0:
             raise PJSIPError("Could not create transaction for request", status)
         self._tsx.mod_data[ua._module.id] = <void *> self
@@ -196,7 +200,8 @@ cdef class Request:
         if self._tsx != NULL:
             self._tsx.mod_data[ua._module.id] = NULL
             if self._tsx.state < PJSIP_TSX_STATE_COMPLETED:
-                pjsip_tsx_terminate(self._tsx, 500)
+                with nogil:
+                    pjsip_tsx_terminate(self._tsx, 500)
             self._tsx = NULL
         if self._tdata != NULL:
             pjsip_tx_data_dec_ref(self._tdata)
@@ -217,7 +222,8 @@ cdef class Request:
             timeout_pj.sec = int(timeout)
             timeout_pj.msec = (timeout * 1000) % 1000
         self._timeout = timeout
-        status = pjsip_tsx_send_msg(self._tsx, self._tdata)
+        with nogil:
+            status = pjsip_tsx_send_msg(self._tsx, self._tdata)
         if status != 0:
             raise PJSIPError("Could not send request", status)
         pjsip_tx_data_add_ref(self._tdata)
@@ -230,7 +236,8 @@ cdef class Request:
     def end(self):
         cdef PJSIPUA ua = self._get_ua()
         if self.state == "IN_PROGRESS":
-            pjsip_tsx_terminate(self._tsx, 408)
+            with nogil:
+                pjsip_tsx_terminate(self._tsx, 408)
         elif self.state == "EXPIRING":
             pjsip_endpt_cancel_timer(ua._pjsip_endpoint._obj, &self._timer)
             self._timer_active = 0
@@ -293,7 +300,8 @@ cdef class Request:
                 if cseq != NULL:
                     cseq.cseq += 1
                     self.cseq = cseq.cseq
-                status = pjsip_tsx_create_uac(&ua._module, tdata_auth, &tsx_auth)
+                with nogil:
+                    status = pjsip_tsx_create_uac(&ua._module, tdata_auth, &tsx_auth)
                 if status != 0:
                     pjsip_tx_data_dec_ref(tdata_auth)
                     _add_event("SIPRequestDidFail",
@@ -306,7 +314,8 @@ cdef class Request:
                 self._tsx.mod_data[ua._module.id] = NULL
                 self._tsx = tsx_auth
                 self._tsx.mod_data[ua._module.id] = <void *> self
-                status = pjsip_tsx_send_msg(self._tsx, tdata_auth)
+                with nogil:
+                    status = pjsip_tsx_send_msg(self._tsx, tdata_auth)
                 if status != 0:
                     pjsip_tx_data_dec_ref(tdata_auth)
                     _add_event("SIPRequestDidFail",
@@ -381,7 +390,8 @@ cdef class Request:
         cdef pj_time_val expires
         cdef int status
         if self.state == "IN_PROGRESS":
-            pjsip_tsx_terminate(self._tsx, 408)
+            with nogil:
+                pjsip_tsx_terminate(self._tsx, 408)
         elif self.state == "EXPIRING":
             if self._expire_rest > 0:
                 _add_event("SIPRequestWillExpire", dict(obj=self, expires=self._expire_rest))
@@ -412,7 +422,8 @@ cdef class IncomingRequest:
         except SIPCoreError:
             return
         if self._tsx != NULL:
-            pjsip_tsx_terminate(self._tsx, 500)
+            with nogil:
+                pjsip_tsx_terminate(self._tsx, 500)
             self._tsx = NULL
         if self._tdata != NULL:
             pjsip_tx_data_dec_ref(self._tdata)
@@ -437,7 +448,8 @@ cdef class IncomingRequest:
             _add_headers_to_tdata(self._tdata, extra_headers)
         event_dict = dict(obj=self)
         _pjsip_msg_to_dict(self._tdata.msg, event_dict)
-        status = pjsip_tsx_send_msg(self._tsx, self._tdata)
+        with nogil:
+            status = pjsip_tsx_send_msg(self._tsx, self._tdata)
         if status != 0:
             raise PJSIPError("Could not send response", status)
         self.state = "answered"
@@ -451,12 +463,14 @@ cdef class IncomingRequest:
         status = pjsip_endpt_create_response(ua._pjsip_endpoint._obj, rdata, 500, NULL, &self._tdata)
         if status != 0:
             raise PJSIPError("Could not create response", status)
-        status = pjsip_tsx_create_uas(&ua._module, rdata, &self._tsx)
+        with nogil:
+            status = pjsip_tsx_create_uas(&ua._module, rdata, &self._tsx)
         if status != 0:
             pjsip_tx_data_dec_ref(self._tdata)
             self._tdata = NULL
             raise PJSIPError("Could not create transaction for incoming request", status)
-        pjsip_tsx_recv_msg(self._tsx, rdata)
+        with nogil:
+            pjsip_tsx_recv_msg(self._tsx, rdata)
         self.state = "incoming"
         self.peer_address = EndpointAddress(rdata.pkt_info.src_name, rdata.pkt_info.src_port)
         event_dict = dict(obj=self)
