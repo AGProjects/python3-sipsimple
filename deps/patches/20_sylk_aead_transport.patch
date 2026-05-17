@@ -1,0 +1,852 @@
+--- pjsip_orig/pjmedia/include/pjmedia/sylk_aead_transport.h
++++ pjsip/pjmedia/include/pjmedia/sylk_aead_transport.h
+@@ -0,0 +1,132 @@
++/*
++ * Sylk AEAD transport adapter — adds AES-128-GCM on RTP payload, on top of
++ * an existing SRTP/SDES transport. Byte-for-byte interop with sylk-mobile's
++ * react-native-webrtc FrameEncryptor (MediaEncryptorJni.cpp).
++ *
++ * Wire format (post-RTP-header, pre-SRTP):
++ *
++ *   [v|keyId : 1B] [counter_be : 4B] [ciphertext] [GCM auth tag : 16B]
++ *
++ *   IV  = salt(8) || counter_be(4)   (12 B AES-GCM IV)
++ *   AAD = (v|keyId)(1) || counter(4) (5 B authenticated-only)
++ *
++ *   v=1 today; counter is per-direction monotonic; keyId is the low 4 bits
++ *   of the 1-byte header so peers can roll keys without renegotiating.
++ *
++ * Adapter lifecycle:
++ *   1. Create wrapping the SRTP transport via sylk_aead_transport_create.
++ *      Adapter starts in PASSTHROUGH mode — every send_rtp / rtp callback
++ *      bypasses crypto. Stream can start media without waiting for ZRTP.
++ *   2. Once the ZRTP handshake completes, sylk_aead_transport_set_keys is
++ *      called with the HKDF-derived 16B keys + 8B salts (one per direction)
++ *      plus the agreed keyId. Adapter flips to ACTIVE; all subsequent RTP
++ *      packets get AES-128-GCM applied on send and verified-then-decrypted
++ *      on receive.
++ *   3. Permissive decrypt: incoming packets whose first payload byte does
++ *      not match (v=1, keyId=expected) are passed through unchanged. Same
++ *      policy as sylk-mobile's MediaDecryptor — lets the peer's plaintext
++ *      frames render while two-phase install is in progress.
++ *
++ * Stats counters (decryptedFrames / passthroughFrames) are kept per
++ * instance so a Python-side poller can detect "peer is actually emitting
++ * our ciphertext" (mirrors Android's MediaDecryptor counters).
++ */
++#ifndef __PJMEDIA_SYLK_AEAD_TRANSPORT_H__
++#define __PJMEDIA_SYLK_AEAD_TRANSPORT_H__
++
++#include <pjmedia/transport.h>
++
++PJ_BEGIN_DECL
++
++/* AEAD wire-format constants. Exposed because both sides of the build
++ * (this C and the Cython glue) need them. */
++#define SYLK_AEAD_KEY_LEN        16   /* AES-128 */
++#define SYLK_AEAD_SALT_LEN        8
++#define SYLK_AEAD_IV_LEN         12   /* GCM standard */
++#define SYLK_AEAD_TAG_LEN        16   /* GCM 128-bit tag */
++#define SYLK_AEAD_HEADER_LEN      1   /* version|keyId */
++#define SYLK_AEAD_COUNTER_LEN     4   /* big-endian uint32 */
++#define SYLK_AEAD_OVERHEAD       (SYLK_AEAD_HEADER_LEN + \
++                                  SYLK_AEAD_COUNTER_LEN + \
++                                  SYLK_AEAD_TAG_LEN)   /* 21 B */
++
++/**
++ * Create the AEAD transport adapter on top of an existing transport
++ * (typically the pjmedia SRTP transport, but any underlying transport
++ * works). The adapter starts in PASSTHROUGH mode — call set_keys() to
++ * arm it.
++ *
++ * @param endpt     The media endpoint (used for pool allocation).
++ * @param name      Optional name for logging (may be NULL).
++ * @param base_tp   The underlying transport to wrap.
++ * @param del_base  If non-zero, destroy base_tp when this adapter is
++ *                  destroyed. Caller is normally the SDK; pass PJ_TRUE.
++ * @param p_tp      Out-param: the new transport. Hand this to
++ *                  pjmedia_stream_create instead of base_tp.
++ *
++ * @return PJ_SUCCESS or an error code.
++ */
++PJ_DECL(pj_status_t) sylk_aead_transport_create(pjmedia_endpt *endpt,
++                                                const char *name,
++                                                pjmedia_transport *base_tp,
++                                                pj_bool_t del_base,
++                                                pjmedia_transport **p_tp);
++
++/**
++ * Install AES-128-GCM keys + salts (one per direction) on the adapter.
++ * After this returns PJ_SUCCESS the adapter is ACTIVE — outgoing RTP is
++ * encrypted before passing to the underlying transport, incoming RTP is
++ * decrypted after the underlying transport delivers it.
++ *
++ * Calling this a second time (key rotation) replaces both directions'
++ * keys and resets the outgoing counter. The keyId in the header lets the
++ * peer distinguish old vs new keyed frames in transition.
++ *
++ * @param tp         The AEAD adapter returned by _create.
++ * @param send_key   16-byte AES-128 key for outgoing payload.
++ * @param send_salt  8-byte salt prepended to counter to form GCM IV.
++ * @param recv_key   16-byte AES-128 key for incoming payload.
++ * @param recv_salt  8-byte salt for incoming GCM IVs.
++ * @param key_id     Low 4 bits placed in our 1-byte header; peer must
++ *                   use the same value.
++ *
++ * @return PJ_SUCCESS, or PJ_EINVAL on bad pointers, or PJ_ENOMEM on
++ *         OpenSSL EVP context allocation failure.
++ */
++/**
++ * @param video_prefix  Bytes left UNENCRYPTED at the start of each RTP
++ *                      payload (after the RTP header). RTP packetizers
++ *                      read codec metadata from this region. Audio: 0.
++ *                      Video: VP8/VP9=3, H264=2, AV1=1 — must match what
++ *                      Sylk Mobile's MediaDecryptor uses for the same
++ *                      negotiated codec.
++ */
++PJ_DECL(pj_status_t) sylk_aead_transport_set_keys(pjmedia_transport *tp,
++                                                  const pj_uint8_t *send_key,
++                                                  const pj_uint8_t *send_salt,
++                                                  const pj_uint8_t *recv_key,
++                                                  const pj_uint8_t *recv_salt,
++                                                  pj_uint8_t key_id,
++                                                  pj_uint8_t video_prefix);
++
++/**
++ * Read per-adapter frame counters. Mirrors the
++ * Android/iOS getMediaDecryptionStats path so a Python-side poller can
++ * gate a UI badge on real cryptographic activity. NULL out-pointers OK.
++ *
++ * decrypted_frames   = RTP packets whose AES-GCM tag verified
++ *                       (peer is emitting our ciphertext).
++ * passthrough_frames = RTP packets whose first payload byte didn't match
++ *                       our version|keyId header, or whose tag failed —
++ *                       passed through unchanged.
++ * encrypted_frames   = RTP packets we encrypted on the outgoing path
++ *                       (proves WE are emitting ciphertext).
++ */
++PJ_DECL(void) sylk_aead_transport_get_stats(pjmedia_transport *tp,
++                                            pj_uint64_t *encrypted_frames,
++                                            pj_uint64_t *decrypted_frames,
++                                            pj_uint64_t *passthrough_frames);
++
++PJ_END_DECL
++
++#endif /* __PJMEDIA_SYLK_AEAD_TRANSPORT_H__ */
+--- pjsip_orig/pjmedia/src/pjmedia/sylk_aead_transport.c
++++ pjsip/pjmedia/src/pjmedia/sylk_aead_transport.c
+@@ -0,0 +1,702 @@
++/*
++ * Sylk AEAD transport adapter — AES-128-GCM on RTP payload, on top of
++ * an existing SRTP/SDES transport.
++ *
++ * Wire-format details and lifecycle described in sylk_aead_transport.h.
++ *
++ * The adapter is a near-copy of pjmedia/src/pjmedia/transport_adapter_sample.c
++ * (forwards every pjmedia_transport_op call to the slave transport) with
++ * the send_rtp/rtp_cb paths intercepted for AES-128-GCM. RTCP is not
++ * touched — encrypting RTCP would interfere with RTCP feedback for
++ * congestion control and the SRTP layer below already protects it.
++ */
++
++#include <pjmedia/sylk_aead_transport.h>
++#include <pjmedia/endpoint.h>
++#include <pj/assert.h>
++#include <pj/log.h>
++#include <pj/pool.h>
++#include <pj/string.h>
++
++#include <openssl/evp.h>
++
++/* Use compiler __atomic builtins instead of <stdatomic.h>'s _Atomic so we
++ * don't impose a -std=c11 requirement on the PJSIP build. Both gcc and
++ * clang have supported __atomic_* since gcc 4.7 / clang 3.x — far below
++ * PJSIP's minimum. Memory ordering is __ATOMIC_RELAXED on the counters
++ * (we don't need ordering between separate counters, only atomicity) and
++ * __ATOMIC_ACQUIRE / __ATOMIC_RELEASE on the active-flag flip (so all
++ * writes to the keys are visible to the reader before active=1 is). */
++
++#define THIS_FILE   "sylk_aead_transport.c"
++
++/* RTP fixed header is 12 bytes. After it: 4 bytes per CSRC entry (CC
++ * count is the low 4 bits of byte 0), optionally a header extension if
++ * the X bit (bit 4 of byte 0) is set. RTP_HDR_BASE = 12. */
++#define RTP_HDR_BASE  12
++
++/* Forward declarations of the pjmedia_transport_op vtable functions. */
++static pj_status_t transport_get_info(pjmedia_transport *tp,
++                                      pjmedia_transport_info *info);
++static pj_status_t transport_attach2(pjmedia_transport *tp,
++                                     pjmedia_transport_attach_param *att_prm);
++static void        transport_detach(pjmedia_transport *tp, void *strm);
++static pj_status_t transport_send_rtp(pjmedia_transport *tp,
++                                      const void *pkt, pj_size_t size);
++static pj_status_t transport_send_rtcp(pjmedia_transport *tp,
++                                       const void *pkt, pj_size_t size);
++static pj_status_t transport_send_rtcp2(pjmedia_transport *tp,
++                                        const pj_sockaddr_t *addr,
++                                        unsigned addr_len,
++                                        const void *pkt, pj_size_t size);
++static pj_status_t transport_media_create(pjmedia_transport *tp,
++                                          pj_pool_t *sdp_pool,
++                                          unsigned options,
++                                          const pjmedia_sdp_session *rem_sdp,
++                                          unsigned media_index);
++static pj_status_t transport_encode_sdp(pjmedia_transport *tp,
++                                        pj_pool_t *sdp_pool,
++                                        pjmedia_sdp_session *local_sdp,
++                                        const pjmedia_sdp_session *rem_sdp,
++                                        unsigned media_index);
++static pj_status_t transport_media_start(pjmedia_transport *tp,
++                                         pj_pool_t *pool,
++                                         const pjmedia_sdp_session *local_sdp,
++                                         const pjmedia_sdp_session *rem_sdp,
++                                         unsigned media_index);
++static pj_status_t transport_media_stop(pjmedia_transport *tp);
++static pj_status_t transport_simulate_lost(pjmedia_transport *tp,
++                                           pjmedia_dir dir,
++                                           unsigned pct_lost);
++static pj_status_t transport_destroy(pjmedia_transport *tp);
++
++static struct pjmedia_transport_op sylk_aead_op =
++{
++    &transport_get_info,
++    NULL,                       /* attach (legacy) */
++    &transport_detach,
++    &transport_send_rtp,
++    &transport_send_rtcp,
++    &transport_send_rtcp2,
++    &transport_media_create,
++    &transport_encode_sdp,
++    &transport_media_start,
++    &transport_media_stop,
++    &transport_simulate_lost,
++    &transport_destroy,
++    &transport_attach2,
++};
++
++/* Magic-number type tag. Placed FIRST after the polymorphism header so
++ * sylk_aead_transport_set_keys can detect "wrong pointer" callers
++ * (someone passed in an SRTP/ZRTP/UDP transport by mistake) and return
++ * a clean error instead of dereferencing garbage from the wrongly-cast
++ * struct's bytes. The value is arbitrary but distinctive in a hex dump.
++ * Cleared in transport_destroy so use-after-free becomes detectable too. */
++#define SYLK_AEAD_MAGIC  0x5359414Du  /* "SYAM" — Sylk Aead Magic */
++
++/* Per-adapter instance. The adapter is allocated from a pjmedia pool, so
++ * its lifetime is tied to the call. */
++struct sylk_aead_adapter
++{
++    pjmedia_transport    base;             /* PJSIP polymorphism header. */
++    pj_uint32_t          magic;            /* SYLK_AEAD_MAGIC when alive. */
++    pj_bool_t            del_base;
++    pj_pool_t           *pool;
++    pjmedia_transport   *slave_tp;         /* The wrapped SRTP transport. */
++
++    /* Stream side: when the audio stream calls attach2(), we save its
++     * callbacks here and substitute our own wrappers so we can intercept
++     * the rx_rtp path for AES-GCM decryption. */
++    void                *stream_user_data;
++    void                *stream_ref;
++    void               (*stream_rtp_cb)(void *user_data, void *pkt, pj_ssize_t);
++    void               (*stream_rtp_cb2)(pjmedia_tp_cb_param *param);
++    void               (*stream_rtcp_cb)(void *user_data, void *pkt, pj_ssize_t);
++
++    /* Crypto state — written by sylk_aead_transport_set_keys, read by
++     * the RTP hot path. The 'active' flag is the gate between passthrough
++     * and AES-GCM mode. We guard install with a mutex; the hot path
++     * reads via __atomic_load_n(active, ACQUIRE) and snapshots the keys
++     * (which are stable once active).
++     */
++    pj_mutex_t          *key_lock;
++    /* Treat as atomic int via __atomic_load_n / __atomic_store_n: 0 =
++     * passthrough, 1 = AES-GCM active. Acquire/release ordering on the
++     * flip ensures the keys are visible to readers before active=1 is. */
++    int                  active;
++    pj_uint8_t           send_key[SYLK_AEAD_KEY_LEN];
++    pj_uint8_t           send_salt[SYLK_AEAD_SALT_LEN];
++    pj_uint8_t           recv_key[SYLK_AEAD_KEY_LEN];
++    pj_uint8_t           recv_salt[SYLK_AEAD_SALT_LEN];
++    pj_uint8_t           key_id;            /* low 4 bits of header byte */
++    /* Number of plaintext bytes left at the start of each video frame
++     * payload (i.e. after the RTP header). RTP packetizers read codec-
++     * specific metadata from there and would mis-parse if the bytes were
++     * encrypted. Sylk Mobile's MediaDecryptor uses the same value; both
++     * ends MUST agree. For audio always 0. For video: VP8/VP9=3, H264=2,
++     * AV1=1. Set alongside keys via sylk_aead_transport_set_keys; the
++     * adapter doesn't know the call's codec on its own. */
++    pj_uint8_t           video_prefix;
++    /* Outbound monotonic counter (32-bit big-endian on wire). Per direction.
++     * AES-GCM IV uniqueness requirement is satisfied by salt||counter being
++     * unique for the (key) — counter never repeats for a given send_key.
++     * Updated via __atomic_fetch_add(RELAXED). */
++    pj_uint32_t          send_counter;
++
++    /* Stats — see sylk_aead_transport_get_stats. Updated via
++     * __atomic_fetch_add / __atomic_load_n with RELAXED ordering. */
++    pj_uint64_t          encrypted_frames;
++    pj_uint64_t          decrypted_frames;
++    pj_uint64_t          passthrough_frames;
++
++    /* Scratch buffers, reused across RTP packets. Allocated from the
++     * pool at create time so we don't malloc on the hot path. PJSIP RTP
++     * MTU is typically 1500; we pad to 2048 for safety. */
++    pj_uint8_t           tx_scratch[2048];  /* for outgoing encrypted pkt */
++    pj_uint8_t           rx_scratch[2048];  /* for incoming decrypted pkt */
++};
++
++/* ----- helpers ----- */
++
++/* Big-endian uint32 store/load. */
++static inline void be_store_u32(pj_uint8_t *out, pj_uint32_t v)
++{
++    out[0] = (pj_uint8_t)((v >> 24) & 0xff);
++    out[1] = (pj_uint8_t)((v >> 16) & 0xff);
++    out[2] = (pj_uint8_t)((v >>  8) & 0xff);
++    out[3] = (pj_uint8_t)( v        & 0xff);
++}
++static inline pj_uint32_t be_load_u32(const pj_uint8_t *in)
++{
++    return ((pj_uint32_t)in[0] << 24) | ((pj_uint32_t)in[1] << 16)
++         | ((pj_uint32_t)in[2] <<  8) |  (pj_uint32_t)in[3];
++}
++
++/* Compute the RTP header length in bytes for a packet whose first 12 bytes
++ * are an RTP fixed header. Adds CSRC bytes (CC * 4) and the extension
++ * header length if X is set. Returns 0 on malformed inputs. */
++static pj_size_t rtp_header_length(const pj_uint8_t *pkt, pj_size_t size)
++{
++    pj_size_t hdr_len;
++    pj_uint8_t cc, x;
++    if (size < RTP_HDR_BASE) return 0;
++    cc = pkt[0] & 0x0f;
++    x  = (pkt[0] >> 4) & 0x01;
++    hdr_len = RTP_HDR_BASE + (pj_size_t)cc * 4;
++    if (x) {
++        pj_size_t ext_words;
++        /* Extension header: 4-byte preamble + 2 bytes of length-in-32bit-words. */
++        if (size < hdr_len + 4) return 0;
++        ext_words = ((pj_size_t)pkt[hdr_len + 2] << 8)
++                  |  (pj_size_t)pkt[hdr_len + 3];
++        hdr_len += 4 + ext_words * 4;
++        if (size < hdr_len) return 0;
++    }
++    return hdr_len;
++}
++
++/* AES-GCM encrypt of [plain, plain_len] producing [cipher, plain_len]
++ * followed by 16-byte tag. AAD is the 5-byte block (header||counter).
++ * Returns 0 on success, -1 on failure. */
++static int aes_gcm_encrypt(const pj_uint8_t key[SYLK_AEAD_KEY_LEN],
++                           const pj_uint8_t iv[SYLK_AEAD_IV_LEN],
++                           const pj_uint8_t *aad, int aad_len,
++                           const pj_uint8_t *plain, int plain_len,
++                           pj_uint8_t *cipher_out,
++                           pj_uint8_t tag_out[SYLK_AEAD_TAG_LEN])
++{
++    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
++    int outlen = 0;
++    int rc = -1;
++    if (!ctx) return -1;
++    if (EVP_EncryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, NULL, NULL) != 1) goto out;
++    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, SYLK_AEAD_IV_LEN, NULL) != 1) goto out;
++    if (EVP_EncryptInit_ex(ctx, NULL, NULL, key, iv) != 1) goto out;
++    if (aad_len > 0 &&
++        EVP_EncryptUpdate(ctx, NULL, &outlen, aad, aad_len) != 1) goto out;
++    if (EVP_EncryptUpdate(ctx, cipher_out, &outlen, plain, plain_len) != 1) goto out;
++    if (EVP_EncryptFinal_ex(ctx, cipher_out + outlen, &outlen) != 1) goto out;
++    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, SYLK_AEAD_TAG_LEN, tag_out) != 1) goto out;
++    rc = 0;
++out:
++    EVP_CIPHER_CTX_free(ctx);
++    return rc;
++}
++
++/* AES-GCM decrypt + verify. cipher_in is plain_len bytes of ciphertext
++ * followed by 16-byte tag (so total cipher_in length is plain_len+16,
++ * but we pass plain_len as the plaintext size argument). Returns 0 on
++ * tag-verified plaintext written to plain_out, -1 on auth failure. */
++static int aes_gcm_decrypt(const pj_uint8_t key[SYLK_AEAD_KEY_LEN],
++                           const pj_uint8_t iv[SYLK_AEAD_IV_LEN],
++                           const pj_uint8_t *aad, int aad_len,
++                           const pj_uint8_t *cipher_in, int plain_len,
++                           const pj_uint8_t tag_in[SYLK_AEAD_TAG_LEN],
++                           pj_uint8_t *plain_out)
++{
++    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
++    int outlen = 0;
++    int rc = -1;
++    if (!ctx) return -1;
++    if (EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, NULL, NULL) != 1) goto out;
++    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, SYLK_AEAD_IV_LEN, NULL) != 1) goto out;
++    if (EVP_DecryptInit_ex(ctx, NULL, NULL, key, iv) != 1) goto out;
++    if (aad_len > 0 &&
++        EVP_DecryptUpdate(ctx, NULL, &outlen, aad, aad_len) != 1) goto out;
++    if (EVP_DecryptUpdate(ctx, plain_out, &outlen, cipher_in, plain_len) != 1) goto out;
++    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, SYLK_AEAD_TAG_LEN,
++                            (void *)tag_in) != 1) goto out;
++    if (EVP_DecryptFinal_ex(ctx, plain_out + outlen, &outlen) != 1) goto out;
++    rc = 0;
++out:
++    EVP_CIPHER_CTX_free(ctx);
++    return rc;
++}
++
++/* ----- public API ----- */
++
++PJ_DEF(pj_status_t) sylk_aead_transport_create(pjmedia_endpt *endpt,
++                                               const char *name,
++                                               pjmedia_transport *base_tp,
++                                               pj_bool_t del_base,
++                                               pjmedia_transport **p_tp)
++{
++    pj_pool_t *pool;
++    struct sylk_aead_adapter *a;
++    pj_status_t status;
++
++    PJ_ASSERT_RETURN(endpt && base_tp && p_tp, PJ_EINVAL);
++
++    if (name == NULL) name = "sylkaead%p";
++    pool = pjmedia_endpt_create_pool(endpt, name, 2048, 2048);
++    if (!pool) return PJ_ENOMEM;
++
++    a = PJ_POOL_ZALLOC_T(pool, struct sylk_aead_adapter);
++    a->pool = pool;
++    a->magic = SYLK_AEAD_MAGIC;
++    pj_ansi_strncpy(a->base.name, pool->obj_name, sizeof(a->base.name));
++    a->base.type = (pjmedia_transport_type)(PJMEDIA_TRANSPORT_TYPE_USER + 2);
++    a->base.op = &sylk_aead_op;
++    a->slave_tp = base_tp;
++    a->del_base = del_base;
++
++    status = pj_mutex_create_simple(pool, "sylk_aead", &a->key_lock);
++    if (status != PJ_SUCCESS) return status;
++
++    /* PJ_POOL_ZALLOC_T already zeroed all fields; counters and the
++     * active flag start at 0. The flip to active=1 happens in
++     * sylk_aead_transport_set_keys via __atomic_store_n with RELEASE.
++     */
++
++    PJ_LOG(4, (THIS_FILE, "sylk_aead adapter %p created (passthrough); base=%p",
++               a, base_tp));
++    *p_tp = &a->base;
++    return PJ_SUCCESS;
++}
++
++PJ_DEF(pj_status_t) sylk_aead_transport_set_keys(pjmedia_transport *tp,
++                                                 const pj_uint8_t *send_key,
++                                                 const pj_uint8_t *send_salt,
++                                                 const pj_uint8_t *recv_key,
++                                                 const pj_uint8_t *recv_salt,
++                                                 pj_uint8_t key_id,
++                                                 pj_uint8_t video_prefix)
++{
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)tp;
++    PJ_ASSERT_RETURN(a && send_key && send_salt && recv_key && recv_salt,
++                     PJ_EINVAL);
++    /* Magic check — the caller may have handed us an unrelated transport
++     * pointer (SRTP, ZRTP, UDP, …) by mistake. Without this we'd cast,
++     * dereference a->key_lock at the adapter's offset, hit unrelated bytes,
++     * and crash inside pj_mutex_lock. Returning PJ_EINVAL keeps the
++     * Python caller alive and gives a clean PJSIPError instead. */
++    if (a->magic != SYLK_AEAD_MAGIC) {
++        PJ_LOG(2, (THIS_FILE,
++                   "sylk_aead_transport_set_keys: wrong transport type "
++                   "(tp=%p, magic=0x%08x, expected 0x%08x) — refusing to install keys",
++                   tp, (unsigned)a->magic, (unsigned)SYLK_AEAD_MAGIC));
++        return PJ_EINVAL;
++    }
++
++    pj_mutex_lock(a->key_lock);
++    pj_memcpy(a->send_key,  send_key,  SYLK_AEAD_KEY_LEN);
++    pj_memcpy(a->send_salt, send_salt, SYLK_AEAD_SALT_LEN);
++    pj_memcpy(a->recv_key,  recv_key,  SYLK_AEAD_KEY_LEN);
++    pj_memcpy(a->recv_salt, recv_salt, SYLK_AEAD_SALT_LEN);
++    a->key_id = key_id & 0x0f;
++    a->video_prefix = video_prefix;
++    /* Reset send counter on (re)keying. The IV uniqueness contract is
++     * "no (key, IV) pair repeats" — a fresh key means counter can start
++     * from 0 again. */
++    __atomic_store_n(&a->send_counter, 0u, __ATOMIC_RELAXED);
++    /* RELEASE: the key bytes written above must be visible to any
++     * thread that observes active=1 via the matching ACQUIRE load. */
++    __atomic_store_n(&a->active, 1, __ATOMIC_RELEASE);
++    pj_mutex_unlock(a->key_lock);
++
++    PJ_LOG(4, (THIS_FILE, "sylk_aead adapter %p ACTIVE keyId=%u videoPrefix=%u "
++               "(send key prefix=%02x%02x%02x%02x... recv prefix=%02x%02x%02x%02x...)",
++               a, (unsigned)a->key_id, (unsigned)a->video_prefix,
++               send_key[0], send_key[1], send_key[2], send_key[3],
++               recv_key[0], recv_key[1], recv_key[2], recv_key[3]));
++    return PJ_SUCCESS;
++}
++
++PJ_DEF(void) sylk_aead_transport_get_stats(pjmedia_transport *tp,
++                                           pj_uint64_t *encrypted_frames,
++                                           pj_uint64_t *decrypted_frames,
++                                           pj_uint64_t *passthrough_frames)
++{
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)tp;
++    /* See set_keys for why we magic-check. Non-adapter pointer -> report
++     * all zeros, never dereference further. */
++    if (!a || a->magic != SYLK_AEAD_MAGIC) {
++        if (encrypted_frames)   *encrypted_frames   = 0;
++        if (decrypted_frames)   *decrypted_frames   = 0;
++        if (passthrough_frames) *passthrough_frames = 0;
++        return;
++    }
++    if (encrypted_frames)
++        *encrypted_frames   = __atomic_load_n(&a->encrypted_frames,   __ATOMIC_RELAXED);
++    if (decrypted_frames)
++        *decrypted_frames   = __atomic_load_n(&a->decrypted_frames,   __ATOMIC_RELAXED);
++    if (passthrough_frames)
++        *passthrough_frames = __atomic_load_n(&a->passthrough_frames, __ATOMIC_RELAXED);
++}
++
++/* ----- vtable: pass-through pieces ----- */
++
++static pj_status_t transport_get_info(pjmedia_transport *tp,
++                                      pjmedia_transport_info *info)
++{
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)tp;
++    return pjmedia_transport_get_info(a->slave_tp, info);
++}
++
++static pj_status_t transport_send_rtcp(pjmedia_transport *tp,
++                                       const void *pkt, pj_size_t size)
++{
++    /* RTCP is left untouched — SRTP below encrypts it; encrypting again
++     * here would break congestion-control feedback parsing. */
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)tp;
++    return pjmedia_transport_send_rtcp(a->slave_tp, pkt, size);
++}
++
++static pj_status_t transport_send_rtcp2(pjmedia_transport *tp,
++                                        const pj_sockaddr_t *addr,
++                                        unsigned addr_len,
++                                        const void *pkt, pj_size_t size)
++{
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)tp;
++    return pjmedia_transport_send_rtcp2(a->slave_tp, addr, addr_len, pkt, size);
++}
++
++static pj_status_t transport_media_create(pjmedia_transport *tp,
++                                          pj_pool_t *sdp_pool, unsigned options,
++                                          const pjmedia_sdp_session *rem_sdp,
++                                          unsigned media_index)
++{
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)tp;
++    return pjmedia_transport_media_create(a->slave_tp, sdp_pool, options,
++                                          rem_sdp, media_index);
++}
++
++static pj_status_t transport_encode_sdp(pjmedia_transport *tp,
++                                        pj_pool_t *sdp_pool,
++                                        pjmedia_sdp_session *local_sdp,
++                                        const pjmedia_sdp_session *rem_sdp,
++                                        unsigned media_index)
++{
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)tp;
++    return pjmedia_transport_encode_sdp(a->slave_tp, sdp_pool, local_sdp,
++                                        rem_sdp, media_index);
++}
++
++static pj_status_t transport_media_start(pjmedia_transport *tp,
++                                         pj_pool_t *pool,
++                                         const pjmedia_sdp_session *local_sdp,
++                                         const pjmedia_sdp_session *rem_sdp,
++                                         unsigned media_index)
++{
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)tp;
++    return pjmedia_transport_media_start(a->slave_tp, pool, local_sdp,
++                                         rem_sdp, media_index);
++}
++
++static pj_status_t transport_media_stop(pjmedia_transport *tp)
++{
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)tp;
++    return pjmedia_transport_media_stop(a->slave_tp);
++}
++
++static pj_status_t transport_simulate_lost(pjmedia_transport *tp,
++                                           pjmedia_dir dir, unsigned pct_lost)
++{
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)tp;
++    return pjmedia_transport_simulate_lost(a->slave_tp, dir, pct_lost);
++}
++
++static pj_status_t transport_destroy(pjmedia_transport *tp)
++{
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)tp;
++    pj_status_t status = PJ_SUCCESS;
++    /* Wipe the magic first so any concurrent caller doing
++     * set_keys / get_stats can detect the use-after-free and bail out
++     * cleanly via the magic check. */
++    a->magic = 0;
++    if (a->del_base && a->slave_tp) {
++        status = pjmedia_transport_close(a->slave_tp);
++        a->slave_tp = NULL;
++    }
++    if (a->key_lock) {
++        pj_mutex_destroy(a->key_lock);
++        a->key_lock = NULL;
++    }
++    pj_pool_release(a->pool);
++    return status;
++}
++
++/* ----- vtable: attach2 / detach (wrap the stream's rtp_cb so we can
++ *               decrypt before delivering) ----- */
++
++/* Called by the slave (SRTP) transport when an RTP packet arrives. SRTP
++ * has already decrypted it, so `param->pkt` is the RTP packet as the
++ * peer originally sent it (with our AEAD layer still applied if peer is
++ * actually encrypting). */
++static void slave_rtp_cb2(pjmedia_tp_cb_param *param)
++{
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)param->user_data;
++    pjmedia_tp_cb_param cb;
++    pj_uint8_t *pkt = (pj_uint8_t *)param->pkt;
++    pj_size_t   size = (pj_size_t)param->size;
++    pj_size_t   hdr_len;
++    /* ACQUIRE so we observe the key bytes published by the matching
++     * RELEASE store in sylk_aead_transport_set_keys. */
++    int         active = __atomic_load_n(&a->active, __ATOMIC_ACQUIRE);
++    int         use_passthrough = !active;
++
++    pj_memcpy(&cb, param, sizeof(cb));
++    cb.user_data = a->stream_user_data;
++
++    if (active) {
++        hdr_len = rtp_header_length(pkt, size);
++        /* video_prefix codec-metadata bytes after RTP header are plaintext;
++         * our [v|keyId][counter][ciphertext][tag] starts at hdr_len + prefix.
++         * For audio video_prefix is 0 so this is a no-op. */
++        const pj_size_t prefix_len = (pj_size_t)a->video_prefix;
++        const pj_size_t header_offset = hdr_len + prefix_len;
++        /* Peer must have emitted at least (RTP header + prefix + AEAD
++         * overhead) for there to be any ciphertext at all. If not, fall
++         * through. */
++        if (hdr_len == 0 || size < header_offset + SYLK_AEAD_OVERHEAD) {
++            use_passthrough = 1;
++        } else {
++            const pj_uint8_t header_byte = pkt[header_offset];
++            const pj_uint8_t version     = (header_byte >> 4) & 0x0f;
++            const pj_uint8_t key_id      =  header_byte       & 0x0f;
++            if (version != 1 || key_id != a->key_id) {
++                /* Same permissive rule as MediaEncryptorJni.cpp on Android:
++                 * if the first payload byte doesn't look like (v=1|our keyId),
++                 * the peer is still emitting plaintext frames — let them
++                 * render unchanged. */
++                use_passthrough = 1;
++            } else {
++                pj_uint32_t counter = be_load_u32(pkt + header_offset + 1);
++                pj_uint8_t iv[SYLK_AEAD_IV_LEN];
++                pj_uint8_t aad[SYLK_AEAD_HEADER_LEN + SYLK_AEAD_COUNTER_LEN];
++                pj_size_t ct_offset;
++                pj_size_t ct_len;
++                const pj_uint8_t *ct;
++                const pj_uint8_t *tag;
++                pj_memcpy(iv, a->recv_salt, SYLK_AEAD_SALT_LEN);
++                be_store_u32(iv + SYLK_AEAD_SALT_LEN, counter);
++                aad[0] = header_byte;
++                be_store_u32(aad + 1, counter);
++
++                ct_offset = header_offset + SYLK_AEAD_HEADER_LEN + SYLK_AEAD_COUNTER_LEN;
++                ct_len    = size - ct_offset - SYLK_AEAD_TAG_LEN;
++                ct  = pkt + ct_offset;
++                tag = pkt + ct_offset + ct_len;
++
++                /* Output: RTP header (unchanged) + prefix bytes (unchanged) +
++                 * decrypted bytes. Length: size - SYLK_AEAD_OVERHEAD. */
++                if (header_offset + ct_len > sizeof(a->rx_scratch)) {
++                    use_passthrough = 1;
++                } else {
++                    pj_memcpy(a->rx_scratch, pkt, header_offset);
++                    if (aes_gcm_decrypt(a->recv_key, iv,
++                                        aad, sizeof(aad),
++                                        ct, (int)ct_len, tag,
++                                        a->rx_scratch + header_offset) == 0) {
++                        cb.pkt  = a->rx_scratch;
++                        cb.size = header_offset + ct_len;
++                        __atomic_fetch_add(&a->decrypted_frames, 1, __ATOMIC_RELAXED);
++                        if (a->stream_rtp_cb2) {
++                            a->stream_rtp_cb2(&cb);
++                        } else if (a->stream_rtp_cb) {
++                            a->stream_rtp_cb(a->stream_user_data,
++                                             a->rx_scratch,
++                                             (pj_ssize_t)(header_offset + ct_len));
++                        }
++                        return;
++                    } else {
++                        /* GCM tag failure — peer key/salt/counter mismatch
++                         * or wire-format skew. Pass through so audio still
++                         * renders (sylk-mobile does the same). */
++                        use_passthrough = 1;
++                    }
++                }
++            }
++        }
++    }
++
++    if (use_passthrough) {
++        __atomic_fetch_add(&a->passthrough_frames, 1, __ATOMIC_RELAXED);
++        if (a->stream_rtp_cb2) {
++            a->stream_rtp_cb2(&cb);
++        } else if (a->stream_rtp_cb) {
++            a->stream_rtp_cb(a->stream_user_data, param->pkt, param->size);
++        }
++    }
++}
++
++static void slave_rtcp_cb(void *user_data, void *pkt, pj_ssize_t size)
++{
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)user_data;
++    if (a->stream_rtcp_cb) {
++        a->stream_rtcp_cb(a->stream_user_data, pkt, size);
++    }
++}
++
++static pj_status_t transport_attach2(pjmedia_transport *tp,
++                                     pjmedia_transport_attach_param *att_param)
++{
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)tp;
++    pj_status_t status;
++
++    pj_assert(a->stream_user_data == NULL);
++    a->stream_user_data = att_param->user_data;
++    if (att_param->rtp_cb2) {
++        a->stream_rtp_cb2 = att_param->rtp_cb2;
++    } else {
++        a->stream_rtp_cb = att_param->rtp_cb;
++    }
++    a->stream_rtcp_cb = att_param->rtcp_cb;
++    a->stream_ref = att_param->stream;
++
++    att_param->rtp_cb2  = &slave_rtp_cb2;
++    att_param->rtp_cb   = NULL;
++    att_param->rtcp_cb  = &slave_rtcp_cb;
++    att_param->user_data = a;
++
++    status = pjmedia_transport_attach2(a->slave_tp, att_param);
++    if (status != PJ_SUCCESS) {
++        a->stream_user_data = NULL;
++        a->stream_rtp_cb   = NULL;
++        a->stream_rtp_cb2  = NULL;
++        a->stream_rtcp_cb  = NULL;
++        a->stream_ref      = NULL;
++    }
++    return status;
++}
++
++static void transport_detach(pjmedia_transport *tp, void *strm)
++{
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)tp;
++    PJ_UNUSED_ARG(strm);
++    if (a->stream_user_data != NULL) {
++        pjmedia_transport_detach(a->slave_tp, a);
++        a->stream_user_data = NULL;
++        a->stream_rtp_cb   = NULL;
++        a->stream_rtp_cb2  = NULL;
++        a->stream_rtcp_cb  = NULL;
++        a->stream_ref      = NULL;
++    }
++}
++
++/* ----- vtable: send_rtp (encrypt before passing to slave) ----- */
++
++static pj_status_t transport_send_rtp(pjmedia_transport *tp,
++                                      const void *pkt, pj_size_t size)
++{
++    struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)tp;
++    const pj_uint8_t *in = (const pj_uint8_t *)pkt;
++    pj_size_t hdr_len;
++    pj_size_t payload_len;
++    pj_size_t out_size;
++    pj_uint8_t header_byte;
++    pj_uint32_t counter;
++    pj_uint8_t iv[SYLK_AEAD_IV_LEN];
++    pj_uint8_t aad[SYLK_AEAD_HEADER_LEN + SYLK_AEAD_COUNTER_LEN];
++    pj_uint8_t *cipher_out;
++    pj_uint8_t *tag_out;
++    int active = __atomic_load_n(&a->active, __ATOMIC_ACQUIRE);
++
++    if (!active) {
++        __atomic_fetch_add(&a->passthrough_frames, 1, __ATOMIC_RELAXED);
++        return pjmedia_transport_send_rtp(a->slave_tp, pkt, size);
++    }
++
++    hdr_len = rtp_header_length(in, size);
++    if (hdr_len == 0) {
++        /* Malformed — pass through so caller sees the error from SRTP if any. */
++        __atomic_fetch_add(&a->passthrough_frames, 1, __ATOMIC_RELAXED);
++        return pjmedia_transport_send_rtp(a->slave_tp, pkt, size);
++    }
++
++    /* video_prefix bytes after the RTP header are left plaintext: RTP
++     * packetizers (VP8/VP9/H264/AV1) read codec metadata from there.
++     * Encrypting those bytes would break the receiver's depacketizer.
++     * For audio video_prefix is 0 so this is a no-op. */
++    const pj_size_t prefix_len = (pj_size_t)a->video_prefix;
++    if (size < hdr_len + prefix_len) {
++        __atomic_fetch_add(&a->passthrough_frames, 1, __ATOMIC_RELAXED);
++        return pjmedia_transport_send_rtp(a->slave_tp, pkt, size);
++    }
++    const pj_size_t plaintext_start = hdr_len + prefix_len;
++    payload_len = size - plaintext_start;
++    out_size    = plaintext_start + SYLK_AEAD_HEADER_LEN + SYLK_AEAD_COUNTER_LEN
++                                  + payload_len + SYLK_AEAD_TAG_LEN;
++    if (out_size > sizeof(a->tx_scratch)) {
++        /* Outgoing packet too large — pass through. The stream's MTU
++         * negotiation should keep frames small enough that this branch
++         * never fires for audio (Opus 20ms@48kHz ~ 80B). For video at
++         * MTU it can fire — that's a real interop limit you'd hit on
++         * networks with small MTUs. */
++        __atomic_fetch_add(&a->passthrough_frames, 1, __ATOMIC_RELAXED);
++        return pjmedia_transport_send_rtp(a->slave_tp, pkt, size);
++    }
++
++    /* Layout:
++     *   [RTP header verbatim]
++     *   [video_prefix bytes plaintext]    ← codec metadata
++     *   [header byte v|keyId]
++     *   [counter]
++     *   [ciphertext same length as plaintext]
++     *   [16B GCM tag]                       */
++    pj_memcpy(a->tx_scratch, in, plaintext_start);
++    header_byte = (pj_uint8_t)((1u << 4) | (a->key_id & 0x0f));
++    counter = __atomic_fetch_add(&a->send_counter, 1u, __ATOMIC_RELAXED);
++    a->tx_scratch[plaintext_start] = header_byte;
++    be_store_u32(a->tx_scratch + plaintext_start + 1, counter);
++
++    pj_memcpy(iv, a->send_salt, SYLK_AEAD_SALT_LEN);
++    be_store_u32(iv + SYLK_AEAD_SALT_LEN, counter);
++    aad[0] = header_byte;
++    be_store_u32(aad + 1, counter);
++
++    cipher_out = a->tx_scratch + plaintext_start + SYLK_AEAD_HEADER_LEN
++                                                 + SYLK_AEAD_COUNTER_LEN;
++    tag_out    = cipher_out + payload_len;
++    if (aes_gcm_encrypt(a->send_key, iv, aad, sizeof(aad),
++                        in + plaintext_start, (int)payload_len,
++                        cipher_out, tag_out) != 0) {
++        /* Crypto layer failed — should not happen in normal operation.
++         * Fall back to passthrough so the call doesn't go silent. */
++        __atomic_fetch_add(&a->passthrough_frames, 1, __ATOMIC_RELAXED);
++        return pjmedia_transport_send_rtp(a->slave_tp, pkt, size);
++    }
++    __atomic_fetch_add(&a->encrypted_frames, 1, __ATOMIC_RELAXED);
++    return pjmedia_transport_send_rtp(a->slave_tp, a->tx_scratch, out_size);
++}
+--- pjsip_orig/pjmedia/build/Makefile
++++ pjsip/pjmedia/build/Makefile
+@@ -70,7 +70,7 @@ export PJMEDIA_OBJS += $(OS_OBJS) $(M_OBJS) $(CC_OBJS) $(HOST_OBJS) \
+ 			resample_resample.o resample_libsamplerate.o resample_speex.o \
+ 			resample_port.o rtcp.o rtcp_xr.o rtcp_fb.o rtp.o \
+ 			sdp.o sdp_cmp.o sdp_neg.o session.o silencedet.o \
+ 			sound_legacy.o sound_port.o stereo_port.o stream_common.o \
+-			stream.o stream_info.o tonegen.o transport_adapter_sample.o \
++			stream.o stream_info.o sylk_aead_transport.o tonegen.o transport_adapter_sample.o \
+ 			transport_ice.o transport_loop.o transport_srtp.o transport_udp.o \
+ 			transport_zrtp.o types.o vid_codec.o vid_codec_util.o mixer_port.o \
+ 			vid_port.o vid_stream.o vid_tee.o vid_stream_info.o vid_conf.o \
