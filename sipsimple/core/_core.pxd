@@ -1817,7 +1817,7 @@ cdef object _pj_str_to_bytes(pj_str_t pj_bytes)
 cdef object _pj_str_to_str(pj_str_t pj_str)
 cdef object _pj_status_to_str(int status)
 cdef object _pj_status_to_def(int status)
-cdef object _buf_to_str(object buf)
+cdef object _buf_to_str(char *buf)
 cdef object _str_as_str(object string)
 cdef object _str_as_size(object string)
 

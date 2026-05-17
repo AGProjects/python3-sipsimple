@@ -171,7 +171,9 @@ cdef object _pj_str_to_str(pj_str_t pj_str):
 cdef object _pj_buf_len_to_str(char *buf, int buf_len):
     return PyBytes_FromStringAndSize(buf, buf_len)
 
-cdef object _buf_to_str(object buf):
+cdef object _buf_to_str(char *buf):
+    if buf == NULL:
+        return u''
     return PyBytes_FromString(buf).decode()
 
 cdef object _str_as_str(object string):
@@ -298,8 +300,7 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
             header_data = FrozenReplacesHeader_create(<pjsip_replaces_hdr *> header)
         # skip the following headers:
         elif header_name not in ("Authorization", "Proxy-Authenticate", "Proxy-Authorization", "WWW-Authenticate"):
-            hvalue = (<pjsip_generic_string_hdr *> header).hvalue
-            header_value = _pj_str_to_str(hvalue)
+            header_value = _pj_str_to_str((<pjsip_generic_string_hdr *> header).hvalue)
             header_data = FrozenHeader(header_name, header_value)
 
         if header_data is not None:
