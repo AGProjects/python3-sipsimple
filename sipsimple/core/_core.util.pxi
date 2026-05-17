@@ -171,7 +171,7 @@ cdef object _pj_str_to_str(pj_str_t pj_str):
 cdef object _pj_buf_len_to_str(char *buf, int buf_len):
     return PyBytes_FromStringAndSize(buf, buf_len)
 
-cdef object _buf_to_str(char *buf):
+cdef object _buf_to_str(const char *buf):
     if buf == NULL:
         return u''
     return PyBytes_FromString(buf).decode()
