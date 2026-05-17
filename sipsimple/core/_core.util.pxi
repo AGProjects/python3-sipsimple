@@ -168,7 +168,7 @@ cdef object _pj_str_to_bytes(pj_str_t pj_str):
 cdef object _pj_str_to_str(pj_str_t pj_str):
     return PyBytes_FromStringAndSize(pj_str.ptr, pj_str.slen).decode()
 
-cdef object _pj_buf_len_to_str(object buf, int buf_len):
+cdef object _pj_buf_len_to_str(char *buf, int buf_len):
     return PyBytes_FromStringAndSize(buf, buf_len)
 
 cdef object _buf_to_str(object buf):
