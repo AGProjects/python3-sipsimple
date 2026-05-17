@@ -1,13 +1,13 @@
 python3-sipsimple (5.4.0) unstable; urgency=medium
 
-  * Use pjsip 2.12
-  * Added G.729 codec
-  * Escalate to zRTP compatible with Sylk Mobile
+  * Added G.729 audio codec
+  * Escalate to zRTP compatible encryption for Sylk Mobile interoperability
+  * Offer only AES_CM_128_HMAC_SHA1_80 for SDES negotiation for Janus interoperability
+  * Improve zRTP oportunistic encryption to fall back to SDES, if available
   * Fix PJSIP crash on Mac when wake up from sleep
-  * Fix SIP msg parsing
-  * Make zRTP oportunistic encryption fall back to SDES, if available in 200OK
-  * Handle in-dialog SIP Message
-  * Offer only AES_CM_128_HMAC_SHA1_80 for SDES negotiation
+  * Fix core msg parsing crashes
+  * Added handling for in-dialog SIP Messages
+  * Use pjsip 2.12
 
  -- Tijmen de Mes <support@ag-projects.com>  Sun, 17 May 2026 09:14:13 +0200
 
