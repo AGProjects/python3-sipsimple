@@ -951,6 +951,31 @@ class Session(object):
         self.transport = None
         self.local_focus = False
         self.remote_focus = False
+        # Most recent SIP headers received from the remote party — populated
+        # in _NH_SIPInvitationChangedState whenever the remote side drives
+        # a state transition. For a normal outgoing call this carries the
+        # 200 OK response headers; for an established call it would carry
+        # re-INVITE response headers. Application code reads e.g.
+        # session.remote_response_headers.get('X-Sylk-ZRTP') to detect
+        # peer capability without having to also observe the underlying
+        # Invitation. None until the first remote response arrives.
+        self.remote_response_headers = None
+        # Symmetric: the original INVITE headers for an incoming session.
+        # Set in init_incoming (alongside SIPSessionNewIncoming posting).
+        # None for outgoing sessions.
+        self.remote_request_headers = None
+        # Sylk-flavoured ZRTP-over-MESSAGE state. Populated by the SDK
+        # itself — applications never instantiate this class; they only
+        # observe SIPSessionSylkZRTPStateChanged for UI / logging.
+        #   remote_sylk_zrtp_capability is a Capability(version, suites)
+        #     namedtuple if the peer advertised X-Sylk-ZRTP, else None.
+        #     Set from INVITE headers on incoming calls, from 200 OK
+        #     headers on outgoing calls.
+        #   _sylk_zrtp is the SylkZRTPSession instance once instantiated
+        #     in _NH_RTPStreamDidEnableEncryption (caller side) or
+        #     _NH_SIPInvitationGotMessage (callee side, on first probe).
+        self.remote_sylk_zrtp_capability = None
+        self._sylk_zrtp = None
         self.greenlet = None
         self.conference = None
         self.replaced_session = None
@@ -1041,6 +1066,19 @@ class Session(object):
                     replace_handler = SessionReplaceHandler(self)
                     replace_handler.start()
         notification_center.add_observer(self, sender=invitation)
+        # Stash the incoming INVITE's headers on the Session so application
+        # code reading the session later (e.g. on SIPSessionDidStart) can
+        # introspect peer-advertised capability headers like X-Sylk-ZRTP
+        # without having to also subscribe to SIPSessionNewIncoming. The
+        # symmetric attribute remote_response_headers (set in
+        # _NH_SIPInvitationChangedState) carries the 200 OK headers for
+        # outgoing calls.
+        self.remote_request_headers = data.headers
+        # Detect Sylk-ZRTP capability advertisement from the caller.
+        # The actual handshake fires later, gated on stream encryption
+        # type (SRTP/SDES vs ZRTP) — see _NH_RTPStreamDidEnableEncryption.
+        from sipsimple.streams.rtp.sylk_zrtp import peer_capability_from_headers
+        self.remote_sylk_zrtp_capability = peer_capability_from_headers(data.headers)
         notification_center.post_notification('SIPSessionNewIncoming', sender=self, data=NotificationData(streams=self.proposed_streams[:], headers=data.headers, replaced_dialog=replaced_dialog_id))
 
     @transition_state(None, 'connecting')
@@ -1055,6 +1093,18 @@ class Session(object):
         received_reason = None
         unhandled_notifications = []
         extra_headers = extra_headers or []
+
+        # Auto-advertise Sylk-ZRTP-over-MESSAGE capability when the
+        # account is configured for opportunistic/zrtp negotiation.
+        # The actual decision to RUN the fallback is post-SDP — if the
+        # peer also accepts RFC 6189 ZRTP via a=zrtp-hash, real ZRTP
+        # wins and Sylk-ZRTP stays out of the way. See
+        # sipsimple/streams/rtp/sylk_zrtp.py module docstring.
+        from sipsimple.streams.rtp.sylk_zrtp import capability_header_for_account
+        _sylk_zrtp_hdr = capability_header_for_account(self.account)
+        if _sylk_zrtp_hdr is not None and not any(
+                h.name == _sylk_zrtp_hdr.name for h in extra_headers):
+            extra_headers = extra_headers + [_sylk_zrtp_hdr]
 
         if {'to', 'from', 'via', 'contact', 'route', 'record-route'}.intersection(header.name.lower() for header in extra_headers):
             raise RuntimeError('invalid header in extra_headers: To, From, Via, Contact, Route and Record-Route headers are not allowed')
@@ -1351,6 +1401,16 @@ class Session(object):
         connected = False
         unhandled_notifications = []
         extra_headers = extra_headers or []
+
+        # Mirror the outgoing-INVITE advertisement on the 200 OK answer
+        # so a remote caller can detect our capability before media
+        # starts. Same gating as in connect(); won't duplicate if the
+        # application already passed the header explicitly.
+        from sipsimple.streams.rtp.sylk_zrtp import capability_header_for_account
+        _sylk_zrtp_hdr = capability_header_for_account(self.account)
+        if _sylk_zrtp_hdr is not None and not any(
+                h.name == _sylk_zrtp_hdr.name for h in extra_headers):
+            extra_headers = extra_headers + [_sylk_zrtp_hdr]
 
         if {'to', 'from', 'via', 'contact', 'route', 'record-route'}.intersection(header.name.lower() for header in extra_headers):
             raise RuntimeError('invalid header in extra_headers: To, From, Via, Contact, Route and Record-Route headers are not allowed')
@@ -2445,11 +2505,86 @@ class Session(object):
     def _NH_SIPInvitationGotMessage(self, notification):
         # In-dialog MESSAGE received on an established session. The SDK has
         # already responded 200 OK (in Invitation.process_incoming_message).
-        # We just re-emit on the Session sender so applications can subscribe
-        # per-session without also having to handle SIPApplicationGotMessage.
-        # This is the path Sylk Mobile's application/sylk-zrtp-negotiation
-        # probe arrives on (Call.sendMessage, in-dialog transport).
+        #
+        # If this is a Sylk-ZRTP-over-MESSAGE envelope, we CONSUME it
+        # internally (dispatch into the SylkZRTPSession state machine
+        # and don't re-emit to the application). For any other in-dialog
+        # MESSAGE we re-emit on the Session sender so applications can
+        # subscribe per-session without also having to handle
+        # SIPApplicationGotMessage.
+        if self._dispatch_sylk_zrtp_message(notification.data):
+            return
         notification.center.post_notification('SIPSessionGotMessage', sender=self, data=notification.data)
+
+    def _dispatch_sylk_zrtp_message(self, data):
+        """If `data` is a Sylk-ZRTP-over-MESSAGE envelope, route it to
+        the per-session SylkZRTPSession (creating one in callee role on
+        first contact) and return True. Otherwise return False so the
+        normal SIPSessionGotMessage dispatch can run.
+
+        Coexistence guard: if audio is already running RFC 6189 ZRTP,
+        silently consume the message — both sides shouldn't run two
+        parallel ZRTPs. Same as the trigger-side check in
+        _NH_RTPStreamDidEnableEncryption.
+        """
+        from sipsimple.streams.rtp.sylk_zrtp import (
+            SYLK_ZRTP_CONTENT_TYPE, SylkZRTPSession,
+            account_advertises_capability)
+
+        # Content-Type detection. The header value may be a CPIM wrap
+        # (message/cpim) — in which case we need to look at the INNER
+        # content-type. For now we accept either bare or CPIM-wrapped,
+        # mirroring what sip-session3 used to do at application level.
+        headers = data.headers or {}
+        ct_hdr = headers.get('Content-Type')
+        if ct_hdr is None:
+            return False
+        ct = (ct_hdr.content_type or '').lower() if hasattr(ct_hdr, 'content_type') else str(ct_hdr).lower()
+
+        body = data.body
+        if ct == 'message/cpim':
+            # Look inside the CPIM envelope for the real content-type.
+            try:
+                from sipsimple.streams.msrp.chat import CPIMPayload
+                cpim = CPIMPayload.decode(body)
+                inner_ct = (cpim.content_type or '').lower()
+                if inner_ct != SYLK_ZRTP_CONTENT_TYPE:
+                    return False
+                body = cpim.content
+            except Exception:
+                return False
+        elif ct != SYLK_ZRTP_CONTENT_TYPE:
+            return False
+
+        # We're committed: this is a Sylk-ZRTP envelope. From here on
+        # everything is internal — return True at the end regardless.
+        if not SylkZRTPSession.is_available:
+            return True   # consume so apps don't see noise
+        if not account_advertises_capability(self.account):
+            return True
+        # Coexistence with RFC 6189 ZRTP — if audio is on the real ZRTP
+        # path, leave the message alone (silently dropped).
+        audio = next((s for s in self.streams or [] if s.type == 'audio'), None)
+        if audio is not None and audio.encryption.type == 'ZRTP':
+            return True
+        # Callee policy: a probe arriving at all is itself proof the peer
+        # speaks Sylk-ZRTP-over-MESSAGE; gating on remote_sylk_zrtp_capability
+        # would lock out raw SIP callers whose X-Sylk-ZRTP header was
+        # stripped by an intermediary (e.g. a WebRTC gateway that doesn't
+        # forward X-* into its WebSocket events). The capability header
+        # is only useful on the *caller* side (so we don't fire probes
+        # at peers that would reject the MESSAGE with 500).
+
+        try:
+            import json
+            payload = json.loads(body.decode('utf-8') if isinstance(body, (bytes, bytearray)) else body)
+        except Exception:
+            return True
+
+        if self._sylk_zrtp is None:
+            self._sylk_zrtp = SylkZRTPSession(self, role='callee')
+        self._sylk_zrtp.handle_incoming(payload)
+        return True
 
     def _NH_SIPInvitationChangedState(self, notification):
         if self.state == 'terminated':
@@ -2458,6 +2593,20 @@ class Session(object):
             contact_header = notification.data.headers.get('Contact', None)
             if contact_header and 'isfocus' in contact_header[0].parameters:
                 self.remote_focus = True
+            # Stash the most recent set of remote-side response headers on
+            # the Session so application code can read e.g. capability
+            # headers from the 200 OK (X-Sylk-ZRTP, Server, custom X-…
+            # headers) without having to also observe the underlying
+            # Invitation. Updated on every remote-state transition that
+            # carries headers; for a normal outgoing call the first
+            # 'connected' transition is the 200 OK to our INVITE.
+            self.remote_response_headers = notification.data.headers
+            # Also surface Sylk-ZRTP peer capability for outgoing calls.
+            # Only set once — the first remote response (200 OK) is
+            # authoritative; later re-INVITE responses don't downgrade.
+            if self.remote_sylk_zrtp_capability is None:
+                from sipsimple.streams.rtp.sylk_zrtp import peer_capability_from_headers
+                self.remote_sylk_zrtp_capability = peer_capability_from_headers(notification.data.headers)
         if self.greenlet is not None:
             if notification.data.state == 'disconnected' and notification.data.prev_state != 'disconnecting':
                 self._channel.send_exception(InvitationDisconnectedError(notification.sender, notification.data))
@@ -2710,6 +2859,25 @@ class Session(object):
                 return
             if video_stream.encryption.type == 'ZRTP' and not video_stream.encryption.active:
                 video_stream.encryption.zrtp._enable(audio_stream)
+            return
+
+        # SRTP/SDES branch: this is the moment we know real RFC 6189 ZRTP
+        # did NOT win the SDP negotiation. Sylk-ZRTP-over-MESSAGE is the
+        # designated fallback when both ends advertise X-Sylk-ZRTP. Only
+        # the caller initiates; the callee waits for the probe (handled
+        # in _NH_SIPInvitationGotMessage).
+        if (audio_stream.encryption.type == 'SRTP/SDES'
+                and self.direction == 'outgoing'
+                and self._sylk_zrtp is None
+                and self.remote_sylk_zrtp_capability is not None):
+            from sipsimple.streams.rtp.sylk_zrtp import (
+                SylkZRTPSession, account_advertises_capability)
+            if not SylkZRTPSession.is_available:
+                return  # cryptography package missing
+            if not account_advertises_capability(self.account):
+                return  # local account opted out
+            self._sylk_zrtp = SylkZRTPSession(self, role='caller')
+            self._sylk_zrtp.start_probe()
 
     def _NH_MediaStreamDidStart(self, notification):
         stream = notification.sender

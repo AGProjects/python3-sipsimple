@@ -947,10 +947,24 @@ cdef class Invitation:
 
     def __dealloc__(self):
         cdef Timer timer
+        cdef PJSIPUA ua
 
         self._do_dealloc()
-        if self._lock != NULL:
+        # The mutex is allocated from the PJSIP endpoint's memory pool. If the
+        # PJSIPUA has already been deallocated (e.g. the engine was stopped
+        # before this Invitation got garbage collected, which happens routinely
+        # during interpreter shutdown), that pool has already been freed and
+        # self._lock is dangling memory. Calling pj_mutex_destroy on it would
+        # invoke pthread_mutex_destroy on a corrupted lock and abort the
+        # process. Only destroy the mutex while the UA (and therefore the pool
+        # that owns it) is still alive.
+        try:
+            ua = _get_ua()
+        except SIPCoreError:
+            ua = None
+        if ua is not None and self._lock != NULL:
             pj_mutex_destroy(self._lock)
+        self._lock = NULL
 
         timer = Timer()
         try:
