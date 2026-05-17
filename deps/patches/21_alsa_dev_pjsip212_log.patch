@@ -1,0 +1,20 @@
+--- pjsip_orig/pjmedia/src/pjmedia-audiodev/alsa_dev.c
++++ pjsip/pjmedia/src/pjmedia-audiodev/alsa_dev.c
+@@ -766,7 +766,7 @@
+     if (result < 0) {
+ 	PJ_LOG (3,(THIS_FILE, "Unable to set a channel count of %d for "
+ 		   "playback device '%s'", param->channel_count,
+-		   stream->af->devs[param->play_id].name));
++		   stream->af->devs[param->play_id].alsa_name));
+ 	snd_pcm_close (stream->pb_pcm);
+ 	return PJMEDIA_EAUD_SYSERR;
+     }
+@@ -904,7 +904,7 @@
+     if (result < 0) {
+ 	PJ_LOG (3,(THIS_FILE, "Unable to set a channel count of %d for "
+ 		   "capture device '%s'", param->channel_count,
+-		   stream->af->devs[param->rec_id].name));
++		   stream->af->devs[param->rec_id].alsa_name));
+ 	snd_pcm_close (stream->ca_pcm);
+ 	return PJMEDIA_EAUD_SYSERR;
+     }
