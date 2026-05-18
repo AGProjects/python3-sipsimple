@@ -1,0 +1,241 @@
+# 23_vpx_packetizer_libwebrtc_interop.patch
+#
+# Improve pjmedia's VP8/VP9 RTP packetizer to emit the descriptor
+# extension bytes that libwebrtc-style peers (Chromium / Sylk Mobile's
+# react-native-webrtc) expect to receive.
+#
+# What this patch does
+# --------------------
+# 1. Adds per-instance picture_id / tl0_pic_idx state to the opaque
+#    pjmedia_vpx_packetizer struct.
+#
+# 2. Rewrites pjmedia_vpx_packetize() to emit:
+#
+#    * VP8: 4-byte descriptor [X|R|N|S|R|PID] [I|L|T|K|RSV]
+#                              [M|PictureID(7)] [TL0PICIDX]
+#    * VP9: 2-byte descriptor [I|P|L|F|B|E|V|-] [M|PictureID(7)]
+#
+#    picture_id is advanced once per frame (when bits_pos == 0) and
+#    held constant across all fragments of that frame. tl0_pic_idx is
+#    bumped on each keyframe.
+#
+# 3. Adds a new public accessor
+#    pjmedia_vpx_packetizer_descriptor_size() that callers must use
+#    instead of hardcoding the descriptor size. Previously every
+#    descriptor was 1 byte and the caller in vpx.c hardcoded that;
+#    the new VP8/VP9 sizes are 4/2 bytes so without this accessor the
+#    encoded payload memcpy clobbers the descriptor extension bytes.
+#
+# 4. Updates vpx.c's vpx_codec_packetize_() to call the new accessor
+#    instead of the old hardcoded `unsigned payload_desc_size = 1;`.
+#    Without this fix, the larger descriptor written by
+#    pjmedia_vpx_packetize() in (2) above is partially overwritten by
+#    the bitstream memcpy that follows, and the output->size is wrong
+#    by 1-3 bytes — the receiver decodes garbage.
+#
+# Background
+# ----------
+# pjsip's stock packetizer emits the RFC 7741 minimum-form descriptor
+# (a single base byte). libwebrtc's receiver uses the PictureID
+# extension field for frame-level packet sequencing — without it, any
+# RTP loss poisons every dependent packet and the
+# RtpVideoStreamReceiver discards the rest of the frame.
+#
+# Observed on a 20-second Sylk-Mobile <-> Blink VP8 call as Sylk RX
+# stats reading `framesReceived=7 packetsLost=434 pli=12` while
+# Blink's TX was sending ~24fps of valid VP8.
+#
+--- pjsip_orig/pjmedia/include/pjmedia-codec/vpx_packetizer.h
++++ pjsip/pjmedia/include/pjmedia-codec/vpx_packetizer.h
+@@ -101,6 +101,27 @@
+ 
+ 
+ /**
++ * Return the RTP-descriptor byte count this packetizer emits at the
++ * start of every packet. Callers that copy the bitstream into the
++ * output buffer immediately after the descriptor (e.g. vpx.c's
++ * vpx_codec_packetize_) must use this instead of a hardcoded value.
++ *
++ *  - VP8: 4 bytes (X + I + L extensions: PictureID + TL0PICIDX)
++ *  - VP9: 2 bytes (I extension: PictureID)
++ *
++ * Previously the descriptor was unconditionally 1 byte, so existing
++ * callers hardcoded that value. Pre-existing call sites must be
++ * updated when this build of pjmedia is in use.
++ *
++ * @param pktz		The packetizer.
++ *
++ * @return		Descriptor size in bytes (>= 1).
++ */
++PJ_DECL(unsigned) pjmedia_vpx_packetizer_descriptor_size(
++                                const pjmedia_vpx_packetizer *pktz);
++
++
++/**
+  * Append an RTP payload to an VPX picture bitstream. Note that in case of
+  * noticing packet lost, application should keep calling this function with
+  * payload pointer set to NULL, as the packetizer need to update its internal
+--- pjsip_orig/pjmedia/src/pjmedia-codec/vpx_packetizer.c
++++ pjsip/pjmedia/src/pjmedia-codec/vpx_packetizer.c
+@@ -35,6 +35,24 @@
+ {
+     /* Current settings */
+     pjmedia_vpx_packetizer_cfg cfg;
++
++    /*
++     * Per-frame state for VP8/VP9 RTP descriptor generation, to match
++     * what libwebrtc-style peers (Chromium / react-native-webrtc / sylk)
++     * expect to receive.
++     *
++     * libwebrtc's VP8/VP9 receivers use PictureID for frame-level
++     * sequencing. Without it they treat each packet as belonging to an
++     * unknown frame and drop packets aggressively whenever any RTP loss
++     * happens.
++     *
++     * picture_id is advanced once per frame (when bits_pos == 0) and
++     * held constant across all fragments of that frame. Wraps to 0
++     * at 0x80 so the M bit stays clear and the field stays a single
++     * byte. tl0_pic_idx wraps at 0x100 (1 byte).
++     */
++    pj_uint16_t picture_id;
++    pj_uint8_t  tl0_pic_idx;
+ };
+ 
+ /*
+@@ -78,41 +96,96 @@
+ }
+ 
+ /*
+- * Generate an RTP payload from H.264 frame bitstream, in-place processing.
++ * Compute the RTP-descriptor size for this packetizer instance.
++ * Exposed for callers that need to advance their bitstream copy
++ * offset past the descriptor; previously the descriptor was always
++ * 1 byte and was hardcoded at every call site (vpx.c). Now it's
++ * 4 bytes for VP8 (X+I+L extension) and 2 bytes for VP9 (I
++ * extension) — see pjmedia_vpx_packetize() below.
+  */
+-PJ_DEF(pj_status_t) pjmedia_vpx_packetize(const pjmedia_vpx_packetizer *pktz,
++PJ_DEF(unsigned) pjmedia_vpx_packetizer_descriptor_size(
++                                const pjmedia_vpx_packetizer *pktz)
++{
++    return (pktz && pktz->cfg.fmt_id == PJMEDIA_FORMAT_VP8) ? 4 : 2;
++}
++
++
++/*
++ * Generate an RTP payload from a VP8/VP9 frame bitstream, in-place
++ * processing.
++ *
++ * libwebrtc compatibility: emit the optional VP8 X+I+L extension bytes
++ * (PictureID + TL0PICIDX) and the VP9 I extension byte. libwebrtc's
++ * receiver uses PictureID for frame-level packet sequencing; without
++ * it, even a single RTP loss causes its frame buffer to discard
++ * subsequent packets as "unrecognised frame", which presents as
++ * massive packetsLost in getStats() and a frozen remote-video view on
++ * the libwebrtc side.
++ */
++PJ_DEF(pj_status_t) pjmedia_vpx_packetize(const pjmedia_vpx_packetizer *pktz_in,
+ 					  pj_size_t bits_len,
+                                           unsigned *bits_pos,
+                                           pj_bool_t is_keyframe,
+                                           pj_uint8_t **payload,
+                                           pj_size_t *payload_len)
+ {
+-    unsigned payload_desc_size = 1;
+-    unsigned max_size = pktz->cfg.mtu - payload_desc_size;
++    /*
++     * Cast away const so we can advance picture_id / tl0_pic_idx on
++     * each new frame. The public API takes const for backward
++     * compatibility, but the packetizer is logically stateful between
++     * calls and the struct is opaque to external callers (only the
++     * typedef is in the header).
++     */
++    pjmedia_vpx_packetizer *pktz = (pjmedia_vpx_packetizer *)pktz_in;
++    unsigned payload_desc_size = pjmedia_vpx_packetizer_descriptor_size(pktz);
++    unsigned max_size;
+     unsigned remaining_size = (unsigned)bits_len - *bits_pos;
+     unsigned out_size = (unsigned)*payload_len;
+     pj_uint8_t *bits = *payload;
++    pj_bool_t starts_frame = (*bits_pos == 0);
++    pj_bool_t ends_frame;
++
++    if (pktz->cfg.mtu <= payload_desc_size)
++        return PJMEDIA_CODEC_EFRMTOOSHORT;
++    max_size = pktz->cfg.mtu - payload_desc_size;
+ 
+     *payload_len = PJ_MIN(remaining_size, max_size);
+     if (*payload_len + payload_desc_size > out_size)
+ 	return PJMEDIA_CODEC_EFRMTOOSHORT;
+ 
+-    /* Set payload header */
+-    bits[0] = 0;
++    ends_frame = (*bits_pos + *payload_len == bits_len);
++
++    /* Advance PictureID at the start of every new frame. */
++    if (starts_frame) {
++        pktz->picture_id = (pj_uint16_t)((pktz->picture_id + 1) & 0x7F);
++        if (is_keyframe) {
++            pktz->tl0_pic_idx = (pj_uint8_t)(pktz->tl0_pic_idx + 1);
++        }
++    }
++
+     if (pktz->cfg.fmt_id == PJMEDIA_FORMAT_VP8) {
+-	/* Set N: Non-reference frame */
+-        if (!is_keyframe) bits[0] |= 0x20;
+-        /* Set S: Start of VP8 partition. */
+-        if (*bits_pos == 0) bits[0] |= 0x10;
++        /*
++         * RFC 7741 §4.2 — base byte:
++         *   |X|R|N|S|R| PID |
++         * X-byte:
++         *   |I|L|T|K| RSV   |
++         */
++        bits[0] = 0x80;                               /* X=1 */
++        if (!is_keyframe) bits[0] |= 0x20;            /* N=1 */
++        if (starts_frame) bits[0] |= 0x10;            /* S=1 */
++        bits[1] = 0xC0;                               /* I=1, L=1 */
++        bits[2] = (pj_uint8_t)(pktz->picture_id & 0x7F);   /* M=0, 7-bit PID */
++        bits[3] = pktz->tl0_pic_idx;
+     } else if (pktz->cfg.fmt_id == PJMEDIA_FORMAT_VP9) {
+-	/* Set P: Inter-picture predicted frame */
+-        if (!is_keyframe) bits[0] |= 0x40;
+-        /* Set B: Start of a frame */
+-        if (*bits_pos == 0) bits[0] |= 0x8;
+-        /* Set E: End of a frame */
+-        if (*bits_pos + *payload_len == bits_len) {
+-            bits[0] |= 0x4;
+-	}
++        /*
++         * draft-ietf-payload-vp9 §4.2:
++         *   |I|P|L|F|B|E|V|-|
++         */
++        bits[0] = 0x80;                               /* I=1 */
++        if (!is_keyframe) bits[0] |= 0x40;            /* P=1 */
++        if (starts_frame)  bits[0] |= 0x08;           /* B=1 */
++        if (ends_frame)    bits[0] |= 0x04;           /* E=1 */
++        bits[1] = (pj_uint8_t)(pktz->picture_id & 0x7F);   /* M=0, 7-bit PID */
+     }
+     return PJ_SUCCESS;
+ }
+--- pjsip_orig/pjmedia/src/pjmedia-codec/vpx.c
++++ pjsip/pjmedia/src/pjmedia-codec/vpx.c
+@@ -663,7 +663,18 @@
+     vpx_data = (vpx_codec_data*) codec->codec_data;
+     
+     if (vpx_data->enc_processed < vpx_data->enc_frame_size) {
+-    	unsigned payload_desc_size = 1;
++    	/*
++    	 * libwebrtc-interop change: the descriptor is no longer
++    	 * unconditionally 1 byte — for VP8 it's now 4 bytes (X+I+L
++    	 * extensions emitting PictureID + TL0PICIDX) and for VP9
++    	 * it's 2 bytes (I extension emitting PictureID). Ask the
++    	 * packetizer for the current size instead of hardcoding 1.
++    	 * Without this, the memcpy below overwrites the descriptor's
++    	 * extension bytes with frame data and the receiver decodes
++    	 * garbage.
++    	 */
++    	unsigned payload_desc_size =
++    	    pjmedia_vpx_packetizer_descriptor_size(vpx_data->pktz);
+     	pj_size_t payload_len = out_size;
+     	pj_uint8_t *p = (pj_uint8_t *)output->buf;
+ 

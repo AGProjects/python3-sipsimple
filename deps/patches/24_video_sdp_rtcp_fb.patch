@@ -1,0 +1,110 @@
+# 24_video_sdp_rtcp_fb.patch
+#
+# Advertise rtcp-fb (NACK / PLI / FIR) on every video codec in the
+# offered SDP so libwebrtc-based peers (Chromium / react-native-webrtc
+# / sylk-mobile) enable their NACK retransmission machinery.
+#
+# Background
+# ----------
+# Before this patch pjsip's pjmedia_endpt_create_video_sdp() emitted
+# an m=video line with just rtpmap + fmtp + (optional) b=TIAS — no
+# a=rtcp-fb attributes at all. RFC-wise that means "RTP/AVP profile
+# only, no feedback messages negotiated", and libwebrtc honours that
+# by disabling NACK retransmission for the stream.
+#
+# With NACK disabled, every individual RTP packet that drops or
+# reorders permanently corrupts the surrounding frame — visible on
+# the peer's getStats() as packetsLost climbing by ~30/s while
+# framesReceived stays near zero, and on the rendered video as
+# heavy pixelation with only the occasional clean frame between
+# PLI-triggered keyframes.
+#
+# Field reproducer: Sylk-Mobile <-> Blink VP8 call,
+# [video] RX framesReceived=15 packetsLost=841 in a 30-second window.
+#
+# What this patch does
+# --------------------
+# After each codec is added to the m=video line, also emit:
+#   a=rtcp-fb:<pt> nack
+#   a=rtcp-fb:<pt> nack pli
+#   a=rtcp-fb:<pt> ccm fir
+#
+# pjmedia already supports SENDING and RECEIVING these RTCP feedback
+# messages (see pjmedia_rtcp_fb_*); only the SDP advertisement was
+# missing.
+#
+# Note on transport profile
+# -------------------------
+# RFC 5124 strictly mandates the RTP/AVPF profile for rtcp-fb. We do
+# not change pjsip's emitted profile (still RTP/AVP), because every
+# libwebrtc-based stack — and pjsip itself — accepts rtcp-fb attrs on
+# RTP/AVP for backward compat.
+#
+--- pjsip_orig/pjmedia/src/pjmedia/endpoint.c
++++ pjsip/pjmedia/src/pjmedia/endpoint.c
+@@ -877,7 +877,64 @@
+ 	    attr->value = pj_strdup3(pool, buf);
+ 	    m->attr[m->attr_count++] = attr;
+ 	}
+-    
++
++	/*
++	 * libwebrtc-interop: advertise rtcp-fb feedback messages so
++	 * Chromium / react-native-webrtc / sylk-mobile peers enable
++	 * their NACK retransmission and PLI/FIR keyframe-request
++	 * machinery for this stream.
++	 *
++	 * Without these attributes the peer's WebRTC stack treats us
++	 * as "no feedback supported", disables NACK on the receive
++	 * path, and every individual RTP packet drop or reorder
++	 * permanently corrupts the surrounding frame — visible in the
++	 * peer's getStats() as packetsLost growing by tens per second
++	 * with framesReceived stuck near zero and only the rare
++	 * keyframe rendering cleanly.
++	 *
++	 * The three attributes we emit per codec:
++	 *   a=rtcp-fb:<pt> nack         — NACK feedback for selective
++	 *                                  RTP packet retransmission
++	 *                                  (RFC 4585).
++	 *   a=rtcp-fb:<pt> nack pli     — Picture Loss Indication
++	 *                                  (RFC 4585).
++	 *   a=rtcp-fb:<pt> ccm fir      — Full Intra Request
++	 *                                  (RFC 5104).
++	 *
++	 * pjmedia already supports SENDING and RECEIVING these on the
++	 * RTCP path (see pjmedia_rtcp_fb_*); the missing piece was
++	 * the SDP advertisement. RFC 5124 strictly says rtcp-fb
++	 * belongs to the RTP/AVPF profile, but every libwebrtc-based
++	 * stack accepts them on RTP/AVP for backward compatibility,
++	 * and existing pjsip<->pjsip interop is unaffected (pjsip's
++	 * own SDP parser treats unrecognised rtcp-fb attributes as
++	 * informational).
++	 */
++	{
++	    static const struct {
++	        const char *fb;
++	    } VIDEO_RTCP_FB[] = {
++	        { "nack" },
++	        { "nack pli" },
++	        { "ccm fir" },
++	    };
++	    unsigned k;
++	    for (k = 0; k < PJ_ARRAY_SIZE(VIDEO_RTCP_FB); ++k) {
++	        char fb_buf[64];
++	        int n = pj_ansi_snprintf(fb_buf, sizeof(fb_buf),
++	                                 "%d %s",
++	                                 codec_info[i].pt,
++	                                 VIDEO_RTCP_FB[k].fb);
++	        if (n <= 0 || (unsigned)n >= sizeof(fb_buf))
++	            continue;
++	        attr = PJ_POOL_ZALLOC_T(pool, pjmedia_sdp_attr);
++	        attr->name  = pj_str("rtcp-fb");
++	        attr->value = pj_strdup3(pool, fb_buf);
++	        if (m->attr_count < PJMEDIA_MAX_SDP_ATTR)
++	            m->attr[m->attr_count++] = attr;
++	    }
++	}
++
+ 	/* Find maximum bitrate in this media */
+ 	vfd = pjmedia_format_get_video_format_detail(&codec_param.enc_fmt,
+ 						     PJ_TRUE);
