@@ -1,5 +1,6 @@
 python3-sipsimple (5.4.0) unstable; urgency=medium
 
+  * Make VP8 and VP9 video compatible with webrtc end-points
   * Added G.729 audio codec
   * Escalate to zRTP compatible encryption for Sylk Mobile interoperability
   * Offer only AES_CM_128_HMAC_SHA1_80 for SDES negotiation for Janus interoperability
@@ -7,6 +8,9 @@ python3-sipsimple (5.4.0) unstable; urgency=medium
   * Fix PJSIP crash on Mac when wake up from sleep
   * Fix core msg parsing crashes
   * Added handling for in-dialog SIP Messages
+  * Add video bandwidth negotiation in real-time
+  * Fix GIL locking issues inside core
+  * Fix crash in pj transport
   * Use pjsip 2.12
 
  -- Tijmen de Mes <support@ag-projects.com>  Sun, 17 May 2026 09:14:13 +0200
