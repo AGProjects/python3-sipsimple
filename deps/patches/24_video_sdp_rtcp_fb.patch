@@ -1,26 +1,30 @@
 # 24_video_sdp_rtcp_fb.patch
 #
-# Advertise rtcp-fb (NACK / PLI / FIR) on every video codec in the
-# offered SDP so libwebrtc-based peers (Chromium / react-native-webrtc
-# / sylk-mobile) enable their NACK retransmission machinery.
+# Advertise rtcp-fb (NACK / PLI / FIR / goog-REMB) on every video
+# codec in the offered SDP so libwebrtc-based peers (Chromium /
+# react-native-webrtc / sylk-mobile) enable their NACK retransmission
+# AND bandwidth-estimation feedback machinery for the stream.
 #
 # Background
 # ----------
 # Before this patch pjsip's pjmedia_endpt_create_video_sdp() emitted
 # an m=video line with just rtpmap + fmtp + (optional) b=TIAS — no
-# a=rtcp-fb attributes at all. RFC-wise that means "RTP/AVP profile
-# only, no feedback messages negotiated", and libwebrtc honours that
-# by disabling NACK retransmission for the stream.
+# a=rtcp-fb attributes at all. libwebrtc honours that by disabling
+# both NACK retransmission AND REMB bandwidth-estimation feedback
+# for the stream, so:
 #
-# With NACK disabled, every individual RTP packet that drops or
-# reorders permanently corrupts the surrounding frame — visible on
-# the peer's getStats() as packetsLost climbing by ~30/s while
-# framesReceived stays near zero, and on the rendered video as
-# heavy pixelation with only the occasional clean frame between
-# PLI-triggered keyframes.
+#   * every individual RTP packet that drops or reorders permanently
+#     corrupts the surrounding frame (NACK is the recovery path),
+#   * the encoder has no signal that the link can't sustain its
+#     configured bitrate, so it keeps pushing the full 800 kbps even
+#     when the downlink is dropping half the packets in queue.
 #
-# Field reproducer: Sylk-Mobile <-> Blink VP8 call,
-# [video] RX framesReceived=15 packetsLost=841 in a 30-second window.
+# Field reproducer: Sylk-Mobile <-> Blink VP8 call, asymmetric
+# downlink loss to the iPhone. Pre-patch: framesReceived=7, lost=434.
+# After rtcp-fb-only-no-REMB: framesReceived≈170, nack=1631, lost=870
+# still climbing — NACK works but the link is oversubscribed and
+# stays oversubscribed. After adding REMB: pjsip's encoder backs off
+# to the receiver-reported safe bitrate.
 #
 # What this patch does
 # --------------------
@@ -28,10 +32,10 @@
 #   a=rtcp-fb:<pt> nack
 #   a=rtcp-fb:<pt> nack pli
 #   a=rtcp-fb:<pt> ccm fir
+#   a=rtcp-fb:<pt> goog-remb
 #
-# pjmedia already supports SENDING and RECEIVING these RTCP feedback
-# messages (see pjmedia_rtcp_fb_*); only the SDP advertisement was
-# missing.
+# pjmedia already supports SENDING and RECEIVING all four (see
+# pjmedia_rtcp_fb_*); only the SDP advertisement was missing.
 #
 # Note on transport profile
 # -------------------------
@@ -42,7 +46,7 @@
 #
 --- pjsip_orig/pjmedia/src/pjmedia/endpoint.c
 +++ pjsip/pjmedia/src/pjmedia/endpoint.c
-@@ -877,7 +877,64 @@
+@@ -877,7 +877,79 @@
  	    attr->value = pj_strdup3(pool, buf);
  	    m->attr[m->attr_count++] = attr;
  	}
@@ -87,6 +91,21 @@
 +	        { "nack" },
 +	        { "nack pli" },
 +	        { "ccm fir" },
++	        /*
++	         * goog-remb: Google's Receiver Estimated Maximum Bitrate
++	         * (draft-alvestrand-rmcat-remb / RTCP-PSFB AFB type 15).
++	         * libwebrtc's congestion controller reads this off the
++	         * SDP and sends periodic REMB feedback telling us how
++	         * fast we can transmit. pjmedia parses incoming REMB
++	         * via pjmedia_rtcp_fb_decode_remb; advertising it here
++	         * means the peer will actually send it. On a lossy
++	         * downlink this lets pjsip's encoder back off from its
++	         * configured cap (e.g. 800 kbps) toward the rate the
++	         * receiver can actually sustain, instead of saturating
++	         * the queue and forcing NACK-driven recovery for every
++	         * second packet.
++	         */
++	        { "goog-remb" },
 +	    };
 +	    unsigned k;
 +	    for (k = 0; k < PJ_ARRAY_SIZE(VIDEO_RTCP_FB); ++k) {
