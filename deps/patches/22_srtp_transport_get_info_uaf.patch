@@ -1,0 +1,98 @@
+# 22_srtp_transport_get_info_uaf.patch
+#
+# Fix a use-after-free in pjmedia's SRTP transport (pjproject 2.12).
+#
+# pjmedia_transport_srtp_stop() calls srtp_dealloc() on both the RX and TX
+# SRTP contexts but never NULLs the wrapper's srtp_rx_ctx / srtp_tx_ctx
+# pointers afterwards. The pointers are left dangling at the freed
+# addresses.
+#
+# transport_get_info() then guards on
+#
+#     if (srtp->srtp_rx_ctx && srtp->rx_ssrc != 0) { ... }
+#
+# which lets a dangling-non-NULL pointer through, and calls
+# srtp_get_stream_roc(srtp->srtp_rx_ctx, ...) on freed memory. This
+# manifests as an EXC_BAD_ACCESS inside srtp_get_stream_roc with the
+# stream pointer at a poisoned heap address (e.g. 0x839cd221b4acbfbf
+# on macOS Tahoe) whenever something queries transport info between a
+# media_stop and the next media_start — most reliably during a
+# re-INVITE-with-removed-video where AudioTransport.__init__ on
+# python3-sipsimple's RTPTransport calls pjmedia_transport_get_info()
+# in that window.
+#
+# Two-part fix:
+#
+#   1. pjmedia_transport_srtp_stop(): NULL the freed contexts and clear
+#      rx_ssrc / tx_ssrc. The pj_bzero of rx_policy / tx_policy was
+#      already done by upstream; we just extend it to the context
+#      pointers and SSRC fields the get_info guards rely on.
+#
+#   2. transport_get_info(): require session_inited before walking
+#      srtp_rx_ctx / srtp_tx_ctx. Belt-and-braces with (1) — even if
+#      a future change re-introduces dangling pointers, the
+#      session_inited flag is the single source of truth for "is the
+#      libsrtp session alive" and any get_info caller in the
+#      post-stop / pre-start window now safely returns zero ROC info.
+#
+# Reported via Blink for macOS (com.agprojects.Blink) when a
+# Sylk-Mobile <-> Blink video call drops video mid-call. Diagnosed
+# from the lldb backtrace:
+#
+#     frame 0  srtp_get_stream_roc + 24
+#     frame 1  transport_get_info + 164
+#     frame 2  pjmedia_transport_get_info + 92
+#     frame 3  RTPTransport._get_info + 100
+#     frame 4  AudioTransport.__init__ + 2704
+#
+# The fix is local to pjmedia/src/pjmedia/transport_srtp.c.
+#
+--- pjsip_orig/pjmedia/src/pjmedia/transport_srtp.c
++++ pjsip/pjmedia/src/pjmedia/transport_srtp.c
+@@ -1088,6 +1088,21 @@
+ 		   get_libsrtp_errstr(err)));
+     }
+ 
++    /*
++     * UAF FIX: NULL out the freed context pointers so subsequent
++     * transport_get_info() calls (which guard on `srtp_rx_ctx != NULL`)
++     * don't walk dangling memory. Also clear the SSRC fields used by
++     * the same guards so a future get_info on this transport between
++     * stop and the next start returns zero ROC info instead of
++     * dereferencing the freed libsrtp_stream_t.
++     *
++     * See deps/patches/22_srtp_transport_get_info_uaf.patch.
++     */
++    p_srtp->srtp_rx_ctx = NULL;
++    p_srtp->srtp_tx_ctx = NULL;
++    p_srtp->rx_ssrc = 0;
++    p_srtp->tx_ssrc = 0;
++
+     p_srtp->session_inited = PJ_FALSE;
+     pj_bzero(&p_srtp->rx_policy, sizeof(p_srtp->rx_policy));
+     pj_bzero(&p_srtp->tx_policy, sizeof(p_srtp->tx_policy));
+@@ -1180,7 +1195,14 @@
+     pj_bzero(&srtp_info.tx_roc, sizeof(srtp_info.tx_roc));
+     pj_bzero(&srtp_info.rx_roc, sizeof(srtp_info.rx_roc));
+ 
+-    if (srtp->srtp_rx_ctx && srtp->rx_ssrc != 0) {
++    /*
++     * UAF FIX: gate the libsrtp context walks on session_inited as
++     * well. srtp_rx_ctx / srtp_tx_ctx being non-NULL is not enough —
++     * older pjproject builds left them dangling after
++     * pjmedia_transport_srtp_stop(). See
++     * deps/patches/22_srtp_transport_get_info_uaf.patch.
++     */
++    if (srtp->session_inited && srtp->srtp_rx_ctx && srtp->rx_ssrc != 0) {
+     	srtp_info.rx_roc.ssrc = srtp->rx_ssrc;
+     	srtp_get_stream_roc(srtp->srtp_rx_ctx, srtp->rx_ssrc,
+     			    &srtp_info.rx_roc.roc);
+@@ -1188,7 +1210,7 @@
+     	srtp_info.rx_roc.ssrc = srtp->setting.rx_roc.ssrc;
+     	srtp_info.rx_roc.roc = srtp->setting.rx_roc.roc;
+     }
+-    if (srtp->srtp_tx_ctx && srtp->tx_ssrc != 0) {
++    if (srtp->session_inited && srtp->srtp_tx_ctx && srtp->tx_ssrc != 0) {
+     	srtp_info.tx_roc.ssrc = srtp->tx_ssrc;
+     	srtp_get_stream_roc(srtp->srtp_tx_ctx, srtp->tx_ssrc,
+     			    &srtp_info.tx_roc.roc);
