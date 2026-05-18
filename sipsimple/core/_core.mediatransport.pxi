@@ -63,6 +63,16 @@ cdef class RTPTransport:
                 # close_member_tp; we only need to NULL out user_data so
                 # late ZRTP callbacks don't try to resolve a dead weakref.
                 self._zrtp_transport.user_data = NULL
+            # Mark the wrapper as invalid BEFORE freeing the underlying
+            # pjmedia transport. The guard in _get_info() checks this
+            # state under the lock and bails out instead of walking the
+            # freed SRTP streams[] table. Without this ordering a
+            # concurrent greenlet calling _get_info() between
+            # pjmedia_transport_close() and the `self._obj = NULL`
+            # assignment below would still see a non-NULL self._obj
+            # pointing at freed memory.
+            self._srtp_streams_dangling = 1
+            self.state = "INVALID"
             with nogil:
                 pjmedia_transport_media_stop(transport)
                 pjmedia_transport_close(transport)
@@ -94,14 +104,75 @@ cdef class RTPTransport:
     cdef void _get_info(self, pjmedia_transport_info *info):
         cdef int status
         cdef pjmedia_transport *transport
+        cdef pj_mutex_t *lock = self._lock
 
-        transport = self._obj
-
+        # Always zero the info struct first. pjmedia_transport_get_info()
+        # zeroes internally on each entry too, so doing it here is
+        # idempotent — but it also means the early-exit guards below
+        # leave the caller with a deterministic empty sock_info instead
+        # of whatever stack garbage happened to live in `info`.
         with nogil:
             pjmedia_transport_info_init(info)
-            status = pjmedia_transport_get_info(transport, info)
-        if status != 0:
-            raise PJSIPError("Could not get transport info", status)
+
+        # Defensive guard against use-after-free in pjmedia's SRTP
+        # transport wrapper.
+        #
+        # Observed crash: EXC_BAD_ACCESS at a poisoned heap address
+        # inside srtp_get_stream_roc(), called from
+        # pjmedia_transport_srtp::transport_get_info, called from the
+        # pjmedia_transport_get_info() invocation below. The trigger
+        # is AudioTransport.__init__ being constructed against an
+        # RTPTransport whose SRTP context has been torn down on a
+        # parallel greenlet by a hang-up / re-INVITE path: the SRTP
+        # wrapper still holds a stale srtp_streams[] pointer at that
+        # point and dereferencing one of those streams crashes.
+        #
+        # The defensive layers are:
+        #   1. Refuse to enter if self._obj is NULL or the wrapper's
+        #      state says the transport is gone. ``_check_ua`` may
+        #      have nulled the obj already; ``__dealloc__`` does too.
+        #   2. Take the wrapper's own recursive lock so we serialise
+        #      against any concurrent state mutation on a different
+        #      greenlet (set_LOCAL / set_REMOTE / set_INIT). The lock
+        #      is RECURSIVE (pj_mutex_create_recursive at __cinit__)
+        #      so callers that already hold it stay safe.
+        #   3. Re-check under the lock — between the first check and
+        #      the lock acquire another greenlet may have closed the
+        #      transport.
+        if self._obj == NULL or self.state in ("NULL", "INVALID"):
+            raise SIPCoreError("RTPTransport._get_info called on a closed transport (state=%s)" % self.state)
+        if self._srtp_streams_dangling:
+            raise SIPCoreError("RTPTransport._get_info called after media_stop but before media_start "
+                               "(SRTP streams[] is dangling — would crash in srtp_get_stream_roc); state=%s" % self.state)
+
+        if lock != NULL:
+            with nogil:
+                status = pj_mutex_lock(lock)
+            if status != 0:
+                raise PJSIPError("failed to acquire RTPTransport lock", status)
+        try:
+            transport = self._obj
+            if transport == NULL or self.state in ("NULL", "INVALID"):
+                raise SIPCoreError("RTPTransport._get_info called on a closed transport (state=%s)" % self.state)
+            if self._srtp_streams_dangling:
+                # Re-check under the lock: set_INIT() may have flipped
+                # this on a different greenlet while we were waiting
+                # for the lock acquire.
+                raise SIPCoreError("RTPTransport._get_info called after media_stop but before media_start "
+                                   "(SRTP streams[] is dangling); state=%s" % self.state)
+
+            with nogil:
+                # Zero again under the lock; cheap, and removes any
+                # window where another thread observed the partially-
+                # filled info from the first zero.
+                pjmedia_transport_info_init(info)
+                status = pjmedia_transport_get_info(transport, info)
+            if status != 0:
+                raise PJSIPError("Could not get transport info", status)
+        finally:
+            if lock != NULL:
+                with nogil:
+                    pj_mutex_unlock(lock)
 
     property local_rtp_port:
 
@@ -488,6 +559,10 @@ cdef class RTPTransport:
                 status = pjmedia_transport_media_start(transport, self._pool, pj_local_sdp, pj_remote_sdp, sdp_index)
             if status != 0:
                 raise PJSIPError("Could not start media transport", status)
+            # SRTP streams[] has just been re-allocated inside
+            # pjmedia_transport_srtp::media_start. Walking it via
+            # transport_get_info is safe again until the next media_stop.
+            self._srtp_streams_dangling = 0
             self.state = "ESTABLISHED"
         finally:
             with nogil:
@@ -631,6 +706,17 @@ cdef class RTPTransport:
             if self.state == "INIT":
                 return
             if self.state in ["LOCAL", "ESTABLISHED"]:
+                # CRITICAL ORDERING: raise the "streams are dangling"
+                # flag BEFORE calling pjmedia_transport_media_stop().
+                # The stop call frees the SRTP wrapper's streams[] but
+                # leaves the table pointer non-NULL inside pjmedia, so
+                # any subsequent transport_get_info() — most notably
+                # the one in AudioTransport.__init__ on a fresh
+                # re-INVITE — would walk freed memory and crash inside
+                # srtp_get_stream_roc. _get_info() checks this flag
+                # under the lock and bails out. Cleared on the next
+                # successful media_start in set_ESTABLISHED.
+                self._srtp_streams_dangling = 1
                 with nogil:
                     status = pjmedia_transport_media_stop(transport_address[0])
                 if status != 0:

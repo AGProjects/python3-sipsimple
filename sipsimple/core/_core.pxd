@@ -2601,6 +2601,20 @@ cdef class RTPTransport(object):
     # control calls (enable, SAS verify, multistream, peer name/zid)
     # must be issued. For non-opportunistic encryption this stays NULL.
     cdef pjmedia_transport *_zrtp_transport
+    # 1 after pjmedia_transport_media_stop() ran and BEFORE the next
+    # pjmedia_transport_media_start(). In that window the underlying
+    # pjmedia_transport_srtp wrapper still has a non-NULL streams[]
+    # table pointer but the streams themselves have been freed —
+    # transport_get_info() walks them and crashes inside
+    # srtp_get_stream_roc reading freed memory. _get_info() bails out
+    # while this is set so the wrapper survives a hang-up / re-INVITE
+    # path that tears down the SRTP context on one greenlet while
+    # another is constructing an AudioTransport against the same
+    # RTPTransport. Cleared on the next successful media_start.
+    # Stays 0 in the pre-first-start case (state=NULL/WAIT_STUN/INIT
+    # immediately after creation), where SRTP streams[] is NULL and
+    # transport_get_info walks zero entries safely.
+    cdef int _srtp_streams_dangling
     cdef ICECheck _rtp_valid_pair
     cdef object _encryption
     cdef readonly object ice_stun_address
