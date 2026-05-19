@@ -141,29 +141,7 @@ cdef class RTPTransport:
         #      transport.
         if self._obj == NULL or self.state in ("NULL", "INVALID"):
             raise SIPCoreError("RTPTransport._get_info called on a closed transport (state=%s)" % self.state)
-        # The dangling-streams[] guard is only a hard fail OUTSIDE the
-        # INIT state. See deps/patches/26_get_info_allow_init_after_stop.patch
-        # for the full reasoning. Short form: a port-change re-INVITE legitimately
-        # arrives here as
-        #
-        #     AudioStream.update() -> AudioTransport.stop() ->
-        #       RTPTransport.set_INIT() -> pjmedia_transport_media_stop()
-        #     AudioStream.update() -> AudioTransport.__init__() ->
-        #       RTPTransport._get_info()         # ← we are here, state=INIT
-        #
-        # The AudioTransport constructor needs the local sock_info to
-        # build the answer SDP and there is no API path to reach
-        # ESTABLISHED again (and clear _srtp_streams_dangling) without
-        # first going through this constructor. The C-level fix in
-        # deps/patches/22_srtp_transport_get_info_uaf.patch already
-        # NULLs the freed srtp_rx_ctx / srtp_tx_ctx pointers and gates
-        # transport_get_info on session_inited, so calling
-        # pjmedia_transport_get_info() against an INIT-state SRTP
-        # transport is now safe and just returns zero ROC info plus the
-        # underlying UDP sock_info, which is all the caller needs.
-        # Any non-INIT state with dangling=1 indicates a state-machine
-        # bug elsewhere and is still rejected.
-        if self._srtp_streams_dangling and self.state != "INIT":
+        if self._srtp_streams_dangling:
             raise SIPCoreError("RTPTransport._get_info called after media_stop but before media_start "
                                "(SRTP streams[] is dangling — would crash in srtp_get_stream_roc); state=%s" % self.state)
 
@@ -176,12 +154,10 @@ cdef class RTPTransport:
             transport = self._obj
             if transport == NULL or self.state in ("NULL", "INVALID"):
                 raise SIPCoreError("RTPTransport._get_info called on a closed transport (state=%s)" % self.state)
-            if self._srtp_streams_dangling and self.state != "INIT":
+            if self._srtp_streams_dangling:
                 # Re-check under the lock: set_INIT() may have flipped
                 # this on a different greenlet while we were waiting
-                # for the lock acquire. See the comment on the
-                # corresponding pre-lock check above for why INIT is
-                # allowed through.
+                # for the lock acquire.
                 raise SIPCoreError("RTPTransport._get_info called after media_stop but before media_start "
                                    "(SRTP streams[] is dangling); state=%s" % self.state)
 

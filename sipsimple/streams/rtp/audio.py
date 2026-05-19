@@ -82,32 +82,6 @@ class AudioStream(RTPStream):
         with self._lock:
             connection = remote_sdp.media[stream_index].connection or remote_sdp.connection
             if not self._rtp_transport.ice_active and (connection.address != self._remote_rtp_address_sdp or self._remote_rtp_port_sdp != remote_sdp.media[stream_index].port):
-                # The remote endpoint has moved (port and/or address change).
-                # We have to rebuild AudioTransport because pjmedia binds the
-                # remote at media_start time and has no in-place
-                # "attach a new peer" API.
-                #
-                # Ordering, with state of the underlying RTPTransport in []:
-                #
-                #   [ESTABLISHED]
-                #     self._transport.stop()              # -> media_stop, set_INIT
-                #   [INIT, _srtp_streams_dangling=1]
-                #     AudioTransport(self._rtp_transport, remote_sdp, ...)
-                #         -> RTPTransport._get_info(): allowed in INIT
-                #            (see _core.mediatransport.pxi _get_info — relies
-                #            on the UAF fix from
-                #            deps/patches/22_srtp_transport_get_info_uaf.patch)
-                #         -> self.transport.set_REMOTE(local_sdp, remote_sdp, idx)
-                #   [REMOTE]
-                #     self._transport.start(local_sdp, remote_sdp, idx)
-                #         -> self.transport.set_ESTABLISHED(...)
-                #         -> media_start, _srtp_streams_dangling=0
-                #   [ESTABLISHED]
-                #
-                # Older versions of this method called AudioTransport() right
-                # after stop() without the C-level UAF patch, which silently
-                # failed inside _get_info and produced a misleading
-                # "Could not generate base SDP (PJ_EAFNOTSUP)" downstream.
                 settings = SIPSimpleSettings()
                 if self._audio_rec is not None:
                     self.bridge.remove(self._audio_rec)
