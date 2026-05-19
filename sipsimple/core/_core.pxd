@@ -126,6 +126,7 @@ cdef extern from "pjlib.h":
     char *pj_sockaddr_print(pj_sockaddr *addr, char *buf, int size, unsigned int flags) nogil
     int pj_sockaddr_has_addr(pj_sockaddr *addr) nogil
     int pj_sockaddr_init(int af, pj_sockaddr *addr, pj_str_t *cp, unsigned int port) nogil
+    unsigned int pj_sockaddr_get_len(pj_sockaddr *addr) nogil
     int pj_inet_pton(int af, pj_str_t *src, void *dst) nogil
 
     # dns
@@ -734,6 +735,7 @@ cdef extern from "pjmedia.h":
     int pjmedia_transport_media_start(pjmedia_transport *tp, pj_pool_t *tmp_pool, pjmedia_sdp_session *sdp_local,
                                       pjmedia_sdp_session *sdp_remote, unsigned int media_index) nogil
     int pjmedia_transport_media_stop(pjmedia_transport *tp) nogil
+    int pjmedia_transport_rebind_remote_peer(pjmedia_transport *tp, pj_sockaddr *rem_addr, pj_sockaddr *rem_rtcp, unsigned int addr_len) nogil
     int pjmedia_endpt_create_sdp(pjmedia_endpt *endpt, pj_pool_t *pool, unsigned int stream_cnt,
                                  pjmedia_sock_info *sock_info, pjmedia_sdp_session **p_sdp) nogil
     int pjmedia_endpt_create_base_sdp(pjmedia_endpt *endpt, pj_pool_t *pool, pj_str_ptr_const sess_name,

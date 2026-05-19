@@ -568,6 +568,108 @@ cdef class RTPTransport:
             with nogil:
                 pj_mutex_unlock(lock)
 
+    def rebind_remote_peer(self, BaseSDPSession remote_sdp, int sdp_index):
+        """Update the underlying pjmedia transport's remote RTP/RTCP peer
+        addresses in place from a new remote SDP, without going through
+        media_stop / media_start. SRTP keying, ROC counters and any Sylk
+        AEAD wrapper state are preserved.
+
+        Used by AudioStream.update() in sipsimple/streams/rtp/audio.py
+        when an incoming re-INVITE renumbers the peer's media port.
+        Without this hook the old codepath teared down the AudioTransport
+        and rebuilt it, which failed with "Could not generate base SDP
+        (PJ_EAFNOTSUP)" because the new AudioTransport's _get_info read
+        sock_info from an SRTP wrapper whose member transport had just
+        been stopped.
+
+        The C-level rebind is implemented in pjmedia/include/pjmedia/
+        transport.h:pjmedia_transport_rebind_remote_peer, documented by
+        deps/patches/27_pjmedia_rebind_remote_peer.patch. It is just a
+        second pjmedia_transport_attach2() with NULL callbacks; SRTP's
+        attach2 explicitly skips callback rebinding in that case and
+        the new addresses propagate down to the UDP layer.
+        """
+        cdef int status
+        cdef int af
+        cdef int port
+        cdef int rtcp_port = 0
+        cdef bytes addr_bytes
+        cdef pj_str_t addr_str
+        cdef pj_sockaddr rem_rtp
+        cdef pj_sockaddr rem_rtcp
+        cdef pj_sockaddr *rem_rtcp_ptr
+        cdef pjmedia_transport *transport
+        cdef pj_mutex_t *lock = self._lock
+        cdef unsigned int addr_len
+
+        _get_ua()
+
+        if remote_sdp is None:
+            raise SIPCoreError("remote_sdp argument cannot be None")
+        if sdp_index < 0 or sdp_index >= len(remote_sdp.media):
+            raise SIPCoreError("sdp_index out of range")
+
+        media = remote_sdp.media[sdp_index]
+        connection = media.connection or remote_sdp.connection
+        if connection is None:
+            raise SIPCoreError("remote SDP has no connection address")
+
+        addr_bytes = connection.address
+        if b':' in addr_bytes:
+            af = pj_AF_INET6()
+        else:
+            af = pj_AF_INET()
+        _str_to_pj_str(addr_bytes, &addr_str)
+        port = media.port
+
+        with nogil:
+            status = pj_sockaddr_init(af, &rem_rtp, &addr_str, port)
+        if status != 0:
+            raise PJSIPError("Could not parse remote RTP address", status)
+        addr_len = pj_sockaddr_get_len(&rem_rtp)
+
+        # If the peer included a=rtcp:<port>, honour it; otherwise the
+        # C helper derives port+1.
+        rem_rtcp_ptr = NULL
+        for attr in media.attributes:
+            if attr.name == b'rtcp':
+                try:
+                    parts = attr.value.split()
+                    rtcp_port = int(parts[0])
+                    if len(parts) >= 4:
+                        # "<port> IN IP4 <addr>" form
+                        rtcp_addr_bytes = parts[3]
+                    else:
+                        rtcp_addr_bytes = addr_bytes
+                    if b':' in rtcp_addr_bytes:
+                        af = pj_AF_INET6()
+                    else:
+                        af = pj_AF_INET()
+                    _str_to_pj_str(rtcp_addr_bytes, &addr_str)
+                    with nogil:
+                        status = pj_sockaddr_init(af, &rem_rtcp, &addr_str, rtcp_port)
+                    if status == 0:
+                        rem_rtcp_ptr = &rem_rtcp
+                except (ValueError, IndexError):
+                    pass
+                break
+
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire RTPTransport lock", status)
+        try:
+            transport = self._obj
+            if transport == NULL or self.state in ("NULL", "INVALID"):
+                raise SIPCoreError("RTPTransport.rebind_remote_peer called on a closed transport (state=%s)" % self.state)
+            with nogil:
+                status = pjmedia_transport_rebind_remote_peer(transport, &rem_rtp, rem_rtcp_ptr, addr_len)
+            if status != 0:
+                raise PJSIPError("Could not rebind remote peer", status)
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
     def set_aead_keys(self, bytes send_key, bytes send_salt,
                             bytes recv_key, bytes recv_salt,
                             int key_id=1, int video_prefix=0):

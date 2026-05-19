@@ -5,7 +5,7 @@ from application.notification import NotificationData
 from zope.interface import implementer
 
 from sipsimple.configuration.settings import SIPSimpleSettings
-from sipsimple.core import VideoTransport
+from sipsimple.core import SIPCoreError, VideoTransport
 from sipsimple.streams import InvalidStreamError
 from sipsimple.streams.rtp import RTPStream
 from sipsimple.threading import call_in_thread, run_in_twisted_thread
@@ -76,12 +76,46 @@ class VideoStream(RTPStream):
 
     def update(self, local_sdp, remote_sdp, stream_index):
         with self._lock:
+            connection = remote_sdp.media[stream_index].connection or remote_sdp.connection
+            port_or_addr_changed = (
+                not self._rtp_transport.ice_active and
+                (connection.address != self._remote_rtp_address_sdp or
+                 self._remote_rtp_port_sdp != remote_sdp.media[stream_index].port)
+            )
+            old_remote = (self._remote_rtp_address_sdp, self._remote_rtp_port_sdp)
+            if port_or_addr_changed:
+                # Same in-place rebind as AudioStream.update() — see
+                # sipsimple/streams/rtp/audio.py and
+                # deps/patches/27_pjmedia_rebind_remote_peer.patch.
+                # Without this, a re-INVITE that renumbers the peer's
+                # video port silently keeps RTP flowing to the old
+                # destination because pjmedia's UDP transport stores
+                # the remote address from the initial attach.
+                try:
+                    self._rtp_transport.rebind_remote_peer(remote_sdp, stream_index)
+                except SIPCoreError as e:
+                    self._failure_reason = e.args[0] if e.args else str(e)
+                    self.state = "ENDED"
+                    self.notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context='update', reason=self._failure_reason))
+                    return
             new_direction = local_sdp.media[stream_index].direction
             self._check_hold(new_direction.decode(), False)
             self._transport.update_direction(new_direction)
             self._save_remote_sdp_rtp_info(remote_sdp, stream_index)
             self._transport.update_sdp(local_sdp, remote_sdp, stream_index)
             self._hold_request = None
+            if port_or_addr_changed:
+                # Surface the rebind in any RTP log (Blink's RTP Log
+                # window listens for RTPStreamDidChangeRTPParameters).
+                new_remote = (connection.address, remote_sdp.media[stream_index].port)
+                self.notification_center.post_notification(
+                    'RTPStreamDidChangeRTPParameters', sender=self,
+                    data=NotificationData(
+                        change='remote_peer_rebind',
+                        old_remote_address=old_remote[0],
+                        old_remote_port=old_remote[1],
+                        new_remote_address=new_remote[0],
+                        new_remote_port=new_remote[1]))
 
     def deactivate(self):
         with self._lock:
