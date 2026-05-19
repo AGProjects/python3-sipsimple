@@ -25,11 +25,18 @@ PJ_VERSION = pj_get_version()
 PJ_SVN_REVISION = int(PJ_SVN_REV)
 CORE_REVISION = 212
 
+# Local build counter. CORE_REVISION is the semantic SDK API revision
+# and must match required_revision in sipsimple/core/__init__.py — do
+# NOT change it for local rebuilds. Bump CORE_BUILD instead each time
+# you cut a new _core.so so the runtime banner ("core version 212.N")
+# proves the new code is loaded.
+CORE_BUILD = 2
+
 CYTHON_VERSION = cython.__version__
 
 # exports
 
-__all__ = ["PJ_VERSION", "PJ_SVN_REVISION", "CORE_REVISION", "CYTHON_VERSION",
+__all__ = ["PJ_VERSION", "PJ_SVN_REVISION", "CORE_REVISION", "CORE_BUILD", "CYTHON_VERSION",
            "SIPCoreError", "PJSIPError", "PJSIPTLSError", "SIPCoreInvalidStateError",
            "AudioMixer", "ToneGenerator", "RecordingWaveFile", "WaveFile", "MixerPort",
            "VideoCamera", "FrameBufferVideoRenderer",
