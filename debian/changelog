@@ -1,14 +1,15 @@
 python3-sipsimple (5.4.0) unstable; urgency=medium
 
-  * Make VP8 and VP9 video compatible with webrtc end-points
-  * Implement zRTP over insertable-streams/frame encryption over WebRTC-SFU
+  * Added G.729 audio codec
   * Added handling for in-dialog SIP Messages for zRTP key exchange with Sylk WebRTC
+  * Added signal level retriever from audio mixer slots
+  * Added video bandwidth negotiation in real-time
+  * Added zRTP over insertable-streams/frame encryption over WebRTC-SFU
+  * Make VP8 and VP9 video compatible with webrtc end-points
   * Allow sessions to start as long as at least one stream initialized
-  * Offer only AES_CM_128_HMAC_SHA1_80 for SDES negotiation for Janus interoperability
+  * Offer only AES_CM_128_HMAC_SHA1_80 SDES negotiation for Janus interoperability
   * Survive re-negotating new RTP ports
   * Improve zRTP oportunistic encryption to fall back to SDES, if available
-  * Added G.729 audio codec
-  * Add video bandwidth negotiation in real-time
   * Fix PJSIP crash on Mac when wake up from sleep
   * Fix GIL locking issues inside core
   * Fix core msg parsing crashes
