@@ -518,6 +518,7 @@ cdef extern from "pjmedia.h":
     int pjmedia_conf_disconnect_port(pjmedia_conf *conf, unsigned int src_slot, unsigned int sink_slot) nogil
     int pjmedia_conf_adjust_rx_level(pjmedia_conf *conf, unsigned slot, int adj_level) nogil
     int pjmedia_conf_adjust_tx_level(pjmedia_conf *conf, unsigned slot, int adj_level) nogil
+    int pjmedia_conf_get_signal_level(pjmedia_conf *conf, unsigned slot, unsigned *tx_level, unsigned *rx_level) nogil
 
     # video devices
     enum pjmedia_vid_dev_cap:

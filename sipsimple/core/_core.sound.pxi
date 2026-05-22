@@ -272,6 +272,47 @@ cdef class AudioMixer:
             with nogil:
                 pj_mutex_unlock(lock)
 
+    def get_signal_level(self, int slot):
+        """Return (tx_level, rx_level) for the given conference bridge slot.
+
+        Both values are pjmedia short-window peak levels in the range 0..255.
+
+        rx_level is the loudness of audio coming *from* the slot *into* the
+        conference bridge (i.e. how loud this participant is speaking).
+        tx_level is the loudness of audio going *from* the bridge *to* the
+        slot (i.e. what the participant is currently hearing).
+
+        Raises ValueError if `slot` is negative and PJSIPError if the
+        underlying pjmedia call fails (for example because the slot is
+        not currently registered with the bridge).
+        """
+        cdef int status
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjmedia_conf *conf_bridge
+        cdef unsigned tx_level = 0
+        cdef unsigned rx_level = 0
+        cdef PJSIPUA ua
+
+        ua = _get_ua()
+
+        if slot < 0:
+            raise ValueError("slot argument cannot be negative")
+
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            conf_bridge = self._obj
+            with nogil:
+                status = pjmedia_conf_get_signal_level(conf_bridge, slot, &tx_level, &rx_level)
+            if status != 0:
+                raise PJSIPError("Could not get signal level for slot %d" % slot, status)
+            return (int(tx_level), int(rx_level))
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
     def reset_ec(self):
         cdef int status
         cdef pj_mutex_t *lock = self._lock

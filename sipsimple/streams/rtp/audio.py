@@ -55,6 +55,21 @@ class AudioStream(RTPStream):
     def recorder(self):
         return self._audio_rec
 
+    @property
+    def signal_level(self):
+        """Return (tx_level, rx_level) for this stream as a tuple of ints in
+        the range 0..255, or (0, 0) if the stream is not currently attached
+        to a conference bridge slot. rx_level is how loud audio is arriving
+        from the remote peer; tx_level is how loud audio is being sent to it.
+        """
+        transport = self._transport
+        if transport is None or transport.slot is None:
+            return (0, 0)
+        try:
+            return self.mixer.get_signal_level(transport.slot)
+        except Exception:
+            return (0, 0)
+
     def start(self, local_sdp, remote_sdp, stream_index):
         with self._lock:
             if self.state != "INITIALIZED":
