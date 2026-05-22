@@ -81,7 +81,12 @@ The application sees only:
 …and only if it subscribes. Apps that don't care see nothing.
 """
 
+import hashlib
 import json
+import os
+import sqlite3
+import threading
+import time
 import uuid
 from collections import namedtuple
 
@@ -100,9 +105,19 @@ except ImportError:
 
 # --- Wire constants --------------------------------------------------------
 
-SYLK_ZRTP_VERSION = 1
+# Highest wire version we speak. v1 = original protocol (no continuity).
+# v2 adds an rs_id field to probe/accept payloads carrying the SHA-256 prefix
+# of a retained per-peer secret (RFC 6189-style continuity). v1 peers stay
+# interoperable — when either side advertises v=1 we fall back to the v1
+# derivation (no rs1 mix), and we don't try to read or store rs1.
+SYLK_ZRTP_VERSION = 2
 SYLK_ZRTP_CONTENT_TYPE = 'application/sylk-zrtp-negotiation'
 SYLK_ZRTP_SUITES = ('AES-128-GCM',)   # only this for now; comma-list when adding more
+
+# Length of rs_id (the hex-encoded SHA-256 prefix of rs1). 16 hex chars = 8
+# bytes. Long enough that random collisions are negligible; short enough to
+# keep the on-wire payload compact.
+SYLK_ZRTP_RS_ID_HEX_LEN = 16
 
 # SIP header that advertises support. Format documented in the module
 # docstring; both Sylk Mobile (CallZrtp.js) and Blink/sip-session3 use
@@ -205,6 +220,166 @@ def _hkdf(ikm, salt, info, length):
                 info=info.encode('utf-8')).derive(ikm)
 
 
+# --- Retained-secret continuity store --------------------------------------
+#
+# Per-peer 32-byte secret persisted across calls so a MitM on call N who
+# completes the X25519 exchange but doesn't hold the stored rs1 produces
+# keys that disagree with the legitimate peer's. The HKDF salt becomes
+# rs1 (instead of 32 zero bytes) when both ends prove they hold the same
+# secret via rs_id (SHA-256(rs1) prefix exchanged in the probe / accept).
+#
+# Storage lives inside the same SQLite file libzrtpcpp opens for its
+# RFC 6189 ZID cache (engine.zrtp_cache). We add a sylk_zrtp_secrets
+# table whose name doesn't collide with anything libzrtpcpp creates.
+#
+# rs1 is seeded only after explicit user SAS verification on the first
+# call (app calls confirm_sas_and_seed_rs1 on the session). On subsequent
+# continuity-verified calls rs1 is rotated automatically on key-active.
+
+_RS_LEN = 32  # bytes
+
+
+class SylkZrtpSecretStore(object):
+    """SQLite-backed map: peer_aor -> (rs1, rotated_at).
+
+    One module-level instance, lazily opened on first use. Thread-safe via
+    a single lock around the connection so the per-call threads can hammer
+    it concurrently. The DB file path is taken from
+    sipsimple.application.SIPApplication().engine.zrtp_cache — same file
+    libzrtpcpp uses for its RFC 6189 ZID cache. Separate table, no schema
+    overlap.
+    """
+
+    _SCHEMA = (
+        "CREATE TABLE IF NOT EXISTS sylk_zrtp_secrets ("
+        "  peer_aor TEXT PRIMARY KEY,"
+        "  rs1 BLOB NOT NULL,"
+        "  rotated_at INTEGER NOT NULL"
+        ")"
+    )
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._conn = None
+
+    def _ensure_open(self):
+        if self._conn is not None:
+            return self._conn
+        try:
+            from sipsimple.application import SIPApplication
+            engine = SIPApplication().engine
+            path = engine.zrtp_cache
+            if isinstance(path, bytes):
+                path = path.decode('utf-8', errors='replace')
+        except Exception as e:
+            log.warning('[sylk-zrtp] secret store: cannot resolve zrtp_cache path: %s' % e)
+            return None
+        if not path:
+            log.warning('[sylk-zrtp] secret store: empty zrtp_cache path')
+            return None
+        try:
+            d = os.path.dirname(path)
+            if d and not os.path.exists(d):
+                os.makedirs(d)
+            self._conn = sqlite3.connect(path, check_same_thread=False)
+            self._conn.execute(self._SCHEMA)
+            self._conn.commit()
+        except Exception as e:
+            log.warning('[sylk-zrtp] secret store: cannot open %s: %s' % (path, e))
+            self._conn = None
+        return self._conn
+
+    def get(self, peer_aor):
+        """Return the stored 32-byte rs1 for peer_aor, or None."""
+        if not peer_aor:
+            return None
+        with self._lock:
+            conn = self._ensure_open()
+            if conn is None:
+                return None
+            try:
+                row = conn.execute(
+                    "SELECT rs1 FROM sylk_zrtp_secrets WHERE peer_aor = ?",
+                    (peer_aor,)).fetchone()
+            except Exception as e:
+                log.warning('[sylk-zrtp] secret store get(%s) failed: %s' % (peer_aor, e))
+                return None
+        if row is None:
+            return None
+        rs1 = row[0]
+        if isinstance(rs1, (bytes, bytearray)) and len(rs1) == _RS_LEN:
+            return bytes(rs1)
+        return None
+
+    def put(self, peer_aor, rs1):
+        """Store/replace rs1 for peer_aor. rs1 must be exactly 32 bytes."""
+        if not peer_aor or not isinstance(rs1, (bytes, bytearray)) or len(rs1) != _RS_LEN:
+            return False
+        with self._lock:
+            conn = self._ensure_open()
+            if conn is None:
+                return False
+            try:
+                conn.execute(
+                    "INSERT OR REPLACE INTO sylk_zrtp_secrets "
+                    "(peer_aor, rs1, rotated_at) VALUES (?, ?, ?)",
+                    (peer_aor, bytes(rs1), int(time.time())))
+                conn.commit()
+                return True
+            except Exception as e:
+                log.warning('[sylk-zrtp] secret store put(%s) failed: %s' % (peer_aor, e))
+                return False
+
+    def delete(self, peer_aor):
+        """Forget the stored rs1 for peer_aor (e.g. user chose Continue past
+        a mismatch alarm, or explicitly cleared the binding)."""
+        if not peer_aor:
+            return False
+        with self._lock:
+            conn = self._ensure_open()
+            if conn is None:
+                return False
+            try:
+                conn.execute(
+                    "DELETE FROM sylk_zrtp_secrets WHERE peer_aor = ?",
+                    (peer_aor,))
+                conn.commit()
+                return True
+            except Exception as e:
+                log.warning('[sylk-zrtp] secret store delete(%s) failed: %s' % (peer_aor, e))
+                return False
+
+
+_secret_store = SylkZrtpSecretStore()
+
+
+def _rs_id_hex(rs1):
+    """rs_id = first 8 bytes of SHA-256(rs1), hex-encoded. 16 hex chars."""
+    if not isinstance(rs1, (bytes, bytearray)) or len(rs1) != _RS_LEN:
+        return None
+    return hashlib.sha256(bytes(rs1)).digest()[:8].hex()
+
+
+def _peer_aor_from_session(session):
+    """Best-effort canonical 'user@host' string for storage keying."""
+    try:
+        rid = getattr(session, 'remote_identity', None)
+        uri = getattr(rid, 'uri', None) if rid is not None else None
+        if uri is None:
+            return None
+        user = getattr(uri, 'user', None)
+        host = getattr(uri, 'host', None)
+        if user and host:
+            if isinstance(user, bytes):
+                user = user.decode('utf-8', errors='replace')
+            if isinstance(host, bytes):
+                host = host.decode('utf-8', errors='replace')
+            return '%s@%s' % (user, host)
+        return str(uri)
+    except Exception:
+        return None
+
+
 # --- Per-codec unencrypted prefix -----------------------------------------
 
 def _video_prefix_for_codec(codec):
@@ -290,6 +465,44 @@ class SylkZRTPSession(object):
         self.sas_emojis = None
         self.state = 'idle'
         self._destroyed = False
+        # ---- v2 continuity ---------------------------------------------
+        # Negotiated wire version (1 or 2). Pinned to peer's version at
+        # the moment we see their first payload. v1 means no rs1 mix.
+        self.negotiated_version = SYLK_ZRTP_VERSION
+        # The peer AOR string used to key the rs1 store.
+        self.peer_aor = _peer_aor_from_session(session)
+        # rs1 we held for this peer BEFORE the call started. Used to
+        # compute our outgoing rs_id_hex, and to mix into HKDF if the
+        # peer's rs_id matches its hash.
+        self.local_rs1 = _secret_store.get(self.peer_aor) if self.peer_aor else None
+        self.local_rs_id_hex = _rs_id_hex(self.local_rs1) if self.local_rs1 else None
+        # rs_id seen on the wire from the peer (set in handle_incoming
+        # before _derive runs).
+        self.peer_rs_id_hex = None
+        # One of: 'first-time' (no rs1 stored on either side),
+        #         'verified' (both sides held matching rs1 → mixed),
+        #         'mismatch' (both sides held rs1 but differed →
+        #             current call did NOT mix; app should alarm + ask
+        #             user before rotating),
+        #         'one-sided-local' (we had rs1, peer didn't — they
+        #             reinstalled or lost cache),
+        #         'one-sided-peer' (peer had rs1, we didn't).
+        self.continuity_state = 'first-time'
+        # True iff this call's _derive actually mixed rs1 into HKDF.
+        # Drives whether next_rs1 is automatically rotated on key-active
+        # vs requiring an explicit SAS-Confirm to seed.
+        self._mixed_rs1 = False
+
+    def _post(self, **kw):
+        """Wrap _post_state with the per-session metadata every observer
+        wants on every state change: the negotiated wire version, the
+        continuity decision, and our role. Helps consumer apps log a
+        clear "v2, continuity=verified" trail without each one re-deriving
+        it from the session."""
+        kw.setdefault('protocol_version', self.negotiated_version)
+        kw.setdefault('continuity_state', self.continuity_state)
+        kw.setdefault('role', self.role)
+        _post_state(self.session, **kw)
 
     @property
     def sas(self):
@@ -305,7 +518,11 @@ class SylkZRTPSession(object):
         if self._destroyed or self.state != 'idle':
             return
         self.state = 'probing'
-        _post_state(self.session, state='probing', role=self.role)
+        self._post(state='probing', role=self.role)
+        log.info('[sylk-zrtp] caller call %s: starting probe '
+                 'local_version=%d peer_aor=%s rs1_stored=%s'
+                 % (self.call_id, SYLK_ZRTP_VERSION,
+                    self.peer_aor, 'yes' if self.local_rs1 else 'no'))
         payload = {
             'v': SYLK_ZRTP_VERSION,
             'type': 'probe',
@@ -313,6 +530,8 @@ class SylkZRTPSession(object):
             'ephem_pub_hex': self.ephem_pub_bytes.hex(),
             'suites': list(SYLK_ZRTP_SUITES),
         }
+        if self.local_rs_id_hex:
+            payload['rs_id_hex'] = self.local_rs_id_hex
         self._send(payload, label='probe')
 
     # ---- inbound dispatch -------------------------------------------
@@ -323,12 +542,25 @@ class SylkZRTPSession(object):
             return
         if not isinstance(payload, dict):
             return
-        if payload.get('v') != SYLK_ZRTP_VERSION:
+        peer_v = payload.get('v')
+        # Accept any version <= ours; pin to the minimum so a v1 peer keeps
+        # v1 derivation semantics (no rs1 mix) even if we'd otherwise speak v2.
+        if not isinstance(peer_v, int) or peer_v < 1 or peer_v > SYLK_ZRTP_VERSION:
             return
+        self.negotiated_version = min(peer_v, SYLK_ZRTP_VERSION)
         pcid = payload.get('call_id')
-        if pcid and pcid != self.call_id:
-            return  # forked account-message for another device's call
+        if not pcid or pcid != self.call_id:
+            return  # missing or wrong call_id — drop (hardening: was 'pcid and ...')
         ty = payload.get('type')
+        # Stash the peer's rs_id (if any) before _derive runs. Only meaningful
+        # on probe and accept; recv_ready/sender_ready don't carry it.
+        if ty in ('probe', 'accept') and self.negotiated_version >= 2:
+            rs_id = payload.get('rs_id_hex')
+            if isinstance(rs_id, str) and len(rs_id) == SYLK_ZRTP_RS_ID_HEX_LEN \
+                    and all(c in '0123456789abcdefABCDEF' for c in rs_id):
+                self.peer_rs_id_hex = rs_id.lower()
+            else:
+                self.peer_rs_id_hex = None
         try:
             if ty == 'probe':
                 return self._on_probe(payload)
@@ -340,42 +572,56 @@ class SylkZRTPSession(object):
                 return self._on_sender_ready(payload)
         except Exception as e:
             self.state = 'failed'
-            _post_state(self.session, state='failed', role=self.role, error=str(e))
+            self._post(state='failed', role=self.role, error=str(e))
 
     def _on_probe(self, payload):
         if not payload.get('ephem_pub_hex'):
             return
         self.peer_ephem_pub = bytes.fromhex(payload['ephem_pub_hex'])
+        if len(self.peer_ephem_pub) != 32:
+            self.state = 'failed'
+            self._post(state='failed', role=self.role,
+                        error='peer ephem_pub_hex decoded to %d bytes' % len(self.peer_ephem_pub))
+            return
         self._derive()
         reply = {
-            'v': SYLK_ZRTP_VERSION,
+            'v': self.negotiated_version,
             'type': 'accept',
             'call_id': self.call_id,
             'ephem_pub_hex': self.ephem_pub_bytes.hex(),
         }
+        if self.negotiated_version >= 2 and self.local_rs_id_hex:
+            reply['rs_id_hex'] = self.local_rs_id_hex
         self._send(reply, label='accept')
 
     def _on_accept(self, payload):
         if not payload.get('ephem_pub_hex'):
             return
         self.peer_ephem_pub = bytes.fromhex(payload['ephem_pub_hex'])
+        if len(self.peer_ephem_pub) != 32:
+            self.state = 'failed'
+            self._post(state='failed', role=self.role,
+                        error='peer ephem_pub_hex decoded to %d bytes' % len(self.peer_ephem_pub))
+            return
         self._derive()
-        reply = {'v': SYLK_ZRTP_VERSION, 'type': 'recv_ready', 'call_id': self.call_id}
+        reply = {'v': self.negotiated_version, 'type': 'recv_ready', 'call_id': self.call_id}
         self._send(reply, label='recv_ready')
 
     def _on_recv_ready(self, payload):
         # Peer ready to receive. Reply sender_ready and finalize.
-        reply = {'v': SYLK_ZRTP_VERSION, 'type': 'sender_ready', 'call_id': self.call_id}
+        reply = {'v': self.negotiated_version, 'type': 'sender_ready', 'call_id': self.call_id}
         self._send(reply, label='sender_ready')
         self.state = 'key-agreed'
-        _post_state(self.session, state='key-agreed', role=self.role,
-                    sas=self.sas, suite='AES-128-GCM')
+        self._post(state='key-agreed', role=self.role,
+                    sas=self.sas, suite='AES-128-GCM',
+                    continuity_state=self.continuity_state)
         self._finalize_after_install()
 
     def _on_sender_ready(self, payload):
         self.state = 'key-agreed'
-        _post_state(self.session, state='key-agreed', role=self.role,
-                    sas=self.sas, suite='AES-128-GCM')
+        self._post(state='key-agreed', role=self.role,
+                    sas=self.sas, suite='AES-128-GCM',
+                    continuity_state=self.continuity_state)
         self._finalize_after_install()
 
     def _finalize_after_install(self):
@@ -397,8 +643,24 @@ class SylkZRTPSession(object):
             log.info('[sylk-zrtp] %s call %s: AEAD keys installed on [%s]; transitioning to key-active'
                      % (self.role, self.call_id, installed_summary))
             self.state = 'key-active'
-            _post_state(self.session, state='key-active', role=self.role,
+            # Automatic rs1 rotation on continuity-verified calls. We do
+            # NOT auto-rotate on 'mismatch' or 'one-sided-*' or
+            # 'first-time' — those require an explicit SAS Confirm from
+            # the user (which calls confirm_sas_and_seed_rs1) before any
+            # secret is written. This ensures a MitM cannot complete a
+            # call without rs1 mix and silently get a rotation that the
+            # legitimate peer will mismatch on next time.
+            if self._mixed_rs1 and self.peer_aor:
+                next_rs1 = self._derive_next_rs1()
+                if next_rs1:
+                    if _secret_store.put(self.peer_aor, next_rs1):
+                        self.local_rs1 = next_rs1
+                        self.local_rs_id_hex = _rs_id_hex(next_rs1)
+                        log.info('[sylk-zrtp] %s call %s: rs1 rotated for peer=%s'
+                                 % (self.role, self.call_id, self.peer_aor))
+            self._post(state='key-active', role=self.role,
                         sas=self.sas, suite='AES-128-GCM',
+                        continuity_state=self.continuity_state,
                         installed_streams=installed,
                         failed_streams=failed)
         else:
@@ -412,7 +674,7 @@ class SylkZRTPSession(object):
             log.warning('[sylk-zrtp] %s call %s: AEAD install failed on every stream: %s'
                         % (self.role, self.call_id, failed_summary))
             self.state = 'failed'
-            _post_state(self.session, state='failed', role=self.role,
+            self._post(state='failed', role=self.role,
                         error='AEAD install rejected on every stream: ' + failed_summary,
                         failed_streams=failed)
 
@@ -421,7 +683,37 @@ class SylkZRTPSession(object):
     def _derive(self):
         peer_pub = X25519PublicKey.from_public_bytes(self.peer_ephem_pub)
         self.shared_secret = self.ephem_priv.exchange(peer_pub)
-        salt = b'\x00' * 32
+        # Decide the continuity state and pick the HKDF salt accordingly.
+        # See SylkZrtpSecretStore docstring for the policy.
+        local_id = self.local_rs_id_hex
+        peer_id = self.peer_rs_id_hex
+        if self.negotiated_version < 2 or self.local_rs1 is None:
+            if peer_id and self.local_rs1 is None:
+                self.continuity_state = 'one-sided-peer'
+            elif local_id and not peer_id:
+                self.continuity_state = 'one-sided-local'
+            else:
+                self.continuity_state = 'first-time'
+            salt = b'\x00' * 32
+            self._mixed_rs1 = False
+        else:
+            if peer_id is None:
+                self.continuity_state = 'one-sided-local'
+                salt = b'\x00' * 32
+                self._mixed_rs1 = False
+            elif peer_id == local_id:
+                self.continuity_state = 'verified'
+                salt = self.local_rs1
+                self._mixed_rs1 = True
+            else:
+                # Both sides hold an rs1 but they don't match — could be a
+                # legitimate reinstall, could be MitM. _derive completes
+                # WITHOUT mixing rs1 so the call proceeds, but the app
+                # should surface the alarm and not rotate rs1 unless the
+                # user explicitly confirms by re-verifying SAS.
+                self.continuity_state = 'mismatch'
+                salt = b'\x00' * 32
+                self._mixed_rs1 = False
         k_c2e = _hkdf(self.shared_secret, salt, 'sylk-e2ee/v1/audio-caller-to-callee', 16)
         k_e2c = _hkdf(self.shared_secret, salt, 'sylk-e2ee/v1/audio-callee-to-caller', 16)
         s_c2e = _hkdf(self.shared_secret, salt, 'sylk-e2ee/v1/audio-caller-to-callee-salt', 8)
@@ -435,6 +727,70 @@ class SylkZRTPSession(object):
         }
         self.sas_chars = ''.join(_SAS_CHARS[b & 0x1F] for b in sas_bytes[:4])
         self.sas_emojis = ''.join(_SAS_EMOJIS[b & 0x1F] for b in sas_bytes[4:8])
+        log.info('[sylk-zrtp] %s call %s: derive done, continuity=%s, mixed_rs1=%s, peer_aor=%s'
+                 % (self.role, self.call_id, self.continuity_state, self._mixed_rs1, self.peer_aor))
+
+    def _derive_next_rs1(self):
+        """next_rs1 = HKDF(ss, salt=..., info='sylk-zrtp/v2/next-rs1', 32).
+
+        The salt is the current rs1 ONLY when this call's continuity_state
+        was 'verified' (both sides proved they held the same rs1). On
+        mismatch / first-time / one-sided the two sides held DIFFERENT
+        local rs1 (or none) — so salting with our local rs1 would diverge
+        next_rs1 from the peer's again, perpetuating the mismatch forever.
+        Falling back to zero salt makes both sides converge on the same
+        fresh next_rs1 derived purely from the X25519 output. After a SAS
+        Confirm on both ends, the next call's rs_id_hex matches and
+        continuity engages cleanly.
+        """
+        if self.shared_secret is None:
+            return None
+        salt = self.local_rs1 if (self.continuity_state == 'verified'
+                                  and self.local_rs1) else (b'\x00' * 32)
+        try:
+            return _hkdf(self.shared_secret, salt, 'sylk-zrtp/v2/next-rs1', _RS_LEN)
+        except Exception as e:
+            log.warning('[sylk-zrtp] next_rs1 derivation failed: %s' % e)
+            return None
+
+    def confirm_sas_and_seed_rs1(self):
+        """Called by the app when the user has compared the SAS verbally
+        and tapped Confirm. Seeds the per-peer rs1 in the SQLite store so
+        the next call has continuity to compare against. Safe to call
+        multiple times; safe to call on any continuity_state.
+
+        Also flips continuity_state to 'verified' so the UI / prompt
+        reflects the new trust state immediately — without this the
+        protocol-level decision computed in _derive stays frozen at
+        'mismatch' / 'first-time' / 'one-sided-*' until the next call,
+        and consumer apps keep showing the stale label."""
+        if self.peer_aor is None or self.shared_secret is None:
+            return False
+        next_rs1 = self._derive_next_rs1()
+        if next_rs1 is None:
+            return False
+        ok = _secret_store.put(self.peer_aor, next_rs1)
+        if ok:
+            self.local_rs1 = next_rs1
+            self.local_rs_id_hex = _rs_id_hex(next_rs1)
+            self.continuity_state = 'verified'
+            log.info('[sylk-zrtp] %s call %s: rs1 seeded for peer=%s via SAS Confirm'
+                     % (self.role, self.call_id, self.peer_aor))
+        return ok
+
+    def clear_rs1(self):
+        """Forget the stored rs1 for this peer (e.g. user chose Continue
+        past a mismatch alarm, or explicitly cleared the binding from the
+        contact UI)."""
+        if self.peer_aor is None:
+            return False
+        ok = _secret_store.delete(self.peer_aor)
+        if ok:
+            self.local_rs1 = None
+            self.local_rs_id_hex = None
+            log.info('[sylk-zrtp] %s call %s: rs1 cleared for peer=%s'
+                     % (self.role, self.call_id, self.peer_aor))
+        return ok
 
     # ---- AEAD install (per stream) ----------------------------------
 
@@ -526,7 +882,7 @@ class SylkZRTPSession(object):
         except Exception as e:
             # Most likely: dialog already torn down. Mark failed.
             self.state = 'failed'
-            _post_state(self.session, state='failed', role=self.role,
+            self._post(state='failed', role=self.role,
                         error='send %s failed: %s' % (label, e))
 
     # ---- lifecycle --------------------------------------------------
