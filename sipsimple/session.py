@@ -1128,10 +1128,39 @@ class Session(object):
 
         try:
             wait_count = len(self.proposed_streams)
+            failed_init_streams = []
             while wait_count > 0:
-                notification = self._channel.wait()
+                try:
+                    notification = self._channel.wait()
+                except MediaStreamDidNotInitializeError as init_error:
+                    # Don't fail the whole INVITE on a single stream's init
+                    # error. Track the failed stream and keep waiting for
+                    # the rest. If every stream eventually fails, the
+                    # session is failed below; otherwise we drop the
+                    # broken stream from the offer and continue.
+                    failed_init_streams.append((init_error.stream, init_error.data))
+                    wait_count -= 1
+                    continue
                 if notification.name == 'MediaStreamDidInitialize':
                     wait_count -= 1
+            if failed_init_streams:
+                if len(failed_init_streams) == len(self.proposed_streams):
+                    stream, data = failed_init_streams[0]
+                    raise MediaStreamDidNotInitializeError(stream, data)
+                for failed_stream, _ in failed_init_streams:
+                    notification_center.remove_observer(self, sender=failed_stream)
+                    try:
+                        self.proposed_streams.remove(failed_stream)
+                    except ValueError:
+                        pass
+                    try:
+                        failed_stream.deactivate()
+                    except Exception:
+                        pass
+                    try:
+                        failed_stream.end()
+                    except Exception:
+                        pass
             try:
                 contact_uri = self.account.contact[PublicGRUUIfAvailable, self.route]
                 local_ip = host.outgoing_ip_for(self.route.address)
@@ -1430,10 +1459,38 @@ class Session(object):
         wait_count = len(self.proposed_streams)
 
         try:
+            failed_init_streams = []
             while wait_count > 0:
-                notification = self._channel.wait()
+                try:
+                    notification = self._channel.wait()
+                except MediaStreamDidNotInitializeError as init_error:
+                    # See connect(): a partial stream init failure must
+                    # not tank the whole incoming session. Track the
+                    # failed stream and decide what to do once we've
+                    # heard back from every stream.
+                    failed_init_streams.append((init_error.stream, init_error.data))
+                    wait_count -= 1
+                    continue
                 if notification.name == 'MediaStreamDidInitialize':
                     wait_count -= 1
+            if failed_init_streams:
+                if len(failed_init_streams) == len(self.proposed_streams):
+                    stream, data = failed_init_streams[0]
+                    raise MediaStreamDidNotInitializeError(stream, data)
+                for failed_stream, _ in failed_init_streams:
+                    notification_center.remove_observer(self, sender=failed_stream)
+                    try:
+                        self.proposed_streams.remove(failed_stream)
+                    except ValueError:
+                        pass
+                    try:
+                        failed_stream.deactivate()
+                    except Exception:
+                        pass
+                    try:
+                        failed_stream.end()
+                    except Exception:
+                        pass
 
             remote_sdp = self._invitation.sdp.proposed_remote
             sdp_connection = remote_sdp.connection or next((media.connection for media in remote_sdp.media if media.connection is not None))

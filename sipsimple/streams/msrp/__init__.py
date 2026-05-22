@@ -101,6 +101,38 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
         connection = SDPConnection(local_ip.encode())
         return SDPMediaStream(self.media_type.encode(), uri_path[-1].port or 2855, transport.encode(), connection=connection, formats=[b"*"], attributes=attributes)
 
+    def _annotate_init_failure(self, reason):
+        # Tack the URL we were actually trying to reach onto the failure
+        # string. The bare reason from msrplib/twisted is usually just
+        # an errno ("[Errno 65] No route to host") which gives the
+        # caller — and the notifications / MSRP log windows — no clue
+        # *which* host was unreachable. In the common deployment where
+        # the failure is the configured MSRP relay, surfacing the relay
+        # URL here makes the failure self-explanatory.
+        try:
+            connector = getattr(self, 'msrp_connector', None)
+            target = None
+            target_role = None
+            if isinstance(connector, RelayConnection):
+                relay_settings = getattr(connector, 'relay', None)
+                target_role = 'MSRP relay'
+                if relay_settings is not None:
+                    scheme = 'msrps' if getattr(relay_settings, 'use_tls', False) else 'msrp'
+                    host_part = getattr(relay_settings, 'host', None) or getattr(relay_settings, 'domain', None) or '?'
+                    port_part = getattr(relay_settings, 'port', None) or 2855
+                    target = '%s://%s:%s' % (scheme, host_part, port_part)
+            elif isinstance(connector, (DirectConnector, DirectAcceptor)):
+                scheme = 'msrps' if self.transport == 'tls' else 'msrp'
+                target = '%s://%s' % (scheme, host.default_ip)
+                target_role = 'MSRP %s' % ('acceptor' if isinstance(connector, DirectAcceptor) else 'connector')
+            if target:
+                return '%s (%s: %s)' % (reason, target_role, target)
+            if target_role:
+                return '%s (%s)' % (reason, target_role)
+        except Exception:
+            pass
+        return reason
+
     # The public API (the IMediaStream interface)
 
     # noinspection PyUnusedLocal
