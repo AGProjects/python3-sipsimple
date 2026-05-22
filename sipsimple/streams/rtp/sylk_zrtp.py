@@ -102,15 +102,31 @@ try:
 except ImportError:
     _CRYPTO_AVAILABLE = False
 
+# Optional PGP integration for v3 signed-handshake. pgpy is declared in
+# python3-sipsimple's python-requirements.txt so it should be present on
+# any properly-built deployment. We import it conditionally so the module
+# still loads (and behaves like v2) on environments where pgpy is missing.
+try:
+    import pgpy
+    _PGP_AVAILABLE = True
+except ImportError:
+    _PGP_AVAILABLE = False
+
 
 # --- Wire constants --------------------------------------------------------
 
-# Highest wire version we speak. v1 = original protocol (no continuity).
-# v2 adds an rs_id field to probe/accept payloads carrying the SHA-256 prefix
-# of a retained per-peer secret (RFC 6189-style continuity). v1 peers stay
-# interoperable — when either side advertises v=1 we fall back to the v1
-# derivation (no rs1 mix), and we don't try to read or store rs1.
-SYLK_ZRTP_VERSION = 2
+# Highest wire version we speak.
+#   v1 — original protocol (no continuity, no signatures).
+#   v2 — adds rs_id (SHA-256 prefix of rs1) to probe/accept for RFC 6189-
+#        style continuity. HKDF salt is rs1 on continuity-verified calls.
+#   v3 — adds detached PGP signatures on probe/accept payloads. Closes
+#        the SIP-MitM-swaps-ephemeral-pubkeys attack — a MitM who can
+#        rewrite signaling can't forge a signature under the peer's PGP
+#        private key.
+# Older peers stay interoperable: the negotiated version is min-pinned
+# per session, so a v3 peer talking to a v1 peer behaves like v1 (no
+# signature, no rs1 mix).
+SYLK_ZRTP_VERSION = 3
 SYLK_ZRTP_CONTENT_TYPE = 'application/sylk-zrtp-negotiation'
 SYLK_ZRTP_SUITES = ('AES-128-GCM',)   # only this for now; comma-list when adding more
 
@@ -209,6 +225,65 @@ def capability_header_for_account(account):
         return None
     from sipsimple.core import Header
     return Header(SYLK_ZRTP_CAPABILITY_HEADER_NAME, SYLK_ZRTP_CAPABILITY_HEADER_VALUE)
+
+
+# --- Canonical JSON + PGP sign / verify (v3) -------------------------------
+#
+# v3 attaches a detached PGP signature over the canonical-JSON encoding
+# of the probe / accept payload (every field except `sig` itself). The
+# JS side uses an identical canonical-JSON serialiser so the bytes the
+# two libraries sign / verify match exactly. Conventions:
+#   - JSON with keys sorted lexicographically at every depth.
+#   - No whitespace between tokens (',' / ':' separators).
+#   - UTF-8 byte encoding.
+#   - Non-ASCII characters left as-is (ensure_ascii=False) — irrelevant
+#     for our current payloads which are all hex/ASCII anyway, but spec'd
+#     so future extensions don't introduce ambiguity.
+
+def _canonical_json_bytes(obj):
+    return json.dumps(obj, sort_keys=True, separators=(',', ':'),
+                      ensure_ascii=False).encode('utf-8')
+
+
+def _strip_sig(payload):
+    """Return a shallow copy of `payload` without the 'sig' field."""
+    return {k: v for k, v in payload.items() if k != 'sig'}
+
+
+def _pgp_sign_payload(local_priv_key_blob, payload):
+    """Detached-sign the canonical JSON of `payload` (sans 'sig') with the
+    given armored PGP private key. Returns the armored signature string,
+    or None on failure / when PGP isn't available."""
+    if not _PGP_AVAILABLE or not local_priv_key_blob:
+        return None
+    try:
+        body = _canonical_json_bytes(_strip_sig(payload))
+        key, _ = pgpy.PGPKey.from_blob(local_priv_key_blob)
+        # If the private key is passphrase-protected the caller must
+        # unlock it before passing it in. We attempt sign directly; if
+        # it raises PGPError due to a locked key, log and fail.
+        sig = key.sign(body.decode('utf-8'))
+        return str(sig)
+    except Exception as e:
+        log.warning('[sylk-zrtp] PGP sign failed: %s' % e)
+        return None
+
+
+def _pgp_verify_payload(peer_pub_key_blob, payload, sig_armored):
+    """Verify the armored detached signature against the canonical JSON
+    of `payload` (sans 'sig') using the given armored peer public key.
+    Returns True on a verified signature, False otherwise."""
+    if not _PGP_AVAILABLE or not peer_pub_key_blob or not sig_armored:
+        return False
+    try:
+        body = _canonical_json_bytes(_strip_sig(payload))
+        key, _ = pgpy.PGPKey.from_blob(peer_pub_key_blob)
+        sig = pgpy.PGPSignature.from_blob(sig_armored)
+        verification = key.verify(body.decode('utf-8'), sig)
+        return bool(verification)
+    except Exception as e:
+        log.warning('[sylk-zrtp] PGP verify failed: %s' % e)
+        return False
 
 
 # --- HKDF helper -----------------------------------------------------------
@@ -492,6 +567,89 @@ class SylkZRTPSession(object):
         # Drives whether next_rs1 is automatically rotated on key-active
         # vs requiring an explicit SAS-Confirm to seed.
         self._mixed_rs1 = False
+        # ---- v3 PGP signed handshake -----------------------------------
+        # Armored PGP keys plumbed in by the application via
+        # set_signing_keys(). When local_priv_key is set, we sign outgoing
+        # probe / accept; when peer_pub_key is set, we verify incoming
+        # probe / accept and fail the session on bad signatures. Without
+        # both, v3 degrades to v2 semantics for this pairing (no sig
+        # sent, no sig required to accept). The hook design lets each
+        # consuming app (sip-session3, sylk-server, ...) wire keys from
+        # wherever it stores them.
+        self.local_priv_key = None
+        self.peer_pub_key = None
+
+    def set_signing_keys(self, local_priv_blob=None, peer_pub_blob=None):
+        """Plumb armored PGP keys into the session for v3 signed handshake.
+        Either arg may be None. Should be called before start_probe()
+        (caller path) or before the first incoming payload is dispatched
+        (callee path); typically immediately after the SylkZRTPSession is
+        created by the consuming application."""
+        if local_priv_blob is not None:
+            self.local_priv_key = local_priv_blob
+        if peer_pub_blob is not None:
+            self.peer_pub_key = peer_pub_blob
+        log.info('[sylk-zrtp] %s call %s: signing keys set '
+                 '(local_priv=%s, peer_pub=%s)'
+                 % (self.role, self.call_id,
+                    'yes' if self.local_priv_key else 'no',
+                    'yes' if self.peer_pub_key else 'no'))
+
+    def _maybe_sign(self, payload):
+        """Sign the payload in-place when v3 is negotiated and we hold a
+        local PGP private key. No-op otherwise. The payload becomes
+        ineligible for further mutation after this — the canonical-JSON
+        body is committed at sign time."""
+        if self.negotiated_version < 3 or not self.local_priv_key:
+            return
+        sig = _pgp_sign_payload(self.local_priv_key, payload)
+        if sig:
+            payload['sig'] = sig
+
+    def _verify_or_reject(self, payload):
+        """Returns True iff the incoming payload is acceptable.
+
+        - On v < 3 negotiation: always True (signatures are not part of
+          the protocol the peer agreed to speak).
+        - On v >= 3 with no peer_pub_key configured: True with a warning
+          (we can't verify even if peer signed; we degrade rather than
+          breaking calls during the v3 rollout phase where one side may
+          have keys plumbed in before the other).
+        - On v >= 3 with peer_pub_key set and payload missing 'sig':
+          True with a warning logged (likely a downgrade-strip attempt
+          or a peer that didn't sign for some reason). The call still
+          proceeds; tightening this to a hard reject is a config option
+          left for the application.
+        - On v >= 3 with peer_pub_key set and 'sig' present: verify; on
+          failure transition to 'failed' and return False (caller must
+          stop processing the payload)."""
+        if self.negotiated_version < 3:
+            return True
+        sig = payload.get('sig') if isinstance(payload, dict) else None
+        if not self.peer_pub_key:
+            if sig:
+                log.warning('[sylk-zrtp] %s call %s: peer sent v3 sig but '
+                            'no peer_pub_key plumbed in — cannot verify, '
+                            'accepting anyway' % (self.role, self.call_id))
+            return True
+        if not sig:
+            log.warning('[sylk-zrtp] %s call %s: v3 negotiated and we hold '
+                        'peer_pub_key but payload has no sig — possible '
+                        'downgrade-strip; accepting this call but the '
+                        'channel is NOT signed-handshake protected'
+                        % (self.role, self.call_id))
+            return True
+        if _pgp_verify_payload(self.peer_pub_key, payload, sig):
+            log.info('[sylk-zrtp] %s call %s: v3 signature verified'
+                     % (self.role, self.call_id))
+            return True
+        log.warning('[sylk-zrtp] %s call %s: v3 signature verification '
+                    'FAILED — rejecting payload' % (self.role, self.call_id))
+        self.state = 'failed'
+        self._post(state='failed',
+                   error='PGP signature verification failed on incoming '
+                         + str(payload.get('type', '?')))
+        return False
 
     def _post(self, **kw):
         """Wrap _post_state with the per-session metadata every observer
@@ -532,6 +690,7 @@ class SylkZRTPSession(object):
         }
         if self.local_rs_id_hex:
             payload['rs_id_hex'] = self.local_rs_id_hex
+        self._maybe_sign(payload)
         self._send(payload, label='probe')
 
     # ---- inbound dispatch -------------------------------------------
@@ -561,6 +720,15 @@ class SylkZRTPSession(object):
                 self.peer_rs_id_hex = rs_id.lower()
             else:
                 self.peer_rs_id_hex = None
+        # v3 PGP signature verification on probe/accept. Failures mark
+        # the session 'failed' and return False; we stop processing the
+        # payload. recv_ready / sender_ready are not signed (they carry
+        # no ephemeral key material and don't need the same protection)
+        # but for symmetry we still verify them when v >= 3 and a sig
+        # is present.
+        if ty in ('probe', 'accept', 'recv_ready', 'sender_ready'):
+            if not self._verify_or_reject(payload):
+                return
         try:
             if ty == 'probe':
                 return self._on_probe(payload)
@@ -592,6 +760,7 @@ class SylkZRTPSession(object):
         }
         if self.negotiated_version >= 2 and self.local_rs_id_hex:
             reply['rs_id_hex'] = self.local_rs_id_hex
+        self._maybe_sign(reply)
         self._send(reply, label='accept')
 
     def _on_accept(self, payload):

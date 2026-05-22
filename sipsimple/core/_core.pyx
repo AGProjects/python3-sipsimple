@@ -30,7 +30,7 @@ CORE_REVISION = 212
 # NOT change it for local rebuilds. Bump CORE_BUILD instead each time
 # you cut a new _core.so so the runtime banner ("core version 212.N")
 # proves the new code is loaded.
-CORE_BUILD = 3
+CORE_BUILD = 4
 
 CYTHON_VERSION = cython.__version__
 
