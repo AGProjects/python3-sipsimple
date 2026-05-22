@@ -546,9 +546,11 @@ class SylkZRTPSession(object):
         self.negotiated_version = SYLK_ZRTP_VERSION
         # The peer AOR string used to key the rs1 store.
         self.peer_aor = _peer_aor_from_session(session)
-        # rs1 we held for this peer BEFORE the call started. Used to
-        # compute our outgoing rs_id_hex, and to mix into HKDF if the
-        # peer's rs_id matches its hash.
+        # Initial rs1 lookup is AOR-only (legacy / single-device slot)
+        # because peer_device_id isn't known until the first inbound
+        # payload arrives. _resolve_local_rs1_for_peer_device() re-runs
+        # the lookup using composite key (peer_aor, peer_device_id) once
+        # we learn the device.
         self.local_rs1 = _secret_store.get(self.peer_aor) if self.peer_aor else None
         self.local_rs_id_hex = _rs_id_hex(self.local_rs1) if self.local_rs1 else None
         # rs_id seen on the wire from the peer (set in handle_incoming
@@ -578,6 +580,54 @@ class SylkZRTPSession(object):
         # wherever it stores them.
         self.local_priv_key = None
         self.peer_pub_key = None
+        # ---- v3 device-id keying ---------------------------------------
+        # Our local SIP +sip.instance / settings.instance_id, used to
+        # identify THIS install to the peer and (via the peer's own
+        # device_id) to key rs1 storage. With per-device keying,
+        # different physical devices behind the same SIP AOR no longer
+        # collide on the rs1 slot — fixes the multi-device collapse
+        # problem where A↔B verification gets overwritten by an A↔C call.
+        try:
+            account = getattr(session, 'account', None)
+            sip = getattr(account, 'sip', None) if account is not None else None
+            inst = getattr(sip, 'instance_id', None) if sip is not None else None
+            if isinstance(inst, bytes):
+                inst = inst.decode('ascii', errors='replace')
+            self.local_device_id = inst or None
+        except Exception:
+            self.local_device_id = None
+        self.peer_device_id = None
+
+    def _store_key(self):
+        """Composite SQLite key. Uses peer_aor + '#' + peer_device_id
+        when we know the peer's device, AOR alone otherwise. Different
+        devices behind the same SIP account get separate rs1 slots."""
+        if self.peer_aor and self.peer_device_id:
+            return '%s#%s' % (self.peer_aor, self.peer_device_id)
+        return self.peer_aor
+
+    def _resolve_local_rs1_for_peer_device(self):
+        """Re-resolve local_rs1 from the composite (peer_aor,
+        peer_device_id) slot once peer_device_id is known. Called from
+        handle_incoming on the first probe/accept payload that carries
+        device_id. When the composite slot is empty, drops the legacy
+        AOR-only fallback we loaded at __init__ — that slot belongs to a
+        different peer device and would produce a spurious 'mismatch'
+        continuity state."""
+        if not self.peer_aor or not self.peer_device_id:
+            return
+        composite = self._store_key()
+        rs1 = _secret_store.get(composite)
+        if rs1:
+            self.local_rs1 = rs1
+            self.local_rs_id_hex = _rs_id_hex(rs1)
+            return
+        # No per-device slot stored for this exact peer device. Drop the
+        # legacy AOR-only rs1 to avoid the multi-device collapse where
+        # rs1 from a DIFFERENT peer device gets compared against THIS
+        # peer's lookup.
+        self.local_rs1 = None
+        self.local_rs_id_hex = None
 
     def set_signing_keys(self, local_priv_blob=None, peer_pub_blob=None):
         """Plumb armored PGP keys into the session for v3 signed handshake.
@@ -690,6 +740,8 @@ class SylkZRTPSession(object):
         }
         if self.local_rs_id_hex:
             payload['rs_id_hex'] = self.local_rs_id_hex
+        if self.local_device_id:
+            payload['device_id'] = self.local_device_id
         self._maybe_sign(payload)
         self._send(payload, label='probe')
 
@@ -711,6 +763,13 @@ class SylkZRTPSession(object):
         if not pcid or pcid != self.call_id:
             return  # missing or wrong call_id — drop (hardening: was 'pcid and ...')
         ty = payload.get('type')
+        # Stash peer's device_id BEFORE we touch rs1 — per-device storage
+        # keying needs to happen before the rs_id comparison in _derive.
+        if ty in ('probe', 'accept'):
+            dev = payload.get('device_id')
+            if isinstance(dev, str) and dev:
+                self.peer_device_id = dev
+                self._resolve_local_rs1_for_peer_device()
         # Stash the peer's rs_id (if any) before _derive runs. Only meaningful
         # on probe and accept; recv_ready/sender_ready don't carry it.
         if ty in ('probe', 'accept') and self.negotiated_version >= 2:
@@ -760,6 +819,8 @@ class SylkZRTPSession(object):
         }
         if self.negotiated_version >= 2 and self.local_rs_id_hex:
             reply['rs_id_hex'] = self.local_rs_id_hex
+        if self.local_device_id:
+            reply['device_id'] = self.local_device_id
         self._maybe_sign(reply)
         self._send(reply, label='accept')
 
@@ -822,7 +883,7 @@ class SylkZRTPSession(object):
             if self._mixed_rs1 and self.peer_aor:
                 next_rs1 = self._derive_next_rs1()
                 if next_rs1:
-                    if _secret_store.put(self.peer_aor, next_rs1):
+                    if _secret_store.put(self._store_key(), next_rs1):
                         self.local_rs1 = next_rs1
                         self.local_rs_id_hex = _rs_id_hex(next_rs1)
                         log.info('[sylk-zrtp] %s call %s: rs1 rotated for peer=%s'
@@ -938,13 +999,14 @@ class SylkZRTPSession(object):
         next_rs1 = self._derive_next_rs1()
         if next_rs1 is None:
             return False
-        ok = _secret_store.put(self.peer_aor, next_rs1)
+        ok = _secret_store.put(self._store_key(), next_rs1)
         if ok:
             self.local_rs1 = next_rs1
             self.local_rs_id_hex = _rs_id_hex(next_rs1)
             self.continuity_state = 'verified'
-            log.info('[sylk-zrtp] %s call %s: rs1 seeded for peer=%s via SAS Confirm'
-                     % (self.role, self.call_id, self.peer_aor))
+            log.info('[sylk-zrtp] %s call %s: rs1 seeded for peer=%s device=%s via SAS Confirm'
+                     % (self.role, self.call_id, self.peer_aor,
+                        self.peer_device_id or '<none>'))
         return ok
 
     def clear_rs1(self):
@@ -953,7 +1015,7 @@ class SylkZRTPSession(object):
         contact UI)."""
         if self.peer_aor is None:
             return False
-        ok = _secret_store.delete(self.peer_aor)
+        ok = _secret_store.delete(self._store_key())
         if ok:
             self.local_rs1 = None
             self.local_rs_id_hex = None
