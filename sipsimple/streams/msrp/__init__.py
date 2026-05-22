@@ -169,9 +169,9 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
             self.local_media = self._create_local_media(full_local_path)
         except (CertificateError, CertificateAuthorityError, CertificateExpiredError, CertificateSecurityError, CertificateRevokedError) as e:
             reason = "%s for CN %s issued by %s" % (e.error, e.certificate.subject.CN, e.certificate.issuer.CN)
-            notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason=reason, transport=self.transport, credentials=self.session.account.tls_credentials))
+            notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason=self._annotate_init_failure(reason), transport=self.transport, credentials=self.session.account.tls_credentials))
         except Exception as e:
-            notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason=str(e), transport=self.transport, credentials=self.session.account.tls_credentials))
+            notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason=self._annotate_init_failure(str(e)), transport=self.transport, credentials=self.session.account.tls_credentials))
         else:
             notification_center.post_notification('MediaStreamDidInitialize', sender=self)
         finally:
