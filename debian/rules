@@ -6,6 +6,28 @@ export PYBUILD_NAME = sipsimple
 %:
 	dh $@ --with python3 --buildsystem=pybuild
 
+# Bring deps/pjsip into a buildable state before pybuild compiles the
+# C core. get_dependencies.sh downloads the upstream pjproject tarball,
+# extracts it over deps/pjsip and runs every AG-Projects patch from
+# deps/patches/ (rebind, sylk_aead, codec tweaks, etc.) on top. Without
+# this step _core.so is generated from _core.pxd against unpatched pjsip
+# headers and dlopen fails at runtime with "undefined symbol:
+# pjmedia_transport_rebind_remote_peer" (and similar).
+#
+# Detect "already prepared" by checking for the AG-Projects symbol in
+# pjmedia's transport.h — stronger than a touch-file sentinel, which
+# could be left behind without the patches actually being applied
+# (e.g. after a partial rm -rf deps/pjsip).
+override_dh_auto_configure:
+	@if ! grep -q pjmedia_transport_rebind_remote_peer \
+	        deps/pjsip/pjmedia/include/pjmedia/transport.h 2>/dev/null; then \
+		echo "debian/rules: deps/pjsip is unpatched, running get_dependencies.sh"; \
+		./get_dependencies.sh; \
+	else \
+		echo "debian/rules: deps/pjsip already patched, skipping get_dependencies.sh"; \
+	fi
+	dh_auto_configure
+
 override_dh_auto_test:
 	# Tests require optional dependencies; skip
 
