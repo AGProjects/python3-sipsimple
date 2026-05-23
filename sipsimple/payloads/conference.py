@@ -43,6 +43,7 @@ __all__ = ['namespace',
         'Users',
         'User',
         'UserExtension',
+        'EndpointExtension',
         'AssociatedAors',
         'Roles',
         'Role',
@@ -80,6 +81,8 @@ ConferenceDocument.register_namespace(namespace, prefix=None, schema='conference
 
 # Marker mixins
 class UserExtension(object): pass
+
+class EndpointExtension(object): pass
 
 class ConferenceDescriptionExtension(object): pass
 
@@ -587,6 +590,7 @@ class Endpoint(XMLListElement):
     _xml_namespace = namespace
     _xml_document = ConferenceDocument
     _xml_item_type = Media
+    _xml_extension_type = EndpointExtension
 
     entity = XMLAttribute('entity', type=str, required=True, test_equal=False)
     state = XMLAttribute('state', type=State, required=False, test_equal=False)
