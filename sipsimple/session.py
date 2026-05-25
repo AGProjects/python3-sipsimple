@@ -2949,6 +2949,23 @@ class Session(object):
             else:
                 if audio_stream.encryption.type == 'ZRTP' and audio_stream.encryption.active:
                     stream.encryption.zrtp._enable(audio_stream)
+        # Sylk-ZRTP-over-MESSAGE deferred-install retry. The MESSAGE
+        # handshake can complete before SDP/RTP setup finishes wiring
+        # the stream's _rtp_transport. When that race fires, the
+        # initial AEAD install at sender_ready time raises
+        # RuntimeError('cannot set AEAD keys: stream has no RTP
+        # transport yet') and SylkZRTPSession parks itself in
+        # 'key-agreed' with _install_deferred=True instead of falsely
+        # going to 'failed'. Now that this stream has actually started,
+        # the transport is up — give the session a chance to retry.
+        # retry_install() is idempotent and self-gates on state +
+        # _install_deferred, so calling it on every MediaStreamDidStart
+        # is safe.
+        if self._sylk_zrtp is not None:
+            try:
+                self._sylk_zrtp.retry_install()
+            except Exception:
+                pass
         if self.greenlet is not None:
             self._channel.send(notification)
 

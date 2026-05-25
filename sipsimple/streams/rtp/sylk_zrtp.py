@@ -540,6 +540,13 @@ class SylkZRTPSession(object):
         self.sas_emojis = None
         self.state = 'idle'
         self._destroyed = False
+        # Set to True when _install_aead_keys_on_streams returns with
+        # every failure tagged 'transport-not-ready' — meaning the SDK
+        # MESSAGE handshake completed before the RTP transport finished
+        # initializing. Session._NH_MediaStreamDidStart will then call
+        # retry_install() once the transport is up. Idempotent under
+        # repeated MediaStreamDidStart fires.
+        self._install_deferred = False
         # ---- v2 continuity ---------------------------------------------
         # Negotiated wire version (1 or 2). Pinned to peer's version at
         # the moment we see their first payload. v1 means no rs1 mix.
@@ -781,13 +788,23 @@ class SylkZRTPSession(object):
                 self.peer_rs_id_hex = None
         # v3 PGP signature verification on probe/accept. Failures mark
         # the session 'failed' and return False; we stop processing the
-        # payload. recv_ready / sender_ready are not signed (they carry
-        # no ephemeral key material and don't need the same protection)
-        # but for symmetry we still verify them when v >= 3 and a sig
-        # is present.
-        if ty in ('probe', 'accept', 'recv_ready', 'sender_ready'):
+        # payload. recv_ready / sender_ready are not signed by design
+        # (they carry no ephemeral key material — see _on_accept and
+        # _on_recv_ready, which intentionally do NOT call _maybe_sign on
+        # those replies). For those types we ONLY call _verify_or_reject
+        # when a sig is actually present (peer added one for belt-and-
+        # braces; we'll still reject a bad sig). Without this gate the
+        # "downgrade-strip" warning at _verify_or_reject would fire on
+        # every v3 call, since the design's own unsigned messages would
+        # look like stripped sigs — drowning real downgrade detection
+        # in false positives.
+        if ty in ('probe', 'accept'):
             if not self._verify_or_reject(payload):
                 return
+        elif ty in ('recv_ready', 'sender_ready'):
+            if isinstance(payload, dict) and payload.get('sig'):
+                if not self._verify_or_reject(payload):
+                    return
         try:
             if ty == 'probe':
                 return self._on_probe(payload)
@@ -894,10 +911,35 @@ class SylkZRTPSession(object):
                         installed_streams=installed,
                         failed_streams=failed)
         else:
-            # Every stream rejected the install. The handshake is "done"
-            # (both sides have keys) but media is plain SRTP — the pill
-            # must NOT light up. Drop to 'failed' with the per-stream
-            # errors visible so apps can surface a meaningful message.
+            # No stream actually accepted the keys. Two sub-cases:
+            #
+            # (a) All failures are 'transport-not-ready' — the SDK's
+            #     MESSAGE handshake won the race against SDP/RTP setup.
+            #     This is recoverable: MediaStreamDidStart will fire as
+            #     the streams finish wiring, and Session._NH_MediaStreamDidStart
+            #     will call retry_install() to re-attempt. Stay at
+            #     'key-agreed' so the pill remains off (correctly — we
+            #     don't have AEAD on the wire yet) but the session is
+            #     NOT marked failed and a later install can promote us
+            #     to 'key-active'.
+            #
+            # (b) Permanent failures (no set_aead_keys on stream, codec-
+            #     skipped, other exceptions). Drop to 'failed' so the
+            #     application surfaces it.
+            retryable = [t for t in failed if t[2] == 'transport-not-ready']
+            permanent = [t for t in failed if t[2] != 'transport-not-ready']
+            if retryable and not permanent:
+                self._install_deferred = True
+                deferred_summary = ', '.join(
+                    '%s(codec=%s)' % (typ, codec)
+                    for (typ, codec, _r) in retryable)
+                log.info('[sylk-zrtp] %s call %s: AEAD install deferred — '
+                         'awaiting MediaStreamDidStart for [%s]; staying '
+                         'at key-agreed (pill stays off until retry succeeds)'
+                         % (self.role, self.call_id, deferred_summary))
+                # Keep state == 'key-agreed'; do not _post a 'failed'
+                # state. The retry path posts 'key-active' on success.
+                return
             failed_summary = ', '.join(
                 '%s(codec=%s,reason=%s)' % (typ, codec, reason)
                 for (typ, codec, reason) in failed) or 'no streams'
@@ -1087,15 +1129,72 @@ class SylkZRTPSession(object):
                            key_id=1, video_prefix=vp)
             except Exception as e:
                 reason = '%s: %s' % (type(e).__name__, e)
-                log.warning('[sylk-zrtp] %s call %s: %s stream install rejected (codec=%s, prefix=%d): %s'
-                            % (self.role, self.call_id, stream.type, codec or '?', vp, reason))
-                failed.append((stream.type, codec or '?', reason))
+                # Race detection: stream.set_aead_keys raises RuntimeError
+                # when the SDK's MESSAGE handshake completes before the
+                # RTP transport finishes initializing. This is recoverable
+                # — once MediaStreamDidStart fires the transport will be
+                # present. Tag it so _finalize_after_install can defer the
+                # 'failed' transition and retry_install() can find it.
+                is_transport_race = (
+                    isinstance(e, RuntimeError)
+                    and 'no RTP transport' in str(e))
+                if is_transport_race:
+                    log.info('[sylk-zrtp] %s call %s: %s stream install '
+                             'deferred (RTP transport not ready yet; '
+                             'will retry on MediaStreamDidStart)'
+                             % (self.role, self.call_id, stream.type))
+                    failed.append((stream.type, codec or '?',
+                                   'transport-not-ready'))
+                else:
+                    log.warning('[sylk-zrtp] %s call %s: %s stream install rejected (codec=%s, prefix=%d): %s'
+                                % (self.role, self.call_id, stream.type, codec or '?', vp, reason))
+                    failed.append((stream.type, codec or '?', reason))
                 continue
             log.info('[sylk-zrtp] %s call %s: %s stream install OK (codec=%s, video_prefix=%d, role=%s)'
                      % (self.role, self.call_id, stream.type, codec or '?', vp, self.role))
             installed.append((stream.type, codec or '?', vp))
 
         return installed, failed
+
+    # ---- deferred-install retry -------------------------------------
+
+    def retry_install(self):
+        """Re-attempt AEAD install after a MediaStreamDidStart notification.
+
+        Called by Session._NH_MediaStreamDidStart when the
+        Sylk-ZRTP-over-MESSAGE handshake completed faster than the SDP /
+        RTP transport setup and the initial install attempt got
+        'transport-not-ready' for every stream. By the time
+        MediaStreamDidStart fires the transport is wired, so re-running
+        _finalize_after_install should now succeed and promote us to
+        'key-active'.
+
+        Idempotent and tolerant of being called when there is nothing
+        to do (e.g. when state is already 'key-active' from an earlier
+        retry, or 'failed' from a different cause, or 'key-agreed'
+        without a prior deferral). MediaStreamDidStart fires once per
+        stream per call so this typically runs twice on audio+video
+        calls; the first run usually does the work, the second is a
+        no-op.
+        """
+        if self._destroyed:
+            return
+        if not self._install_deferred:
+            return
+        if self.state != 'key-agreed':
+            return
+        if not self.derived:
+            return
+        log.info('[sylk-zrtp] %s call %s: retry_install — '
+                 'RTP transport ready, re-attempting AEAD install'
+                 % (self.role, self.call_id))
+        # Clear the flag before the call so a re-deferral inside
+        # _finalize_after_install (theoretically possible if the retry
+        # ALSO races, e.g. on a multi-stream call where one stream
+        # started and another hasn't) can re-arm it. The flag is the
+        # only signal _finalize_after_install uses; clearing it is safe.
+        self._install_deferred = False
+        self._finalize_after_install()
 
     # ---- transport --------------------------------------------------
 
