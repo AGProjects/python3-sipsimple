@@ -1724,6 +1724,12 @@ cdef class AudioTransport:
                 raise SIPCoreError("Could not parse SDP for audio session")
             self._stream_info.param.setting.vad = self._vad
             self._stream_info.use_ka = 1
+            # pjsip 2.12 added pjmedia_stream_info::ka_cfg. pjmedia_stream_info_from_sdp()
+            # zeroes the whole struct, which leaves ka_interval=0 -- and stream.c then
+            # treats that as "fire a 12-byte RTP keep-alive before every audio frame",
+            # flooding the wire and breaking interop. Restore the documented pjmedia
+            # defaults (PJMEDIA_STREAM_KA_INTERVAL=5s, START_KA_CNT=2, START_INTERVAL=1000ms).
+            pjmedia_stream_ka_config_default(&self._stream_info.ka_cfg)
             with nogil:
                 status = pjmedia_stream_create(media_endpoint, pool, stream_info_address,
                                                transport, NULL, stream_address)
@@ -2186,6 +2192,9 @@ cdef class VideoTransport:
             if self._stream_info.codec_param == NULL:
                 raise SIPCoreError("Could not parse SDP for video session")
             self._stream_info.use_ka = 1
+            # See audio path above: pjsip 2.12 needs ka_cfg initialised explicitly,
+            # otherwise stream.c fires a keep-alive before every frame.
+            pjmedia_stream_ka_config_default(&self._stream_info.ka_cfg)
             with nogil:
                 status = pjmedia_vid_stream_create(media_endpoint, pool, stream_info, transport, NULL, &stream)
             if status != 0:

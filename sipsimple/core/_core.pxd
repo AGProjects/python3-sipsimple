@@ -572,11 +572,22 @@ cdef extern from "pjmedia.h":
     int pjmedia_vid_dev_refresh() nogil
     int pjmedia_vid_dev_lookup(char_ptr_const drv_name, char_ptr_const dev_name,  int *id)
 
+    # stream keep-alive config (new in pjsip 2.12). Without this,
+    # ka_cfg in pjmedia_stream_info is zero-initialised and stream.c
+    # treats ka_interval == 0 as "fire a KA before every audio
+    # frame", which floods the wire with 12-byte RTP KAs.
+    struct pjmedia_stream_ka_config:
+        unsigned int start_count
+        unsigned int start_interval
+        unsigned int ka_interval
+    void pjmedia_stream_ka_config_default(pjmedia_stream_ka_config *cfg) nogil
+
     # video stream
     struct pjmedia_vid_stream_info:
         pjmedia_vid_codec_param *codec_param
         pjmedia_vid_codec_info codec_info
         int use_ka
+        pjmedia_stream_ka_config ka_cfg
 
     struct pjmedia_vid_stream
     ctypedef pjmedia_vid_stream *pjmedia_vid_stream_ptr_const "const pjmedia_vid_stream *"
@@ -814,6 +825,7 @@ cdef extern from "pjmedia.h":
         pjmedia_codec_param *param
         unsigned int tx_event_pt
         int use_ka
+        pjmedia_stream_ka_config ka_cfg
 
     struct pjmedia_rtcp_stream_stat_loss_type:
         unsigned int burst
