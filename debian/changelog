@@ -1,3 +1,10 @@
+python3-sipsimple (5.4.3) unstable; urgency=medium
+
+  * Implement sylk-zrtp protocol updates from
+    https://github.com/AGProjects/sylk-mobile/blob/master/docs/encryption/zrtp/Readme.md
+
+ -- AG Projects <support@ag-projects.com>  Sat, 30 May 2026 09:00:00 +0200
+
 python3-sipsimple (5.4.0) unstable; urgency=medium
 
   * Added G.729 audio codec
