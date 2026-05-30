@@ -424,6 +424,59 @@ class SylkZrtpSecretStore(object):
                 log.warning('[sylk-zrtp] secret store delete(%s) failed: %s' % (peer_aor, e))
                 return False
 
+    def list_for_aor(self, peer_aor):
+        """Return every (peer_device_id, rs1) tuple stored for peer_aor.
+
+        Iterates rows whose key matches `peer_aor` exactly (legacy single-
+        slot) OR `peer_aor#<device_id>` (per-device composite slots).
+        Used by start_probe to build the rs_id_hex_candidates array so
+        the callee can pick the entry matching its OWN local_device_id
+        — solving the multi-device case where the caller can't know
+        which of the peer's devices will pick up this call at probe-send
+        time. The legacy slot maps to device_id=None in the returned
+        list so the caller still ships it under the top-level rs_id_hex
+        field (handled separately in start_probe).
+
+        Returns a list of (device_id_or_None, rs1_bytes). Empty if no
+        entries or on store-open failure.
+        """
+        if not peer_aor:
+            return []
+        out = []
+        with self._lock:
+            conn = self._ensure_open()
+            if conn is None:
+                return out
+            try:
+                # peer_aor + '#%' matches every composite key for this AOR
+                # AND the exact peer_aor row (legacy slot) is fetched
+                # separately so wildcard escaping isn't needed.
+                exact = conn.execute(
+                    "SELECT rs1 FROM sylk_zrtp_secrets WHERE peer_aor = ?",
+                    (peer_aor,)).fetchone()
+                rows = conn.execute(
+                    "SELECT peer_aor, rs1 FROM sylk_zrtp_secrets WHERE peer_aor LIKE ?",
+                    (peer_aor + '#%',)).fetchall()
+            except Exception as e:
+                log.warning('[sylk-zrtp] secret store list_for_aor(%s) failed: %s'
+                            % (peer_aor, e))
+                return out
+        if exact is not None:
+            rs1 = exact[0]
+            if isinstance(rs1, (bytes, bytearray)) and len(rs1) == _RS_LEN:
+                out.append((None, bytes(rs1)))
+        for key, rs1 in rows:
+            if not isinstance(rs1, (bytes, bytearray)) or len(rs1) != _RS_LEN:
+                continue
+            # key looks like 'peer_aor#device_id'; split on the FIRST '#'.
+            # device_ids in this codebase are hex-only so '#' is safe as
+            # a delimiter, but we still split with maxsplit=1 to be
+            # robust against any AOR shape change later.
+            parts = key.split('#', 1)
+            dev = parts[1] if len(parts) == 2 and parts[1] else None
+            out.append((dev, bytes(rs1)))
+        return out
+
 
 _secret_store = SylkZrtpSecretStore()
 
@@ -749,6 +802,28 @@ class SylkZRTPSession(object):
             payload['rs_id_hex'] = self.local_rs_id_hex
         if self.local_device_id:
             payload['device_id'] = self.local_device_id
+        # Per-device rs_id candidates. The caller can't know which of
+        # the peer's devices will pick up this call at probe-send time
+        # (multiple devices may be registered behind the same AOR), so
+        # we ship the rs_id_hex computed from every per-device rs1 we
+        # have stored for this peer_aor. The callee picks the entry
+        # whose device_id matches its own local_device_id — see
+        # handle_incoming(). This fixes the "caller stored rs1 only in
+        # the per-device slot, so the legacy rs_id_hex field is empty
+        # and the callee sees us as having no continuity" failure mode
+        # that caused asymmetric continuity classification (one side
+        # 'verified', the other 'one-sided-local') and the cascading
+        # mismatch problem described in CallZrtp.js's drawer fix.
+        candidates = []
+        for dev, rs1 in _secret_store.list_for_aor(self.peer_aor):
+            if not dev:
+                continue  # legacy slot already travels in rs_id_hex
+            candidates.append({
+                'device_id': dev,
+                'rs_id_hex': _rs_id_hex(rs1),
+            })
+        if candidates:
+            payload['rs_id_hex_candidates'] = candidates
         self._maybe_sign(payload)
         self._send(payload, label='probe')
 
@@ -779,13 +854,38 @@ class SylkZRTPSession(object):
                 self._resolve_local_rs1_for_peer_device()
         # Stash the peer's rs_id (if any) before _derive runs. Only meaningful
         # on probe and accept; recv_ready/sender_ready don't carry it.
+        #
+        # Resolution order (first match wins):
+        #   1. rs_id_hex_candidates — list of {device_id, rs_id_hex}.
+        #      If our local_device_id appears, use that entry. This is
+        #      the "drawer fix" half of CallZrtp.js's mobile change:
+        #      lets the caller advertise every per-device rs_id it has
+        #      stored for this peer AOR so the callee can pick the one
+        #      keyed to its own device, avoiding the asymmetric-
+        #      classification problem where caller has per-device rs1
+        #      but ships nothing in the legacy slot.
+        #   2. rs_id_hex — the single legacy field. Used when the peer
+        #      didn't send candidates, or none matched our local_device_id.
         if ty in ('probe', 'accept') and self.negotiated_version >= 2:
-            rs_id = payload.get('rs_id_hex')
-            if isinstance(rs_id, str) and len(rs_id) == SYLK_ZRTP_RS_ID_HEX_LEN \
-                    and all(c in '0123456789abcdefABCDEF' for c in rs_id):
-                self.peer_rs_id_hex = rs_id.lower()
-            else:
-                self.peer_rs_id_hex = None
+            resolved = None
+            cands = payload.get('rs_id_hex_candidates')
+            if isinstance(cands, list) and self.local_device_id:
+                for c in cands:
+                    if not isinstance(c, dict):
+                        continue
+                    if c.get('device_id') != self.local_device_id:
+                        continue
+                    rid = c.get('rs_id_hex')
+                    if isinstance(rid, str) and len(rid) == SYLK_ZRTP_RS_ID_HEX_LEN \
+                            and all(ch in '0123456789abcdefABCDEF' for ch in rid):
+                        resolved = rid.lower()
+                        break
+            if resolved is None:
+                rs_id = payload.get('rs_id_hex')
+                if isinstance(rs_id, str) and len(rs_id) == SYLK_ZRTP_RS_ID_HEX_LEN \
+                        and all(c in '0123456789abcdefABCDEF' for c in rs_id):
+                    resolved = rs_id.lower()
+            self.peer_rs_id_hex = resolved
         # v3 PGP signature verification on probe/accept. Failures mark
         # the session 'failed' and return False; we stop processing the
         # payload. recv_ready / sender_ready are not signed by design
@@ -1003,22 +1103,41 @@ class SylkZRTPSession(object):
                  % (self.role, self.call_id, self.continuity_state, self._mixed_rs1, self.peer_aor))
 
     def _derive_next_rs1(self):
-        """next_rs1 = HKDF(ss, salt=..., info='sylk-zrtp/v2/next-rs1', 32).
+        """next_rs1 = HKDF(ss, salt=zeros, info='sylk-zrtp/v2/next-rs1', 32).
 
-        The salt is the current rs1 ONLY when this call's continuity_state
-        was 'verified' (both sides proved they held the same rs1). On
-        mismatch / first-time / one-sided the two sides held DIFFERENT
-        local rs1 (or none) — so salting with our local rs1 would diverge
-        next_rs1 from the peer's again, perpetuating the mismatch forever.
-        Falling back to zero salt makes both sides converge on the same
-        fresh next_rs1 derived purely from the X25519 output. After a SAS
-        Confirm on both ends, the next call's rs_id_hex matches and
-        continuity engages cleanly.
+        Both sides MUST compute identical bytes from identical inputs so
+        the rs_id_hex one side sends on the next call matches what the
+        other side computes locally.
+
+        Earlier versions mixed the existing rs1 into the HKDF salt when
+        continuity_state == 'verified', as a forward-secrecy chain. That
+        turned out to be the root cause of a cascading 'SAS changed'
+        problem: the two sides decide continuity_state independently from
+        local visibility (whose probe carried rs_id_hex, whose didn't),
+        so when one side computed 'verified' and the other computed
+        'one-sided-local' on the SAME call, they took different salt
+        branches and persisted DIFFERENT next_rs1 values. Every
+        subsequent call between those endpoints then showed mismatch on
+        whichever side received an rs_id_hex first, forever.
+
+        Salt=zeros makes the derivation symmetric by construction. Both
+        sides see the same shared_secret and use the same salt, so they
+        ALWAYS produce the same next_rs1. The cost is a shallower
+        forward-secrecy chain — an attacker who recovered ONE call's
+        shared_secret could compute the next rs_id. We accept that
+        trade because the continuity indicator misfiring on legitimate
+        calls is the actual observed problem; chain-deep forward secrecy
+        on rs1 isn't.
+
+        This change is the python3-sipsimple half of the mobile-side fix
+        in CallZrtp.js (_deriveNextRs1). Both stacks must change together
+        — mobile alone produces a cross-stack mismatch from the 3rd call
+        between a mobile and a sipsimple endpoint that achieved verified
+        continuity.
         """
         if self.shared_secret is None:
             return None
-        salt = self.local_rs1 if (self.continuity_state == 'verified'
-                                  and self.local_rs1) else (b'\x00' * 32)
+        salt = b'\x00' * 32
         try:
             return _hkdf(self.shared_secret, salt, 'sylk-zrtp/v2/next-rs1', _RS_LEN)
         except Exception as e:
