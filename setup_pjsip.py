@@ -271,6 +271,10 @@ class PJSIP_build_ext(build_ext):
 
         cmd.extend(["--disable-openh264", "--disable-l16-codec", "--disable-g7221-codec", "--disable-sdl"])
         cmd.extend(["--disable-ilbc-codec", "--disable-speex-codec", "--disable-gsm-codec", "--disable-speex-aec"])
+        # PJSIP 2.12's ffmpeg wrapper uses avcodec_encode_video2/avcodec_decode_video2,
+        # removed in ffmpeg 5.0. Disable on Linux distros shipping ffmpeg >= 5 (e.g. Debian Trixie).
+        if sys_platform == "linux":
+            cmd.append("--disable-ffmpeg")
         
         if sys_platform == "win32":
             cmd.extend(["--enable-video=yes"])
