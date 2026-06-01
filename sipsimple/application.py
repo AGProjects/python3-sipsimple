@@ -11,6 +11,7 @@ __all__ = ["SIPApplication"]
 
 import os
 
+from application import log
 from application.notification import IObserver, NotificationCenter, NotificationData
 from application.python import Null
 from application.python.descriptor import classproperty
@@ -232,12 +233,25 @@ class SIPApplication(object, metaclass=Singleton):
         if output_device not in (None, 'system_default') and output_device not in self.engine.output_devices:
             output_device = 'system_default'
         tail_length = settings.audio.echo_canceller.tail_length if settings.audio.echo_canceller.enabled else 0
-        voice_mixer = AudioMixer(input_device, output_device, settings.audio.sample_rate, tail_length)
+        if not self.engine.input_devices and not self.engine.output_devices:
+            log.warning('No audio devices found; starting without audio hardware (using null sound device)')
+            input_device = None
+            output_device = None
+            alert_device = None
+        try:
+            voice_mixer = AudioMixer(input_device, output_device, settings.audio.sample_rate, tail_length)
+        except PJSIPError as e:
+            log.warning('Could not initialize voice audio device (%s); falling back to null sound device' % e)
+            voice_mixer = AudioMixer(None, None, settings.audio.sample_rate, 0)
         voice_mixer.muted = settings.audio.muted
         self.voice_audio_device = AudioDevice(voice_mixer)
         self.voice_audio_bridge = RootAudioBridge(voice_mixer)
         self.voice_audio_bridge.add(self.voice_audio_device)
-        alert_mixer = AudioMixer(None, alert_device, settings.audio.sample_rate, 0)
+        try:
+            alert_mixer = AudioMixer(None, alert_device, settings.audio.sample_rate, 0)
+        except PJSIPError as e:
+            log.warning('Could not initialize alert audio device (%s); falling back to null sound device' % e)
+            alert_mixer = AudioMixer(None, None, settings.audio.sample_rate, 0)
         if settings.audio.silent:
             alert_mixer.output_volume = 0
         self.alert_audio_device = AudioDevice(alert_mixer)
