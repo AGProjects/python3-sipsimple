@@ -166,15 +166,27 @@ cdef object _pj_str_to_bytes(pj_str_t pj_str):
     return PyBytes_FromStringAndSize(pj_str.ptr, pj_str.slen)
 
 cdef object _pj_str_to_str(pj_str_t pj_str):
-    return PyBytes_FromStringAndSize(pj_str.ptr, pj_str.slen).decode()
+    cdef bytes raw = PyBytes_FromStringAndSize(pj_str.ptr, pj_str.slen)
+    try:
+        return raw.decode('utf-8')
+    except UnicodeDecodeError:
+        # Remote SIP peers sometimes emit ISO-8859-1 in reason phrases,
+        # display names and other free-form fields. Fall back to latin-1
+        # (never raises) instead of crashing the engine thread.
+        return raw.decode('latin-1')
 
 cdef object _pj_buf_len_to_str(char *buf, int buf_len):
     return PyBytes_FromStringAndSize(buf, buf_len)
 
 cdef object _buf_to_str(const char *buf):
+    cdef bytes raw
     if buf == NULL:
         return u''
-    return PyBytes_FromString(buf).decode()
+    raw = PyBytes_FromString(buf)
+    try:
+        return raw.decode('utf-8')
+    except UnicodeDecodeError:
+        return raw.decode('latin-1')
 
 cdef object _str_as_str(object string):
     if type(string) != bytes:
