@@ -21,11 +21,40 @@ cd "$SRC_DIR"
 
 echo "Installing SIP SIMPLE SDK from $SRC_DIR ..."
 
+# PJSIP version selection. If PJSIP_VERSION is already set in the
+# environment (e.g. in CI or by an outer script) we honour it without
+# prompting. Otherwise, ask interactively. See PJSIP_217_MIGRATION.md
+# for the difference between the two patch sets (deps/patches/ for 2.12,
+# deps/patches/2.17/ for 2.17).
+if [ -z "${PJSIP_VERSION:-}" ]; then
+    if [ -t 0 ]; then
+        echo
+        echo "Which PJSIP version do you want to build against?"
+        echo "  A) 2.12   (legacy, fully patched, current production)"
+        echo "  B) 2.17   (in-progress migration target)"
+        echo
+        read -r -p "Choose [A/B] (default A): " _pjsip_choice
+        case "${_pjsip_choice:-A}" in
+            A|a) PJSIP_VERSION=2.12 ;;
+            B|b) PJSIP_VERSION=2.17 ;;
+            2.12|2.17) PJSIP_VERSION="$_pjsip_choice" ;;
+            *)   echo "Unrecognized choice '$_pjsip_choice' -- defaulting to 2.12."
+                 PJSIP_VERSION=2.12 ;;
+        esac
+        unset _pjsip_choice
+    else
+        # Non-interactive (stdin not a tty) and no env override: default
+        # to 2.12 so unattended re-runs match the current production set.
+        PJSIP_VERSION=2.12
+    fi
+fi
+echo "Building against PJSIP $PJSIP_VERSION."
+
 # Re-running needs a clean deps tree; get_dependencies.sh fails otherwise.
 rm -rf deps/pjsip deps/ZRTPCPP deps/pjproject-* 2>/dev/null || true
 
 chmod +x ./get_dependencies*
-./get_dependencies.sh 2.12
+PJSIP_VERSION="$PJSIP_VERSION" ./get_dependencies.sh
 
 if [ $? -ne 0 ]; then
     echo

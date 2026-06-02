@@ -4,10 +4,12 @@
 echo "Installing port dependencies..."
 
 sudo port install yasm x264 gnutls openssl sqlite3 ffmpeg mpfr libmpc libvpx wget gmp libuuid \
-                  libopus fdk-aac pkgconfig
+                  libopus pkgconfig
 
 # This will conflict with buildin MacOS
-sudo mv /opt/local/include/uuid/uuid.h /opt/local/include/uuid/uuid.h.old
+if [ -f /opt/local/include/uuid/uuid.h ]; then
+    sudo mv /opt/local/include/uuid/uuid.h /opt/local/include/uuid/uuid.h.old
+fi
 
 RESULT=$?
 if [ $RESULT -ne 0 ]; then
