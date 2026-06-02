@@ -21,13 +21,19 @@ cd "$SRC_DIR"
 
 echo "Installing SIP SIMPLE SDK from $SRC_DIR ..."
 
+# PJSIP version selection. Default is 2.17 (the in-progress migration
+# target). Override with PJSIP_VERSION=2.12 to fall back to the legacy
+# fully-patched series at deps/patches/. See PJSIP_217_MIGRATION.md.
+PJSIP_VERSION="${PJSIP_VERSION:-2.17}"
+echo "Building against PJSIP $PJSIP_VERSION."
+
 # Re-running needs a clean deps tree; get_dependencies.sh fails otherwise.
 rm -rf deps/pjsip deps/ZRTPCPP deps/pjproject-* 2>/dev/null || true
 
 # AUTOINSTALL=0 skips the apt block at the top of get_dependencies.sh
 # (we already installed everything via 02-install-c-deps.sh).
 chmod +x ./get_dependencies*
-AUTOINSTALL=0 ./get_dependencies.sh 2.12
+AUTOINSTALL=0 PJSIP_VERSION="$PJSIP_VERSION" ./get_dependencies.sh
 
 if [ $? -ne 0 ]; then
     echo
