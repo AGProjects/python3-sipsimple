@@ -30,13 +30,13 @@ if [ -z "${PJSIP_VERSION:-}" ]; then
     if [ -t 0 ]; then
         echo
         echo "Which PJSIP version do you want to build against?"
-        echo "  A) 2.12   (legacy, fully patched, current production)"
-        echo "  B) 2.17   (in-progress migration target)"
+        echo "  1) 2.12   (legacy, fully patched, current production)"
+        echo "  2) 2.17   (in-progress migration target)"
         echo
-        read -r -p "Choose [A/B] (default A): " _pjsip_choice
-        case "${_pjsip_choice:-A}" in
-            A|a) PJSIP_VERSION=2.12 ;;
-            B|b) PJSIP_VERSION=2.17 ;;
+        read -r -p "Choose [1/2] (default 1): " _pjsip_choice
+        case "${_pjsip_choice:-1}" in
+            1) PJSIP_VERSION=2.12 ;;
+            2) PJSIP_VERSION=2.17 ;;
             2.12|2.17) PJSIP_VERSION="$_pjsip_choice" ;;
             *)   echo "Unrecognized choice '$_pjsip_choice' -- defaulting to 2.12."
                  PJSIP_VERSION=2.12 ;;
@@ -54,7 +54,7 @@ echo "Building against PJSIP $PJSIP_VERSION."
 rm -rf deps/pjsip deps/ZRTPCPP deps/pjproject-* 2>/dev/null || true
 
 chmod +x ./get_dependencies*
-PJSIP_VERSION="$PJSIP_VERSION" ./get_dependencies.sh
+./get_dependencies.sh --version "$PJSIP_VERSION"
 
 if [ $? -ne 0 ]; then
     echo

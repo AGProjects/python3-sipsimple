@@ -106,8 +106,25 @@ class PJSIP_build_ext(build_ext):
                    "#define PJSIP_TRANSPORT_IDLE_TIME 7200",
                    "#define PJ_ENABLE_EXTRA_CHECK 1",
                    "#define PJSIP_DONT_SWITCH_TO_TCP 1",
+                   # 2.17 build path: patch 01 (build_system) isn't rebased
+                   # yet, so the PJMEDIA_HAS_* macros it normally injects
+                   # into config_auto.h.in have to live here in config_site
+                   # instead. Without these, vpx.c / opus.c / etc. get
+                   # guarded out and the resulting .so is missing symbols
+                   # like pjmedia_codec_vpx_vid_deinit at dlopen time.
+                   "#define PJMEDIA_HAS_VIDEO 1",
+                   "#define PJMEDIA_HAS_OPUS_CODEC 1",
+                   "#define PJMEDIA_HAS_VPX_CODEC 1",
+                   "#define PJMEDIA_HAS_VPX_CODEC_VP8 1",
+                   "#define PJMEDIA_HAS_VPX_CODEC_VP9 1",
+                   "#define PJMEDIA_HAS_LIBWEBRTC 1",
                    "#define PJMEDIA_VIDEO_DEV_HAS_SDL 0",
-                   "#define PJMEDIA_VIDEO_DEV_HAS_AVI 0",
+                   # AVI=1 because pjsua_vid (in pjsua lib that pjsip-test
+                   # links against) references pjmedia_avi_dev_* symbols
+                   # unconditionally on PJMEDIA_HAS_VIDEO=1. With AVI off
+                   # the link of the pjsip-test binary fails. Not used
+                   # by sipsimple at runtime.
+                   "#define PJMEDIA_VIDEO_DEV_HAS_AVI 1",
                    "#define PJMEDIA_VIDEO_DEV_HAS_FB 1",
                    "#define PJMEDIA_VIDEO_DEV_HAS_V4L2 %d" % (1 if sys_platform=="linux" else 0),
                    "#define PJMEDIA_VIDEO_DEV_HAS_AVF %d" % (1 if sys_platform=="darwin" else 0),
@@ -271,11 +288,22 @@ class PJSIP_build_ext(build_ext):
 
         cmd.extend(["--disable-openh264", "--disable-l16-codec", "--disable-g7221-codec", "--disable-sdl"])
         cmd.extend(["--disable-ilbc-codec", "--disable-speex-codec", "--disable-gsm-codec", "--disable-speex-aec"])
-        # PJSIP 2.12's ffmpeg wrapper uses avcodec_encode_video2/avcodec_decode_video2,
-        # removed in ffmpeg 5.0. Disable on Linux distros shipping ffmpeg >= 5 (e.g. Debian Trixie).
-        if sys_platform == "linux":
+
+        # FFmpeg gate. PJSIP 2.12's ffmpeg wrapper originally used
+        # avcodec_encode_video2 / avcodec_decode_video2, which FFmpeg 5
+        # removed; on Debian Trixie (FFmpeg 7) that meant the build
+        # failed and we shipped with --disable-ffmpeg. Patch 17
+        # (17_fix_ffmpeg.patch) now ports the wrapper to the
+        # send_frame / receive_packet API, and pjsip 2.17 ships that
+        # port upstream. FFmpeg is therefore re-enabled by default.
+        #
+        # Escape hatch: set SIPSIMPLE_DISABLE_FFMPEG=1 to force
+        # --disable-ffmpeg again (useful if a distro ships an even
+        # newer FFmpeg that breaks the wrapper before we get a chance
+        # to refresh patch 17).
+        if env.get("SIPSIMPLE_DISABLE_FFMPEG", "0") not in ("0", "", "false", "False"):
             cmd.append("--disable-ffmpeg")
-        
+
         if sys_platform == "win32":
             cmd.extend(["--enable-video=yes"])
 
@@ -314,7 +342,11 @@ class PJSIP_build_ext(build_ext):
         if self.verbose and sys_platform == "darwin":
             log.info(os.environ['CFLAGS'])
             log.info(os.environ['LDFLAGS'])
-        self.distutils_exec_process([self.get_make_cmd()], silent=not self.verbose, cwd=self.build_dir)
+        # 'lib' instead of default 'all' — only build the static libraries
+        # that sipsimple's _core.so links against. Skips pjsip-test,
+        # pjmedia-test, pjlib-test, pjsua, etc. We don't ship pjsip CLI
+        # apps and we don't run pjsip's internal test suite.
+        self.distutils_exec_process([self.get_make_cmd(), "lib"], silent=not self.verbose, cwd=self.build_dir)
 
     def clean_pjsip(self):
         log.info("Cleaning PJSIP")

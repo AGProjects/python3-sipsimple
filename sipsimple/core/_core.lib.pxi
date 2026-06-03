@@ -309,9 +309,16 @@ cdef class PJMEDIAEndpoint:
         status = pjmedia_vid_codec_mgr_create(self._pool, NULL)
         if status != 0:
             raise PJSIPError("Could not initialize video codec manager", status)
-        # ffmpeg video codecs disabled at build time (ffmpeg >= 5 API
-        # incompatible with PJSIP 2.12). Skip init; VPX still provides VP8/VP9.
-        self._has_ffmpeg_video = 0
+        # Initialize the FFmpeg-backed video codecs (H.263, H.264, MPEG-4).
+        # The previous workaround that bypassed this call dates from the
+        # period when pjsip 2.12's ffmpeg_vid_codecs.c was broken against
+        # FFmpeg >= 5; that's no longer the case once patch 17 lands and
+        # the host has FFmpeg headers/libs (linux/02-install-c-deps.sh
+        # and mac/02-install-c-deps.sh install them).
+        status = pjmedia_codec_ffmpeg_vid_init(NULL, &caching_pool._obj.factory)
+        if status != 0:
+            raise PJSIPError("Could not initialize ffmpeg video codecs", status)
+        self._has_ffmpeg_video = 1
         status = pjmedia_codec_vpx_vid_init(NULL, &caching_pool._obj.factory)
         if status != 0:
             raise PJSIPError("Could not initialize vpx video codecs", status)
@@ -324,7 +331,8 @@ cdef class PJMEDIAEndpoint:
     cdef void _video_subsystem_shutdown(self):
         if self._has_video:
             pjmedia_vid_dev_subsys_shutdown()
-        # ffmpeg video codecs disabled at build time; nothing to deinit.
+        if self._has_ffmpeg_video:
+            pjmedia_codec_ffmpeg_vid_deinit()
         if self._has_vpx:
             pjmedia_codec_vpx_vid_deinit()
         if pjmedia_vid_codec_mgr_instance() != NULL:
