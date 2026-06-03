@@ -35,7 +35,17 @@ source "$SCRIPT_DIR/activate_venv.sh"
 
 echo "Installing sipclients3 from $SIPCLIENTS_DIR ..."
 
-# (pgpy, used by sip-session3, comes in via mac/python-requirements.txt in step 03.)
+# Runtime deps for sip-session3:
+#   pgpy   — PGP message bodies (sip-session3 chat / sylk-zrtp).
+#            Also tracked by mac/python-requirements.txt in step 03;
+#            we re-pin here so a standalone re-run of 05 still gets it.
+#   numpy  — VideoWindow's frame buffer conversion (sipclient.video).
+#   pillow — PIL Image / Tk PhotoImage for the on-screen video display.
+#
+# All three ship binary wheels for darwin/arm64 so install is a few
+# seconds — no native compilation.
+pip3 install --upgrade pgpy numpy pillow
+
 pip3 install --force-reinstall --no-deps --no-build-isolation "$SIPCLIENTS_DIR"
 
 VENV="${VIRTUAL_ENV:-}"
