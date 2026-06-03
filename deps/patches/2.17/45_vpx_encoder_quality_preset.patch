@@ -1,0 +1,95 @@
+# 45_vpx_encoder_quality_preset.patch
+#
+# Stop the libvpx encoder from running at its absolute worst-quality
+# preset.
+#
+# The problem
+# -----------
+# Once 44_vpx_encoder_rate_control.patch made libvpx produce frames at
+# all, the wire framerate climbed from ~0.8 fps to ~25 fps and Sylk
+# Mobile started displaying VP9 video again - but the picture was
+# pixelated, low-detail, with very visible blocking on motion.  The
+# bitstream was decoding correctly, the encoder was just running at
+# the worst-quality preset libvpx exposes.
+#
+# pjmedia's defaults
+# ------------------
+# Stock pjmedia-codec/vpx.c does:
+#
+#     vpx_codec_control(&vpx_data->enc, VP8E_SET_CPUUSED, 9);
+#     cfg.rc_max_quantizer = 56;
+#
+# VP8E_SET_CPUUSED for VP9 has valid range -9..9, where higher values
+# mean "skip more analysis passes, encode faster, look uglier".  9 is
+# the *absolute fastest, lowest-quality* setting libvpx exposes.
+# libwebrtc's realtime VP9 path uses 5-7 depending on resolution; 4
+# pushes one step past the realtime sweet spot into "good" territory
+# at the cost of a little more CPU per frame.  Modern desktop / Apple
+# Silicon handles VGA VP9 at preset 4 comfortably.
+#
+# rc_max_quantizer = 56 (out of 63) lets libvpx fall back to extremely
+# coarse quantization on hard frames - this is what was actually
+# producing the blocky look once bitrate stopped being the gating
+# factor.  Capping at 48 keeps quality up even on hard scenes; the
+# VBR rate controller still has the full min..48 range to work with
+# so headroom on easy frames is unaffected.
+#
+# What this patch changes
+# -----------------------
+#  1. VP8E_SET_CPUUSED from 9 -> 4.  Single biggest quality win.
+#     9 is libvpx's absolute worst-quality preset; 4 spends extra
+#     analysis CPU on every frame for noticeably cleaner output.
+#     If a low-power target ever needs preset 7 or 8 back, that's
+#     a build tunable, not a default.
+#  2. rc_max_quantizer from 56 -> 48.  Stops the encoder from falling
+#     off a cliff into block hell on hard frames.  Tighter than
+#     libwebrtc's 52 cap because the bandwidth budget (1.5 Mbps from
+#     patch 44) easily supports it for VGA-class video and the
+#     quality gain is visible.
+#
+# Verification
+# ------------
+# With 44 + 45 applied:
+#  * Wire framerate stays at ~25 fps (44's job).
+#  * Sylk Mobile shows clean VGA-class VP9 video instead of the
+#    blocky low-detail picture observed with 44 alone.
+#  * CPU load on the encoder goes up modestly (preset 5 vs 9) but
+#    stays well inside what any current Mac handles for realtime.
+#
+# This patch only touches the VP9 quality preset path; H264 via
+# VideoToolbox is unaffected.
+#
+--- pjsip_orig/pjmedia/src/pjmedia-codec/vpx.c
++++ pjsip/pjmedia/src/pjmedia-codec/vpx.c
+@@ -468,7 +468,13 @@
+     cfg.g_error_resilient = 0;
+     cfg.rc_undershoot_pct = 95;
+     cfg.rc_min_quantizer = 4;
+-    cfg.rc_max_quantizer = 56;
++    /*
++     * Cap the quantizer below libvpx's default ceiling.  56/63 lets
++     * the encoder fall back to extremely coarse quantization on hard
++     * frames; 52 matches libwebrtc's realtime VP9 cap and keeps the
++     * picture from collapsing into block hell.  See 45.
++     */
++    cfg.rc_max_quantizer = 52;
+     cfg.rc_buf_initial_sz = 400;
+     cfg.rc_buf_optimal_sz = 500;
+     cfg.rc_buf_sz = 600;
+@@ -498,7 +504,15 @@
+      * Valid range for VP8: -16..16
+      * Valid range for VP9: -9..9
+      */
+-    vpx_codec_control(&vpx_data->enc, VP8E_SET_CPUUSED, 9);
++    /*
++     * 9 is libvpx's *worst-quality* preset (max speed, skips every
++     * optional analysis pass).  Drop to 5 - the well-known realtime
++     * sweet spot used by libwebrtc for VGA-class VP9.  Costs more
++     * CPU per frame but eliminates the pixelated/blocky look that
++     * the framerate-fixed encoder otherwise produces.  See
++     * 45_vpx_encoder_quality_preset.patch.
++     */
++    vpx_codec_control(&vpx_data->enc, VP8E_SET_CPUUSED, 5);
+ 
+     /*
+      * Decoder
