@@ -1,0 +1,140 @@
+# 11_transport_ice.patch   (rebased for pjsip 2.17)
+#
+# Add the following to pjmedia ICE transport:
+#   * on_ice_state callback — fired on every ICE state transition
+#     (PJ_ICE_STRANS_STATE_INIT → CANDIDATE → RUNNING → CONNECTING →
+#     COMPLETED → FAILED). Used by python-sipsimple/sylk to surface
+#     ICE progress to the application layer.
+#   * on_ice_stop callback — fired from set_no_ice() before the
+#     transport is torn down, so the app can log the reason.
+#   * pjmedia_ice_get_strans() — accessor returning the underlying
+#     pj_ice_strans for diagnostic / advanced use.
+#
+# Rebase notes (vs the 2.12 version):
+#   * 2.17 added on_ice_complete2 (with user_data) and on_new_candidate
+#     to pjmedia_ice_cb upstream. We do NOT re-add either. Our new
+#     callbacks are inserted *after* on_new_candidate.
+#   * 2.17 also added pjmedia_ice_add_ice_cb / pjmedia_ice_remove_ice_cb
+#     for runtime callback registration. This patch keeps the legacy
+#     "fields on pjmedia_ice_cb" model for the new callbacks.
+#   * Line numbers in the .c hunks are approximate; patch will scan
+#     for matching context.
+#
+--- pjsip_orig/pjmedia/include/pjmedia/transport_ice.h
++++ pjsip/pjmedia/include/pjmedia/transport_ice.h
+@@ -95,6 +95,28 @@
+                                 const pj_ice_sess_cand *cand,
+                                 pj_bool_t last);
+
++    /**
++     * This callback will be called when ICE state changes.
++     *
++     * @param tp       PJMEDIA ICE transport.
++     * @param prev     Previous state.
++     * @param curr     Current state.
++     */
++    void    (*on_ice_state)(pjmedia_transport *tp,
++                            pj_ice_strans_state prev,
++                            pj_ice_strans_state curr);
++
++    /**
++     * This callback will be called when ICE is stopped.
++     *
++     * @param tp       PJMEDIA ICE transport.
++     * @param reason   Reason for stopping ICE.
++     * @param err      Error code
++     */
++    void    (*on_ice_stop)(pjmedia_transport *tp,
++                           char *reason,
++                           pj_status_t err);
++
+ } pjmedia_ice_cb;
+
+
+@@ -260,6 +282,17 @@
+ PJ_DECL(pj_grp_lock_t *) pjmedia_ice_get_grp_lock(pjmedia_transport *tp);
+
+
++/**
++ * Return the ICE stream transport associated with this PJMEDIA transport.
++ *
++ * @param tp           Media transport instance.
++ *
++ * @return             Pointer to the pj_ice_strans instance associated
++ *                      with this media transport.
++ */
++PJ_DECL(pj_ice_strans*) pjmedia_ice_get_strans(pjmedia_transport *tp);
++
++
+ /**
+  * Add application to receive ICE notifications from the specified ICE media
+  * transport.
+--- pjsip_orig/pjmedia/src/pjmedia/transport_ice.c
++++ pjsip/pjmedia/src/pjmedia/transport_ice.c
+@@ -171,6 +171,10 @@
+ static void ice_on_new_candidate(pj_ice_strans *ice_st,
+                                  const pj_ice_sess_cand *cand,
+                                  pj_bool_t last);
++
++static void ice_on_ice_state(pj_ice_strans *ice_st,
++                             int prev,
++                             int curr);
+
+ /*
+  * Clean up ICE resources.
+@@ -312,6 +316,7 @@
+     /* Configure ICE callbacks */
+     pj_bzero(&ice_st_cb, sizeof(ice_st_cb));
+     ice_st_cb.on_ice_complete = &ice_on_ice_complete;
++    ice_st_cb.on_ice_state    = &ice_on_ice_state;
+     ice_st_cb.on_rx_data = &ice_on_rx_data;
+     ice_st_cb.on_new_candidate = &ice_on_new_candidate;
+
+@@ -353,6 +353,18 @@
+
+
+ /*
++ * Get the ICE stream transport associated with this media transport.
++ */
++PJ_DEF(pj_ice_strans*) pjmedia_ice_get_strans(pjmedia_transport *tp)
++{
++    struct transport_ice *tp_ice;
++
++    tp_ice = (struct transport_ice*) tp;
++    return tp_ice->ice_st;
++}
++
++
++/*
+  * Add application to receive ICE notifications from the specified ICE media
+  * transport.
+  */
+@@ -800,6 +815,10 @@
+                   "Stopping ICE, reason=%s", reason));
+     }
+
++    /* Notify application about ICE stop */
++    if (tp_ice->cb.on_ice_stop)
++        (*tp_ice->cb.on_ice_stop)(&tp_ice->base, (char *)reason, err);
++
+     if (tp_ice->ice_st) {
+         pj_ice_strans_stop_ice(tp_ice->ice_st);
+     }
+@@ -2740,6 +2759,17 @@
+ }
+
+
++static void ice_on_ice_state(pj_ice_strans *ice_st,
++                             int prev,
++                             int curr)
++{
++    struct transport_ice *tp_ice;
++
++    tp_ice = (struct transport_ice*) pj_ice_strans_get_user_data(ice_st);
++
++    if (tp_ice->cb.on_ice_state)
++        (*tp_ice->cb.on_ice_state)(&tp_ice->base, prev, curr);
++}
+
+ /* Simulate lost */
+ static pj_status_t transport_simulate_lost(pjmedia_transport *tp,

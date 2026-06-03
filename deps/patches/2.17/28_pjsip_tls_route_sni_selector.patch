@@ -1,0 +1,94 @@
+# 28_pjsip_tls_route_sni_selector.patch (rebased + consolidated for 2.17)
+#
+# Adds the sipsimple-local "Route header tls_name SNI selector" to
+# pjsip 2.17's TLS listener, AND folds in the defensive
+# pj_bzero(&tls_name) from 2.12's 28_pjsip_tls_lis_create_*.patch so
+# the new variable can never be read uninitialised.
+#
+# Feature
+# -------
+# When an outgoing TLS request carries a Route header of the form
+#
+#     Route: <sips:proxy.example.com;tls_name=alt-host.example.com>
+#
+# the value of the `tls_name` parameter is used as the SNI server_name
+# for the outgoing TLS handshake, overriding the request's
+# dest_info.name. Useful when a proxy fronts multiple TLS virtual
+# hosts and needs the right certificate negotiated even when the SIP
+# routing destination doesn't match the cert's CN/SAN.
+#
+# In 2.12 this lived as a set of hunks inside patch 03 (signaling),
+# threading a tls_name parameter through tls_create() and a struct
+# member on tls_transport. 2.17's sip_transport_tls.c was refactored
+# heavily (RFC 6026 changes + server_addr threading), so the simpler
+# equivalent below keeps the change self-contained: parse the Route
+# header in lis_create_transport() and override
+# ssock_param.server_name locally. No struct or function signature
+# changes.
+#
+# Defensive fix
+# -------------
+# The 2.12 patch 28 fixed a real SIGSEGV: tls_name was declared on
+# the stack but only assigned in the nested branch, so when no Route
+# header had a tls_name param the test `if (tls_name.slen)` would
+# observe stack garbage. Same risk applies here, fixed by
+# zero-initialising tls_name immediately after declaration.
+#
+--- pjsip_orig/pjsip/src/pjsip/sip_transport_tls.c
++++ pjsip/pjsip/src/pjsip/sip_transport_tls.c
+@@ -1330,6 +1330,10 @@
+     pj_sockaddr local_addr;
+     pj_str_t remote_name;
+     pjsip_server_addresses server_addr;
++    pj_str_t tls_name;
++    pjsip_param *p = NULL;
++    pjsip_sip_uri *sip_uri = NULL;
++    pjsip_route_hdr *route_hdr = NULL;
+     pj_status_t status;
+ 
+     /* Sanity checks */
+@@ -1349,10 +1353,32 @@
+                                    POOL_TP_INIT, POOL_TP_INC);
+     PJ_ASSERT_RETURN(pool != NULL, PJ_ENOMEM);
+ 
++    /* Defensive: tls_name is assigned only in the nested Route-header
++     * parsing branch below; zero it up front so the post-block test
++     * `if (tls_name.slen)` can never see stack garbage. */
++    pj_bzero(&tls_name, sizeof(tls_name));
++
+     /* Get remote host name and DNS queried server addresses from tdata */
+     if (tdata) {
+         remote_name = tdata->dest_info.name;
+         server_addr = tdata->dest_info.addr;
++        /* Route header tls_name SNI override */
++        route_hdr = (pjsip_route_hdr*)pjsip_msg_find_hdr(tdata->msg, PJSIP_H_ROUTE, NULL);
++        if (route_hdr != NULL) {
++            if (PJSIP_URI_SCHEME_IS_SIPS(route_hdr->name_addr.uri) ||
++                PJSIP_URI_SCHEME_IS_SIP(route_hdr->name_addr.uri)) {
++                sip_uri = (pjsip_sip_uri*) pjsip_uri_get_uri(route_hdr->name_addr.uri);
++                p = sip_uri->other_param.next;
++                while (p != &sip_uri->other_param) {
++                    const pj_str_t st_name = {"tls_name", 8};
++                    if (pj_stricmp(&p->name, &st_name) == 0) {
++                        pj_strdup(pool, &tls_name, &p->value);
++                        break;
++                    }
++                    p = p->next;
++                }
++            }
++        }
+     } else {
+         pj_bzero(&remote_name, sizeof(remote_name));
+         pj_bzero(&server_addr, sizeof(server_addr));
+@@ -1369,7 +1395,10 @@
+     ssock_param.async_cnt = 1;
+     ssock_param.ioqueue = pjsip_endpt_get_ioqueue(listener->endpt);
+     ssock_param.timer_heap = pjsip_endpt_get_timer_heap(listener->endpt);
+-    ssock_param.server_name = remote_name;
++    if (tls_name.slen)
++        ssock_param.server_name = tls_name;
++    else
++        ssock_param.server_name = remote_name;
+     ssock_param.timeout = listener->tls_setting.timeout;
+     ssock_param.user_data = NULL; /* pending, must be set later */
+     ssock_param.verify_peer = PJ_FALSE; /* avoid SSL socket closing the socket

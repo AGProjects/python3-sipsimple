@@ -1,0 +1,64 @@
+# 31_stream_transport_grp_lock_uaf.patch
+#
+# Companion to patch 30. Same UAF pattern, different victim.
+#
+# Crash (audio I/O thread, after call hangup):
+#   stream_imp_common.c:on_destroy() -> pj_grp_lock_dec_ref(
+#       c_strm->transport->grp_lock)  — c_strm->transport dangles
+#   because sipsimple already released the transport's pool. lldb:
+#       glock=0x003b0072006c003b  (looks like UTF-16 reused the slot)
+#
+# Sequence:
+#   1. Conf bridge op_remove_port2 dec-refs the stream's grp_lock.
+#   2. grp_lock_destroy fires registered handlers; stream's on_destroy
+#      runs.
+#   3. on_destroy reads c_strm->transport->grp_lock, but the transport
+#      struct was freed when sipsimple tore the call down.
+#
+# Fix:
+#   Cache transport->grp_lock at stream attach (audio/video/text all
+#   share the on_destroy handler in stream_imp_common.c). The conf
+#   bridge's ref pins the grp_lock memory; the cached address stays
+#   valid even after the transport struct is gone.
+--- pjsip_orig/pjmedia/include/pjmedia/stream_common.h
++++ pjsip/pjmedia/include/pjmedia/stream_common.h
+@@ -76,1 +76,3 @@
+     pjmedia_transport       *transport;     /**< Stream transport.          */
++    pj_grp_lock_t           *transport_grp_lock;
++                                            /**< Cached transport->grp_lock.*/
+--- pjsip_orig/pjmedia/src/pjmedia/stream.c
++++ pjsip/pjmedia/src/pjmedia/stream.c
+@@ -2333,3 +2333,5 @@
+     /* Also add ref the transport group lock */
+-    if (c_strm->transport->grp_lock)
++    if (c_strm->transport->grp_lock) {
+         pj_grp_lock_add_ref(c_strm->transport->grp_lock);
++        c_strm->transport_grp_lock = c_strm->transport->grp_lock;
++    }
+--- pjsip_orig/pjmedia/src/pjmedia/vid_stream.c
++++ pjsip/pjmedia/src/pjmedia/vid_stream.c
+@@ -1838,3 +1838,5 @@
+     /* Also add ref the transport group lock */
+-    if (c_strm->transport->grp_lock)
++    if (c_strm->transport->grp_lock) {
+         pj_grp_lock_add_ref(c_strm->transport->grp_lock);
++        c_strm->transport_grp_lock = c_strm->transport->grp_lock;
++    }
+--- pjsip_orig/pjmedia/src/pjmedia/txt_stream.c
++++ pjsip/pjmedia/src/pjmedia/txt_stream.c
+@@ -370,4 +370,6 @@
+     /* Also add ref the transport group lock */
+     c_strm->transport = tp;
+-    if (c_strm->transport->grp_lock)
++    if (c_strm->transport->grp_lock) {
+         pj_grp_lock_add_ref(c_strm->transport->grp_lock);
++        c_strm->transport_grp_lock = c_strm->transport->grp_lock;
++    }
+--- pjsip_orig/pjmedia/src/pjmedia/stream_imp_common.c
++++ pjsip/pjmedia/src/pjmedia/stream_imp_common.c
+@@ -650,3 +650,3 @@
+     /* Release ref to transport */
+-    if (c_strm->transport && c_strm->transport->grp_lock)
+-        pj_grp_lock_dec_ref(c_strm->transport->grp_lock);
++    if (c_strm->transport_grp_lock)
++        pj_grp_lock_dec_ref(c_strm->transport_grp_lock);

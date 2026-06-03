@@ -1,0 +1,240 @@
+# 08_media_core.patch   (PARTIAL port for 2.17)
+#
+# Adds these pieces of the 2.12 patch 08 (media_core):
+#
+#   1. Uncomment `#include <pjmedia/vid_tee.h>` and add
+#      `#include <pjmedia/transport_zrtp.h>` in pjmedia.h.
+#   2. Add PJMEDIA_EVENT_KEYFRAME_REQUESTED to the pjmedia_event_type
+#      enum in pjmedia/event.h.
+#   3. Declare pjmedia_snd_port_reset_ec_state (stubbed) and
+#      pjmedia_mixer_port_create (real impl, ported from 2.12).
+#   4. New file sound_port_stubs.c with the stubs/real impls above.
+#   5. Makefile additions for sound_port_stubs.o, transport_zrtp.o,
+#      vid_tee.o.
+#
+# pjmedia_vid_dev_fb_set_callback stub previously lived here as well;
+# it has been removed now that patch 06 (video_device) ports the real
+# fb_dev.c which defines this function (would otherwise be a duplicate
+# symbol at link time).
+#
+--- pjsip_orig/pjmedia/include/pjmedia.h
++++ pjsip/pjmedia/include/pjmedia.h
+@@ -69,12 +69,13 @@
+ #include <pjmedia/transport_loop.h>
+ #include <pjmedia/transport_srtp.h>
+ #include <pjmedia/transport_udp.h>
++#include <pjmedia/transport_zrtp.h>
+ #include <pjmedia/txt_stream.h>
+ #include <pjmedia/vid_codec.h>
+ #include <pjmedia/vid_conf.h>
+ #include <pjmedia/vid_port.h>
+ #include <pjmedia/vid_stream.h>
+-//#include <pjmedia/vid_tee.h>
++#include <pjmedia/vid_tee.h>
+ #include <pjmedia/wav_playlist.h>
+ #include <pjmedia/wav_port.h>
+ #include <pjmedia/wave.h>
+--- pjsip_orig/pjmedia/include/pjmedia/event.h
++++ pjsip/pjmedia/include/pjmedia/event.h
+@@ -77,6 +77,11 @@
+     PJMEDIA_EVENT_KEYFRAME_FOUND = PJMEDIA_FOURCC('I', 'F', 'R', 'F'),
+ 
+     /**
++     * Remote video decoder asked for a keyframe.
++     */
++    PJMEDIA_EVENT_KEYFRAME_REQUESTED = PJMEDIA_FOURCC('I', 'F', 'R', 'R'),
++
++    /**
+      * Video decoding error due to missing keyframe event.
+      */
+     PJMEDIA_EVENT_KEYFRAME_MISSING = PJMEDIA_FOURCC('I', 'F', 'R', 'M'),
+
+# Removed:
+#   - pjmedia_videodev.h hunk (typedef + DECL of fb_set_callback) —
+#     patch 06 now creates fb_dev.h with the real typedef/decl and
+#     adds `#include <pjmedia-videodev/fb_dev.h>` to pjmedia_videodev.h.
+#   - videodev.c hunk (stub fn DEF) — patch 06's new fb_dev.c provides
+#     the real pjmedia_vid_dev_fb_set_callback. Keeping the stub here
+#     would cause a duplicate-symbol link error.
+--- pjsip_orig/pjmedia/include/pjmedia/sound_port.h
++++ pjsip/pjmedia/include/pjmedia/sound_port.h
+@@ -402,6 +402,22 @@
+  * @}
+  */
+ 
++/* Reset the EC internal state (full impl in 2.12 patch 09; stub
++ * returns PJ_SUCCESS in 2.17 — see 08_media_core.patch). */
++PJ_DECL(pj_status_t) pjmedia_snd_port_reset_ec_state(pjmedia_snd_port *snd_port);
++
++/* Create a mixer port. Full impl lives in 2.12 patch 08
++ * (mixer_port.c) which hasn't been rebased for 2.17. Stub returns
++ * PJ_ENOTSUP and sets *p_port to NULL. The declaration here means
++ * sipsimple's MixerPort wrapper compiles even though instantiation
++ * always fails at runtime. */
++PJ_DECL(pj_status_t) pjmedia_mixer_port_create(pj_pool_t *pool,
++                                               unsigned int sampling_rate,
++                                               unsigned int channel_count,
++                                               unsigned int samples_per_frame,
++                                               unsigned int bits_per_sample,
++                                               pjmedia_port **p_port);
++
+ PJ_END_DECL
+ 
+ 
+--- pjsip_orig/pjmedia/src/pjmedia/sound_port_stubs.c
++++ pjsip/pjmedia/src/pjmedia/sound_port_stubs.c
+@@ -0,0 +1,134 @@
++/*
++ * pjmedia_snd_port_reset_ec_state stub + real pjmedia_mixer_port_create.
++ *
++ * mixer_port: faithfully ported from the 2.12 series patch 08
++ * (pjmedia/src/pjmedia/mixer_port.c). Used by python-sipsimple's
++ * AudioBridge for the per-bridge multiplexer port — without it,
++ * sip-audio-session3 / Blink fail to start any audio call with
++ * "Could not create WAV file: PJ_ENOTSUP".
++ *
++ * reset_ec_state stub: real impl needs internal pjmedia_snd_port
++ * field access which isn't reachable from a separate translation
++ * unit. Returns PJ_SUCCESS so callers don't error out; the only
++ * runtime cost is that the echo canceller state isn't reset
++ * between sessions (rare path; in practice EC is recreated when
++ * a new sound port is opened).
++ */
++#include <string.h>
++#include <pjmedia/sound_port.h>
++#include <pjmedia/port.h>
++#include <pjmedia/errno.h>
++#include <pj/assert.h>
++#include <pj/pool.h>
++#include <pj/string.h>
++
++PJ_DEF(pj_status_t) pjmedia_snd_port_reset_ec_state(pjmedia_snd_port *snd_port)
++{
++    PJ_UNUSED_ARG(snd_port);
++    return PJ_SUCCESS;
++}
++
++/*
++ * Mixer port — see deps/patches/08_media_core.patch in the 2.12 tree
++ * for the original. Acts as a small frame buffer between the
++ * conference bridge multiplexer and downstream ports: stores the
++ * latest put_frame() and re-emits it from get_frame() if the frame
++ * is fresh (<= 100 ms old).
++ */
++
++#define MIXER_SIGNATURE     PJMEDIA_SIG_CLASS_PORT_AUD('M','X')
++#define MIXER_MIN(a, b)     ((a) > (b) ? (b) : (a))
++
++struct mixer_port
++{
++    pjmedia_port        base;
++    pjmedia_frame_type  last_frame_type;
++    pj_size_t           last_frame_size;
++    pj_timestamp        last_frame_timestamp;
++    pj_int16_t         *buffer;
++    pj_size_t           buffer_size;
++};
++
++static pj_status_t mixer_get_frame(pjmedia_port *this_port,
++                                   pjmedia_frame *frame)
++{
++    struct mixer_port *port = (struct mixer_port *)this_port;
++    pj_timestamp now;
++    pj_uint32_t frame_age;
++
++    pj_get_timestamp(&now);
++    frame_age = pj_elapsed_usec(&port->last_frame_timestamp, &now);
++
++    if (port->last_frame_timestamp.u64 != 0 && frame_age <= 100000) {
++        frame->type = port->last_frame_type;
++        frame->size = port->last_frame_size;
++        frame->timestamp.u64 = 0;
++        if (port->last_frame_size > 0)
++            memcpy(frame->buf, port->buffer, port->last_frame_size);
++    } else {
++        frame->type = PJMEDIA_FRAME_TYPE_NONE;
++        frame->size = 0;
++        frame->timestamp.u64 = 0;
++    }
++    return PJ_SUCCESS;
++}
++
++static pj_status_t mixer_put_frame(pjmedia_port *this_port,
++                                   pjmedia_frame *frame)
++{
++    struct mixer_port *port = (struct mixer_port *)this_port;
++
++    if (!frame->size || frame->type != PJMEDIA_FRAME_TYPE_AUDIO) {
++        port->last_frame_type = PJMEDIA_FRAME_TYPE_NONE;
++        port->last_frame_size = 0;
++        port->last_frame_timestamp.u64 = 0;
++        return PJ_SUCCESS;
++    }
++
++    PJ_ASSERT_RETURN(frame->size <= port->buffer_size, PJ_EINVAL);
++
++    port->last_frame_type = frame->type;
++    pj_get_timestamp(&port->last_frame_timestamp);
++    port->last_frame_size = MIXER_MIN(port->buffer_size, frame->size);
++    memcpy(port->buffer, frame->buf, port->last_frame_size);
++    return PJ_SUCCESS;
++}
++
++static pj_status_t mixer_on_destroy(pjmedia_port *this_port)
++{
++    PJ_UNUSED_ARG(this_port);
++    return PJ_SUCCESS;
++}
++
++PJ_DEF(pj_status_t) pjmedia_mixer_port_create(pj_pool_t *pool,
++                                              unsigned int sampling_rate,
++                                              unsigned int channel_count,
++                                              unsigned int samples_per_frame,
++                                              unsigned int bits_per_sample,
++                                              pjmedia_port **p_port)
++{
++    struct mixer_port *port;
++    const pj_str_t name = pj_str("mixer-port");
++
++    PJ_ASSERT_RETURN(pool && p_port, PJ_EINVAL);
++
++    port = PJ_POOL_ZALLOC_T(pool, struct mixer_port);
++    PJ_ASSERT_RETURN(port != NULL, PJ_ENOMEM);
++
++    pjmedia_port_info_init(&port->base.info, &name, MIXER_SIGNATURE,
++                           sampling_rate, channel_count,
++                           bits_per_sample, samples_per_frame);
++
++    port->base.get_frame  = &mixer_get_frame;
++    port->base.put_frame  = &mixer_put_frame;
++    port->base.on_destroy = &mixer_on_destroy;
++    port->last_frame_type = PJMEDIA_FRAME_TYPE_NONE;
++    port->last_frame_size = 0;
++    port->last_frame_timestamp.u64 = 0;
++    port->buffer_size = sizeof(pj_int16_t) * samples_per_frame;
++    port->buffer = (pj_int16_t *)pj_pool_calloc(pool, samples_per_frame,
++                                                sizeof(pj_int16_t));
++
++    *p_port = &port->base;
++    return PJ_SUCCESS;
++}
+--- pjsip_orig/pjmedia/build/Makefile
++++ pjsip/pjmedia/build/Makefile
+@@ -65,5 +65,5 @@
+ 			delaybuf.o echo_common.o \
+ 			echo_port.o echo_suppress.o echo_webrtc.o echo_webrtc_aec3.o \
+ 			endpoint.o errno.o event.o format.o ffmpeg_util.o \
+-			g711.o jbuf.o master_port.o mem_capture.o mem_player.o \
++			g711.o jbuf.o master_port.o mem_capture.o mem_player.o sound_port_stubs.o \
+ 			null_port.o plc_common.o port.o splitcomb.o \
+@@ -75,3 +75,3 @@
+ 			stream.o stream_info.o tonegen.o transport_adapter_sample.o \
+-			transport_ice.o transport_loop.o transport_srtp.o transport_udp.o \
++			transport_ice.o transport_loop.o transport_srtp.o transport_udp.o transport_zrtp.o \
+ 			types.o txt_stream.o vid_codec.o vid_codec_util.o \
+@@ -76,3 +76,3 @@
+ 			types.o txt_stream.o vid_codec.o vid_codec_util.o \
+-			vid_port.o vid_stream.o vid_stream_info.o vid_conf.o \
++			vid_port.o vid_stream.o vid_stream_info.o vid_conf.o vid_tee.o \
+ 			wav_player.o wav_playlist.o wav_writer.o wave.o \
+

@@ -1,0 +1,38 @@
+# 40_videodev_extra_objs.patch
+#
+# Patch 06 (video_device) introduces avf_dev.m (Mac camera capture),
+# fb_dev.c (framebuffer renderer), null_dev.c (null device) and
+# dshow_filter.cpp (Windows DShow filter), but does NOT extend
+# pjmedia/build/Makefile's PJMEDIA_VIDEODEV_OBJS to actually build
+# them.
+#
+# Symptom (3 June 2026):
+#   ImportError: dlopen(... sipsimple/core/_core.cpython-311-darwin.so):
+#     symbol not found in flat namespace '_pjmedia_avf_factory'
+#
+# Root cause: setup_pjsip.py defines PJMEDIA_VIDEO_DEV_HAS_AVF=1 on
+# Darwin, so videodev.c emits the extern decl + factory registration
+# referencing pjmedia_avf_factory. But avf_dev.m is never compiled
+# into libpjmedia-videodev.a, so the symbol is unresolved at link
+# time.
+#
+# Fix: append avf_dev.o / fb_dev.o / null_dev.o / dshow_filter.o to
+# PJMEDIA_VIDEODEV_OBJS. Each source file is wrapped in an
+# #if PJMEDIA_VIDEO_DEV_HAS_<X> guard, so building them on platforms
+# where they're disabled compiles to an empty .o — harmless.
+#
+# This belongs conceptually in patch 01 (build_system) which hasn't
+# been rebased for 2.17. Slot 40 because new 2.17-only patches use
+# NN >= 40 per the README convention.
+#
+--- pjsip_orig/pjmedia/build/Makefile
++++ pjsip/pjmedia/build/Makefile
+@@ -106,5 +106,6 @@
+ #
+ export PJMEDIA_VIDEODEV_SRCDIR = ../src/pjmedia-videodev
+ export PJMEDIA_VIDEODEV_OBJS += videodev.o errno.o avi_dev.o ffmpeg_dev.o \
+-				colorbar_dev.o v4l2_dev.o opengl_dev.o \
++				colorbar_dev.o v4l2_dev.o opengl_dev.o avf_dev.o \
++				fb_dev.o null_dev.o dshow_filter.o \
+ 				util.o
+ export PJMEDIA_VIDEODEV_CFLAGS += $(_CFLAGS)

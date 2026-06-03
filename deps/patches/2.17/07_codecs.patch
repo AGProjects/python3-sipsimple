@@ -1,0 +1,35 @@
+# 07_codecs.patch   (rebased for pjsip 2.17 — opus hunk only)
+#
+# Force opus to be advertised as mono (channel_cnt = 1) instead of
+# pjsip default stereo. Keeps interop simple with the audio paths
+# (audiodev, AEC, telephone-event) which are mono throughout, and
+# avoids the SDP-side "channels=2" annotation that confuses some
+# B2BUAs.
+#
+# Rebase notes (vs the 2.12 version):
+#   * 2.17 opus.c uses space indentation (pjsip 2.13 sweep). The
+#     original tab-indented hunk is re-cast with spaces.
+#   * Line numbers shifted but the surrounding logic is identical:
+#     factory_enum_codecs() still hard-codes channel_cnt = 2 per
+#     RFC 7587 §7. We override.
+#   * The ffmpeg_vid_codecs.c hunks from the 2.12 version (H264
+#     PROFILE_H264_HIGH, x264 preset ultrafast / tune fastdecode,
+#     AVCODEC_HAS_ENCODE simplification, avcodec_get_frame_defaults
+#     #ifdef rewrite) are NOT included here. 2.17 ships the
+#     send_frame/receive_packet FFmpeg 5+ migration upstream, so the
+#     ifdef/AV_OPT context no longer matches. The H264-high-profile
+#     and x264 tuning bits will be reintroduced as part of the
+#     tier-5 ffmpeg_vid_codecs work (alongside the rewrite of
+#     17_fix_ffmpeg.patch, most of which is also subsumed).
+#
+--- pjsip_orig/pjmedia/src/pjmedia-codec/opus.c
++++ pjsip/pjmedia/src/pjmedia-codec/opus.c
+@@ -554,7 +554,7 @@
+          */
+         codecs[0].encoding_name = pj_str("opus");
+         codecs[0].clock_rate    = 48000;
+-        codecs[0].channel_cnt   = 2;
++        codecs[0].channel_cnt   = 1;
+         *count = 1;
+     }
+

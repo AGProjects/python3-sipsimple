@@ -1,0 +1,47 @@
+# 16_mac_audio_vpio_disable.patch
+#
+# Port of deps/patches/16_mac_audio_device_fix.patch from the 2.12 series.
+#
+# Without this patch, pjsip's CoreAudio backend detects the
+# VoiceProcessingIO audio unit and sets cf->has_vpio = PJ_TRUE, which makes
+# it announce PJMEDIA_AUD_DEV_CAP_EC on every device. The Python layer
+# (SIPApplication) takes the EC capability as a hint to use the Voice
+# Processing IO unit when opening the mic.
+#
+# Opening VPIO causes macOS to instantiate a transient virtual aggregate
+# device named "VPAUAggregateAudioDevice-0x<addr>". Because patch 05
+# (audio device observer) is now in effect, every appearance and
+# disappearance of this aggregate device fires
+# kAudioHardwarePropertyDevices listener -> DEVICE_LIST_CHANGED ->
+# pjmedia_aud_dev_refresh -> AudioDevicesDidChange -> Python re-opens
+# the audio session -> new aggregate device created -> loop.
+#
+# Symptom seen on 2.17 build (3 June 2026):
+#   Added audio device(s): VPAUAggregateAudioDevice-0x115811840
+#   Removed audio device(s): VPAUAggregateAudioDevice-0x115811840
+#   Added audio device(s): VPAUAggregateAudioDevice-0x114a61040
+#   ... (forever; cannot exit the program)
+#
+# Fix: comment out the VPIO detection. has_vpio stays PJ_FALSE, no EC cap
+# advertised, app uses the default HALOutput unit, no aggregate device
+# storm.
+#
+# Note: the EC capability bit was only ever advertised on Mac; on iOS the
+# code path is different. Disabling VPIO on Mac matches the 2.12 behaviour
+# the application was originally tested against.
+#
+--- pjsip/pjmedia/src/pjmedia-audiodev/coreaudio_dev.m.orig
++++ pjsip/pjmedia/src/pjmedia-audiodev/coreaudio_dev.m
+@@ -286,9 +286,12 @@
+     if (cf->io_comp == NULL)
+         return PJMEDIA_EAUD_INIT; // cannot find IO unit;
+
++    /*
++    Disabled — see deps/patches/2.17/16_mac_audio_vpio_disable.patch.
+     desc.componentSubType = kAudioUnitSubType_VoiceProcessingIO;
+     if (AudioComponentFindNext(NULL, &desc) != NULL)
+         cf->has_vpio = PJ_TRUE;
++    */
+
+     status = ca_factory_refresh(f);
+     if (status != PJ_SUCCESS)

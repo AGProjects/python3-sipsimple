@@ -4,9 +4,9 @@ from sipsimple.core._engine import *
 from sipsimple.core._helpers import *
 from sipsimple.core._primitives import *
 
-required_revision = 212
-if CORE_REVISION != required_revision:
-    raise ImportError("Wrong SIP core revision %d (expected %d)" % (CORE_REVISION, required_revision))
-del required_revision
+accepted_revisions = (212, 217)
+if CORE_REVISION not in accepted_revisions:
+    raise ImportError("Wrong SIP core revision %d (expected one of %s)" % (CORE_REVISION, accepted_revisions))
+del accepted_revisions
 
 

@@ -1,0 +1,42 @@
+# 12a_zrtp_pjmedia_h_makefile.patch
+#
+# Supplements 12_transport_zrtp.patch on the 2.17 build path with the two
+# bits that the 2.12 series got from patch 01 (build_system):
+#
+#   1. <pjmedia/transport_zrtp.h> added to the pjmedia.h umbrella include
+#      so sipsimple's `cdef extern from "pjmedia.h":` block sees the ZRTP
+#      symbols at Cython compile time.
+#   2. transport_zrtp.o added to the pjmedia build's PJMEDIA_OBJS list so
+#      the library actually links the new translation unit.
+#
+# Patch 01 (build_system) hasn't been rebased for 2.17 yet; once it lands
+# these two hunks will likely get folded into it and this supplement
+# can be dropped. Until then, this file keeps the 2.17 path closed.
+#
+# Numbered "12a" so it sorts AFTER 12_transport_zrtp.patch — the new
+# transport_zrtp.c needs to exist on disk before we can add it to the
+# Makefile object list.
+#
+--- pjsip_orig/pjmedia/include/pjmedia.h
++++ pjsip/pjmedia/include/pjmedia.h
+@@ -66,7 +66,8 @@
+ #include <pjmedia/transport.h>
+ #include <pjmedia/transport_adapter_sample.h>
+ #include <pjmedia/transport_ice.h>
+ #include <pjmedia/transport_loop.h>
+ #include <pjmedia/transport_srtp.h>
+ #include <pjmedia/transport_udp.h>
++#include <pjmedia/transport_zrtp.h>
+ #include <pjmedia/txt_stream.h>
+--- pjsip_orig/pjmedia/build/Makefile
++++ pjsip/pjmedia/build/Makefile
+@@ -71,8 +71,8 @@
+ 			resample_port.o rtcp.o rtcp_xr.o rtcp_fb.o rtp.o \
+ 			sdp.o sdp_cmp.o sdp_neg.o session.o silencedet.o \
+ 			sound_legacy.o sound_port.o stereo_port.o stream_common.o \
+ 			stream.o stream_info.o tonegen.o transport_adapter_sample.o \
+-			transport_ice.o transport_loop.o transport_srtp.o transport_udp.o \
++			transport_ice.o transport_loop.o transport_srtp.o transport_udp.o transport_zrtp.o \
+ 			types.o txt_stream.o vid_codec.o vid_codec_util.o \
+ 			vid_port.o vid_stream.o vid_stream_info.o vid_conf.o \
+ 			wav_player.o wav_playlist.o wav_writer.o wave.o \

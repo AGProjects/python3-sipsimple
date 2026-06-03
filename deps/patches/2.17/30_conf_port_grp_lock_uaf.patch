@@ -1,0 +1,68 @@
+# 30_conf_port_grp_lock_uaf.patch
+#
+# Fix UAF in pjmedia's async conference bridge (2.15+).
+#
+# Two related crashes on the audio I/O thread when a port is removed
+# (hold/unhold cycle, or call hangup):
+#
+#   A: pj_atomic_dec_and_get(NULL) in pj_grp_lock_dec_ref via
+#      op_remove_port2 -> conf_port->port->grp_lock (port pointer
+#      dangling — app freed the port pool after pjmedia_port_destroy
+#      returned, but the queued REMOVE_PORT op was still in flight).
+#
+#   B: jump to garbage in grp_lock_destroy's handler walk —
+#      pjmedia_port_init_grp_lock had also registered port_on_destroy,
+#      which captured the (now dangling) port pointer and tried to
+#      call port->on_destroy(port).
+#
+# Fix:
+#   1. Cache the grp_lock pointer on conf_port so op_remove_port2
+#      doesn't chase through conf_port->port (crash A).
+#   2. When the port arrives without a grp_lock, create a bare one
+#      with pj_grp_lock_create() instead of pjmedia_port_init_grp_lock
+#      — skips the port_on_destroy handler that would deref the freed
+#      port (crash B).
+--- pjsip_orig/pjmedia/src/pjmedia/conference.c
++++ pjsip/pjmedia/src/pjmedia/conference.c
+@@ -115,2 +115,3 @@
+     pjmedia_port        *port;          /**< get_frame() and put_frame()    */
++    pj_grp_lock_t       *port_grp_lock; /**< Cached port->grp_lock ptr.     */
+     pjmedia_port_op      rx_setting;    /**< Can we receive from this port  */
+@@ -434,13 +434,24 @@
+         if (!port->grp_lock) {
+-            /* Create group lock if it does not have one */
+-            pjmedia_port_init_grp_lock(port, pool, NULL);
++            /* Bare grp_lock — no port_on_destroy handler. Take the
++             * owner +1 ref that pjmedia_port_init_grp_lock would have
++             * added, so pjmedia_port_dec_ref() from the app side
++             * doesn't drop the count to 0 before the conf bridge has
++             * had its turn. */
++            pj_grp_lock_t *gl;
++            if (pj_grp_lock_create(pool, NULL, &gl) == PJ_SUCCESS) {
++                pj_grp_lock_add_ref(gl);
++                port->grp_lock = gl;
++            }
+         }
+
+-        pj_grp_lock_add_ref(port->grp_lock);
++        if (port->grp_lock)
++            pj_grp_lock_add_ref(port->grp_lock);
++        conf_port->port_grp_lock = port->grp_lock;
+
+         /* Pool may be used for creating port's group lock and the group lock
+          * may be used by app, so pool destroy must be done via handler.
+          */
+-        status = pj_grp_lock_add_handler(port->grp_lock, NULL, conf_port,
+-                                         &conf_port_on_destroy);
++        if (port->grp_lock)
++            status = pj_grp_lock_add_handler(port->grp_lock, NULL, conf_port,
++                                             &conf_port_on_destroy);
+     }
+@@ -2028,5 +2040,5 @@
+     /* Decrease conf port ref count and destroy */
+-    if (conf_port->port && conf_port->port->grp_lock)
+-        pj_grp_lock_dec_ref(conf_port->port->grp_lock);
++    if (conf_port->port_grp_lock)
++        pj_grp_lock_dec_ref(conf_port->port_grp_lock);
+     else
+         conf_port_on_destroy(conf_port);

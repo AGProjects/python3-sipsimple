@@ -23,13 +23,14 @@ import cython
 
 PJ_VERSION = pj_get_version()
 PJ_SVN_REVISION = int(PJ_SVN_REV)
-CORE_REVISION = 212
+# Track the underlying pjsip build (212 or 217) so the runtime banner
+# ("core version 217.N") matches what _core.so actually links against.
+# The compatibility gate in sipsimple/core/__init__.py accepts both.
+CORE_REVISION = PJ_SVN_REVISION
 
-# Local build counter. CORE_REVISION is the semantic SDK API revision
-# and must match required_revision in sipsimple/core/__init__.py — do
-# NOT change it for local rebuilds. Bump CORE_BUILD instead each time
-# you cut a new _core.so so the runtime banner ("core version 212.N")
-# proves the new code is loaded.
+# Local build counter. Bump CORE_BUILD each time you cut a new _core.so
+# so the runtime banner ("core version <rev>.N") proves the new code is
+# loaded.
 CORE_BUILD = 8
 
 CYTHON_VERSION = cython.__version__

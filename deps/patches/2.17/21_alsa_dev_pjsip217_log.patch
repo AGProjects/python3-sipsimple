@@ -1,0 +1,37 @@
+# 21_alsa_dev_pjsip217_log.patch (rebased from 2.12)
+#
+# Fix two PJ_LOG calls in alsa_dev.c that still reference the
+# pjmedia_aud_dev_info::name field instead of the new alsa_name field
+# introduced by patch 05_audio_device. Without this patch alsa_dev.c
+# fails to compile on Linux against the patch 05 struct refactor:
+#
+#   error: 'struct alsa_dev_info' has no member named 'name'; did you
+#          mean 'alsa_name'?
+#
+# Note: Linux-only — Mac builds skip alsa_dev.c entirely.
+#
+# 2.17 vs 2.12 differences in this file:
+#   * 4-space indent (2.12 used tabs)
+#   * The format string here adds ", err: %s" and snd_strerror(result)
+#     (upstream change between 2.10 and 2.17).
+#
+--- pjsip_orig/pjmedia/src/pjmedia-audiodev/alsa_dev.c
++++ pjsip/pjmedia/src/pjmedia-audiodev/alsa_dev.c
+@@ -799,7 +799,7 @@
+     if (result < 0) {
+         PJ_LOG (3,(THIS_FILE, "Unable to set a channel count of %d for "
+                    "playback device '%s', err: %s", param->channel_count,
+-                   stream->af->devs[param->play_id].name,snd_strerror(result)));
++                   stream->af->devs[param->play_id].alsa_name,snd_strerror(result)));
+
+         goto on_error;
+     }
+@@ -993,7 +993,7 @@
+     if (result < 0) {
+         PJ_LOG (3,(THIS_FILE, "Unable to set a channel count of %d for "
+                     "capture device '%s', err: %s", param->channel_count,
+-                    stream->af->devs[param->rec_id].name,snd_strerror(result)));
++                    stream->af->devs[param->rec_id].alsa_name,snd_strerror(result)));
+
+         goto on_error;
+     }

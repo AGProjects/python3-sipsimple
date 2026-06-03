@@ -1,0 +1,110 @@
+# 44_vpx_encoder_rate_control.patch
+#
+# Fix pjmedia's VP8/VP9 encoder configuration so it actually puts
+# meaningful video on the wire instead of dropping almost every frame.
+#
+# The problem
+# -----------
+# Stock pjmedia configures both VP8 and VP9 with:
+#
+#     DEFAULT_AVG_BITRATE = 200000        // 200 kbps
+#     cfg.rc_end_usage    = VPX_CBR       // strict CBR
+#     cfg.rc_dropframe_thresh = 25        // drop on buffer underrun
+#
+# At 1088x1088 (the codec-natural picture buffer for ~1080p-ish input
+# this build of pjsip routinely produces), libvpx in CBR mode physically
+# cannot fit a frame inside ~6.6 kbit (200000 bps / 30 fps) without
+# blowing the quality budget, so its rate controller drops the frame.
+#
+# Captured a real Sylk Mobile <-> Blink VP9 session and confirmed the
+# behaviour:
+#
+#   * Mac->Mobile: 8 frames over 10.4s ≈ 0.8 fps, ~16 kbps on wire
+#   * Mobile->Mac: 184 frames over 6.7s ≈ 27.4 fps, ~285 kbps
+#
+# The descriptor side of the same patch series is correct (see
+# 23_vpx_packetizer_libwebrtc_interop.patch) - libwebrtc just has
+# nothing to display because the Mac encoder is producing one frame
+# per second.
+#
+# Why H264 doesn't have this problem
+# ----------------------------------
+# H264 on Apple Silicon goes through VideoToolbox (hardware codec)
+# which has its own rate control independent of pjmedia's CBR knobs.
+# It happily produces 25-30 fps regardless of the avg_bps setting.
+# Only the libvpx path is gated by this config.
+#
+# What this patch changes
+# -----------------------
+#  1. Bump DEFAULT_AVG_BITRATE / DEFAULT_MAX_BITRATE from 200 kbps to
+#     800 kbps - a sane target for VGA / qVGA H264-style video. Still
+#     well within typical broadband uplinks.
+#  2. Switch rc_end_usage from VPX_CBR to VPX_VBR. VBR lets quality
+#     dip on hard frames instead of dropping them. For real-time video
+#     a frozen pictureless stream is worse than a slightly-blocky one.
+#  3. Drop rc_dropframe_thresh from 25 to 0. With VBR + a realistic
+#     bitrate this rarely fires, but at 25 it triggers far too often
+#     under the old CBR config and on transient bandwidth dips.
+#
+# Together these turn libvpx from "drop almost every frame" into
+# "always produce a frame; let the quantizer take the hit when the
+# budget is tight". Mobile gets >25 fps to display.
+#
+# Tunable
+# -------
+# If the wire bitrate ends up too high for someone's uplink, the
+# AVG_BITRATE constant is the only knob worth touching - VBR + 0
+# drop threshold is the right behaviour for real-time video
+# regardless of target rate.
+#
+--- pjsip_orig/pjmedia/src/pjmedia-codec/vpx.c
++++ pjsip/pjmedia/src/pjmedia-codec/vpx.c
+@@ -52,8 +52,15 @@
+ #endif
+ 
+ #define DEFAULT_FPS             15
+-#define DEFAULT_AVG_BITRATE     200000
+-#define DEFAULT_MAX_BITRATE     200000
++/*
++ * Stock pjmedia advertised a 200 kbps target which left libvpx no
++ * room to encode VGA-or-larger frames inside its CBR budget; almost
++ * every frame was dropped (~0.8 fps measured against Sylk Mobile).
++ * Bump to a realistic VGA-class default so the encoder can actually
++ * emit frames. See 44_vpx_encoder_rate_control.patch.
++ */
++#define DEFAULT_AVG_BITRATE     800000
++#define DEFAULT_MAX_BITRATE     800000
+ 
+ #define MAX_RX_RES              1200
+ 
+@@ -448,7 +455,14 @@
+     cfg.rc_target_bitrate = vpx_data->prm->enc_fmt.det.vid.avg_bps / 1000;
+     
+     cfg.g_pass = VPX_RC_ONE_PASS;
+-    cfg.rc_end_usage = VPX_CBR;
++    /*
++     * VBR instead of CBR: under CBR libvpx drops frames it can't fit
++     * inside the per-frame bitrate budget.  For real-time video a
++     * pictureless stream is worse than a slightly-blocky one, so let
++     * the quantizer take the hit on hard frames and keep producing
++     * output.  See 44_vpx_encoder_rate_control.patch.
++     */
++    cfg.rc_end_usage = VPX_VBR;
+     cfg.g_threads = 4;
+     cfg.g_lag_in_frames = 0;
+     cfg.g_error_resilient = 0;
+@@ -462,7 +476,13 @@
+     cfg.kf_max_dist = 60 * vpx_data->prm->enc_fmt.det.vid.fps.num/
+                       vpx_data->prm->enc_fmt.det.vid.fps.denum;
+     cfg.rc_resize_allowed = 0;
+-    cfg.rc_dropframe_thresh = 25;
++    /*
++     * Never drop a frame on buffer underrun.  Combined with VBR above,
++     * this keeps the wire framerate stable; quality dips on hard
++     * frames are absorbed by the quantizer instead of by silently
++     * dropping the picture.
++     */
++    cfg.rc_dropframe_thresh = 0;
+ 
+     vpx_data->enc_input_size = cfg.g_w * cfg.g_h * 3 >> 1;
+ 
