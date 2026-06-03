@@ -1,137 +1,38 @@
-# 23_vpx_packetizer_libwebrtc_interop.patch (full port for 2.17)
+# 23_vpx_packetizer_libwebrtc_interop.patch (parked — no-op)
 #
-# Makes pjmedia's VP9 RTP packetizer emit the full non-flexible
-# single-layer descriptor that libwebrtc-based receivers (Chromium /
-# react-native-webrtc / Sylk Mobile) need to track frames.
+# Empirical result on 3 June 2026: pjsip 2.12 worked end-to-end with
+# Sylk Mobile / libwebrtc on VP9 using the *minimal* 1-byte VP9
+# descriptor (just the B/E start/end flags).  Adding an RFC-9628-style
+# 4-byte non-flexible single-layer descriptor with PictureID +
+# TID/SID/D + TL0PICIDX — which is what every WebRTC interop guide
+# suggests — actually breaks the libwebrtc receiver: Sylk's display
+# stays black even when the encoder is producing >25 fps with healthy
+# bitrate (verified via 44_vpx_encoder_rate_control.patch + pcap).
 #
-# Background
-# ----------
-# 2.17 upstream already updated VP8 to emit the X+I extension with a
-# dual-octet PictureID — that side works fine against libwebrtc.
-# VP9 was left at the 1-byte minimal descriptor (B/E bits only).
+# Best guess: libwebrtc's VP9 depacketizer treats every header field
+# as a tight contract, and one of TID/SID/D/U-bit/PID/TL0PICIDX
+# semantics is interpreted differently between pjmedia and libwebrtc.
+# Without instrumented logging inside libwebrtc we can't isolate
+# which field is the disagreement — and since the 1-byte minimal
+# descriptor works fine for the same peer, the right move is to
+# stop trying to "improve" it.
 #
-# A first 2.17 attempt added I=1 + PictureID alone, which made things
-# WORSE: setting I=1 promises libwebrtc that more descriptor follows,
-# but PictureID alone is not enough to reconstruct the frame-reference
-# chain in non-flexible mode (F=0).  libwebrtc decodes the keyframe,
-# then drops every P-frame because it can't sequence references —
-# hence the "1 frame then frozen" symptom we saw.
+# Earlier in-tree iterations of this slot
+# ---------------------------------------
+#   * PID-only (2-byte desc):     decoded 1 keyframe then froze.
+#   * Full I+L+TL0PICIDX (4-byte): Sylk display stays black even at
+#                                  25 fps wire rate.
+#   * Vanilla 2.17 (1-byte B/E):   Sylk display works; framerate
+#                                  bottlenecked by encoder until
+#                                  44_vpx_encoder_rate_control.patch
+#                                  lands.
 #
-# The full non-flexible single-layer descriptor (this patch):
+# Conclusion: 2.17 upstream VP9 packetization is already correct for
+# libwebrtc interop.  This patch slot stays empty unless and until
+# a measured improvement is found.  44_vpx_encoder_rate_control.patch
+# is the one that actually fixes the user-visible "Sylk sees nothing"
+# symptom — by making the encoder produce frames at all.
 #
-#     0 1 2 3 4 5 6 7
-#    +-+-+-+-+-+-+-+-+
-#    |I|P|L|F|B|E|V|Z|     # I=1, P=!keyframe, L=1, F=0, B/E from
-#    +-+-+-+-+-+-+-+-+     # fragmentation state, V=0, Z=0
-#    |M|     PID     |     # M=0 (7-bit PID), PictureID
-#    +-+-+-+-+-+-+-+-+
-#    |TID|U|SID|D|         # TID=0 U=0 SID=0 D=0 (single-layer)
-#    +-+-+-+-+-+-+-+-+
-#    |   TL0PICIDX   |     # base-layer (TID=0) picture index counter
-#    +-+-+-+-+-+-+-+-+
-#
-# Both PictureID and TL0PICIDX are 7- / 8-bit counters that
-# wrap; they advance once per encoded frame (when bits_pos==0).
-# Since every frame is TID=0 (no temporal scalability), TL0PICIDX
-# == picture_id in practice, but emitting it explicitly is what
-# libwebrtc's non-flexible-mode decoder expects to see.
-#
-# vpx.c is updated to know that VP9 descriptor size is now 4 bytes
-# so the frame-data memcpy lands at the right offset.
-#
-# What's still NOT covered
-# ------------------------
-# * Temporal-scalability (TID > 0) — libwebrtc handles us being a
-#   single-layer producer fine; if Blink ever starts producing
-#   actual temporal layers, this packetizer needs to learn how to
-#   read the encoder's temporal-id and emit it (instead of hardcoded
-#   0).  PictureID and TL0PICIDX increments would split between
-#   "every frame" (PID) and "every TID=0 frame" (TL0PICIDX).
-# * Flexible mode (F=1) — requires explicit reference-index list
-#   per frame, which the current encoder integration doesn't expose.
-#   Non-flexible mode is sufficient for libwebrtc interop today.
-#
---- pjsip_orig/pjmedia/src/pjmedia-codec/vpx_packetizer.c
-+++ pjsip/pjmedia/src/pjmedia-codec/vpx_packetizer.c
-@@ -36,6 +36,12 @@
-     /* Current settings */
-     pjmedia_vpx_packetizer_cfg cfg;
-     unsigned int picture_id;
-+
-+    /* Base-temporal-layer (TID=0) picture index counter, emitted
-+     * as the TL0PICIDX byte of the non-flexible VP9 descriptor.
-+     * For single-temporal-layer streams this advances every frame,
-+     * in lock-step with picture_id. */
-+    unsigned int tl0_pic_idx;
- };
- 
- /*
-@@ -88,7 +94,7 @@
-                                           pj_uint8_t **payload,
-                                           pj_size_t *payload_len)
- {
--    unsigned payload_desc_size = (pktz->cfg.fmt_id == PJMEDIA_FORMAT_VP8? 4: 1);
-+    unsigned payload_desc_size = (pktz->cfg.fmt_id == PJMEDIA_FORMAT_VP8? 4: 4);
-     unsigned max_size = pktz->cfg.mtu - payload_desc_size;
-     unsigned remaining_size = (unsigned)bits_len - *bits_pos;
-     unsigned out_size = (unsigned)*payload_len;
-@@ -120,14 +126,36 @@
-         /* Set N: Non-reference frame */
-         if (!is_keyframe) bits[0] |= 0x20;
-     } else if (pktz->cfg.fmt_id == PJMEDIA_FORMAT_VP9) {
--        /* Set P: Inter-picture predicted frame */
-+        /*
-+         * libwebrtc-interop: emit the 4-byte non-flexible single-layer
-+         * VP9 descriptor (RFC 9628 / draft-ietf-payload-vp9):
-+         *   bits[0] = |I=1|P|L=1|F=0|B|E|V=0|Z=0|
-+         *   bits[1] = |M=0|PID(7)|
-+         *   bits[2] = |TID=0|U=0|SID=0|D=0|
-+         *   bits[3] = TL0PICIDX
-+         */
-+        pjmedia_vpx_packetizer *pktz_mut = (pjmedia_vpx_packetizer *)pktz;
-+
-+        /* I=1 + L=1 */
-+        bits[0] = 0xA0;
-+        /* P=1 inter-picture predicted frame */
-         if (!is_keyframe) bits[0] |= 0x40;
--        /* Set B: Start of a frame */
--        if (*bits_pos == 0) bits[0] |= 0x8;
--        /* Set E: End of a frame */
-+        /* B=1 start of a frame; advance per-frame counters here */
-+        if (*bits_pos == 0) {
-+            bits[0] |= 0x08;
-+            pktz_mut->picture_id  = (pktz_mut->picture_id  + 1) & 0x7F;
-+            pktz_mut->tl0_pic_idx = (pktz_mut->tl0_pic_idx + 1) & 0xFF;
-+        }
-+        /* E=1 end of a frame */
-         if (*bits_pos + *payload_len == bits_len) {
--            bits[0] |= 0x4;
-+            bits[0] |= 0x04;
-         }
-+        /* M=0 single-octet PictureID */
-+        bits[1] = (pj_uint8_t)(pktz->picture_id & 0x7F);
-+        /* Single-layer: TID=0, U=0, SID=0, D=0 */
-+        bits[2] = 0x00;
-+        /* TL0PICIDX */
-+        bits[3] = (pj_uint8_t)(pktz->tl0_pic_idx & 0xFF);
-     }
-     return PJ_SUCCESS;
- }
---- pjsip_orig/pjmedia/src/pjmedia-codec/vpx.c
-+++ pjsip/pjmedia/src/pjmedia-codec/vpx.c
-@@ -660,8 +660,13 @@
-     vpx_data = (vpx_codec_data*) codec->codec_data;
-     
-     if (vpx_data->enc_processed < vpx_data->enc_frame_size) {
--        /* For VP8, use 4 bytes payload desc, see #4659 for more info */
--        unsigned payload_desc_size = (vpx_data->prm->enc_fmt.id==PJMEDIA_FORMAT_VP8)? 4 : 1;
-+        /*
-+         * VP8: 4-byte X+I descriptor (dual-octet PictureID).
-+         * VP9: 4-byte non-flexible single-layer descriptor
-+         *      (I=1, L=1, PID + TID + TL0PICIDX) — see
-+         *      23_vpx_packetizer_libwebrtc_interop.patch.
-+         */
-+        unsigned payload_desc_size = 4;
-         
-         pj_size_t payload_len = out_size;
-         pj_uint8_t *p = (pj_uint8_t *)output->buf;
+# This file is intentionally empty of diff content — get_dependencies.sh
+# skips patches with no `---` header, so this slot is a no-op in the
+# 2.17 series.
