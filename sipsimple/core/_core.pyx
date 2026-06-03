@@ -31,7 +31,7 @@ CORE_REVISION = PJ_SVN_REVISION
 # Local build counter. Bump CORE_BUILD each time you cut a new _core.so
 # so the runtime banner ("core version <rev>.N") proves the new code is
 # loaded.
-CORE_BUILD = 8
+CORE_BUILD = 9
 
 CYTHON_VERSION = cython.__version__
 

@@ -37,8 +37,13 @@
 # What this patch changes
 # -----------------------
 #  1. Bump DEFAULT_AVG_BITRATE / DEFAULT_MAX_BITRATE from 200 kbps to
-#     800 kbps - a sane target for VGA / qVGA H264-style video. Still
-#     well within typical broadband uplinks.
+#     1500 kbps. 800 kbps was enough to make the encoder *produce*
+#     frames but at the default 720x480 resolution it starved libvpx
+#     so badly that every frame went out near rc_max_quantizer - the
+#     wire framerate was fine but the picture looked like 1990s
+#     RealVideo. 1.5 Mbps is what libwebrtc targets by default for
+#     VGA VP9, and under VBR the encoder will not actually consume
+#     it unless the scene needs it.
 #  2. Switch rc_end_usage from VPX_CBR to VPX_VBR. VBR lets quality
 #     dip on hard frames instead of dropping them. For real-time video
 #     a frozen pictureless stream is worse than a slightly-blocky one.
@@ -72,8 +77,8 @@
 + * Bump to a realistic VGA-class default so the encoder can actually
 + * emit frames. See 44_vpx_encoder_rate_control.patch.
 + */
-+#define DEFAULT_AVG_BITRATE     800000
-+#define DEFAULT_MAX_BITRATE     800000
++#define DEFAULT_AVG_BITRATE     1500000
++#define DEFAULT_MAX_BITRATE     1500000
  
  #define MAX_RX_RES              1200
  
