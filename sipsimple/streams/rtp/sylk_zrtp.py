@@ -93,6 +93,8 @@ from collections import namedtuple
 from application import log
 from application.notification import NotificationCenter, NotificationData
 
+from sipsimple.configuration.settings import SIPSimpleSettings
+
 try:
     from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
@@ -481,6 +483,44 @@ class SylkZrtpSecretStore(object):
 _secret_store = SylkZrtpSecretStore()
 
 
+# ----- v3 signing-keys auto-plumbing hook -------------------------------
+#
+# Problem: SylkZRTPSession.set_signing_keys() lives on the instance and
+# the consuming application (sip-session3, sylk-server, …) is the only
+# place that knows where local PGP private keys + cached peer public
+# keys are stored. session.py creates SylkZRTPSession and immediately
+# calls start_probe() (caller) or handle_incoming() (callee), giving the
+# consumer no synchronous opportunity to inject keys between
+# construction and the first signed payload going on the wire.
+#
+# Solution: a module-level provider callback that the consumer
+# registers ONCE at startup. The SylkZRTPSession constructor calls it
+# (best-effort) to pull (local_priv_blob, peer_pub_blob) for the
+# session being built, sets them on the instance, and then proceeds as
+# usual. The result is automatic v3 sign + verify on every call without
+# a /zrtp_pgp_keys slash command for each one.
+#
+# Callback shape:
+#     def provider(session, role) -> (local_priv_blob, peer_pub_blob)
+#
+# Either tuple element may be None; the provider may return None
+# wholesale to mean "no keys this time" (e.g. peer hasn't sent us their
+# pubkey yet). Exceptions inside the provider are caught and logged —
+# they MUST NOT take down a call. Setting the provider to None disables
+# auto-plumbing without touching the manual set_signing_keys() path.
+_signing_keys_provider = None
+
+
+def register_signing_keys_provider(fn):
+    """Register a callback invoked on every SylkZRTPSession construction
+    to auto-populate (local_priv_blob, peer_pub_blob). See module
+    docstring above for the contract. Pass None to disable."""
+    global _signing_keys_provider
+    if fn is not None and not callable(fn):
+        raise TypeError('signing_keys_provider must be callable or None')
+    _signing_keys_provider = fn
+
+
 def _rs_id_hex(rs1):
     """rs_id = first 8 bytes of SHA-256(rs1), hex-encoded. 16 hex chars."""
     if not isinstance(rs1, (bytes, bytearray)) or len(rs1) != _RS_LEN:
@@ -647,16 +687,91 @@ class SylkZRTPSession(object):
         # different physical devices behind the same SIP AOR no longer
         # collide on the rs1 slot — fixes the multi-device collapse
         # problem where A↔B verification gets overwritten by an A↔C call.
+        #
+        # IMPORTANT — instance_id lives on SIPSimpleSettings (the
+        # process-wide singleton), NOT on Account.sip. The +sip.instance
+        # Contact-header parameter is also built from settings.instance_id
+        # (see account/registration.py), so reading it here ensures
+        # whatever we tell our ZRTP peer matches what the peer's SIP
+        # stack sees in the REGISTER / INVITE. The previous attempt at
+        # `session.account.sip.instance_id` always returned None, so the
+        # python-sipsimple side shipped probes without `device_id`, the
+        # peer (sylk-mobile) couldn't establish per-device rs1 keying,
+        # and it fell back to its legacy single-device slot whose
+        # contents diverged from our composite slot — the cascading
+        # "SAS changed" / continuity=mismatch every other call.
+        #
+        # settings.instance_id is stored as a URN ("urn:uuid:<UUID>");
+        # we normalise to the bare UUID string so the wire format
+        # matches sylk-mobile's react-native-device-info getUniqueId()
+        # output (a hex blob) on length / shape and the on-the-wire
+        # value stays stable across restarts.
         try:
-            account = getattr(session, 'account', None)
-            sip = getattr(account, 'sip', None) if account is not None else None
-            inst = getattr(sip, 'instance_id', None) if sip is not None else None
+            settings = SIPSimpleSettings()
+            inst = getattr(settings, 'instance_id', None)
             if isinstance(inst, bytes):
                 inst = inst.decode('ascii', errors='replace')
+            if inst:
+                # Strip a "urn:uuid:" prefix if present; pass the rest
+                # through uuid.UUID for canonical lowercase formatting.
+                # On any parse error fall back to the raw string so a
+                # legacy non-URN value still gets used.
+                try:
+                    inst = str(uuid.UUID(inst))
+                except (ValueError, AttributeError):
+                    pass
             self.local_device_id = inst or None
         except Exception:
             self.local_device_id = None
         self.peer_device_id = None
+
+        # ---- v3 signing-keys auto-plumbing -----------------------------
+        # If the application registered a provider via
+        # register_signing_keys_provider(), call it now to populate
+        # local_priv_key / peer_pub_key. Done BEFORE the "session
+        # created" log line below so the peer_pgp / local_priv flags it
+        # prints reflect reality. Provider exceptions are demoted to
+        # warnings — a misbehaving provider must not abort a call (the
+        # session falls back to "no keys plumbed" which degrades to v2
+        # semantics for this pairing, same as if the provider returned
+        # (None, None)). Done AFTER the manual fields above so a later
+        # explicit set_signing_keys() call still wins as documented.
+        if _signing_keys_provider is not None:
+            try:
+                result = _signing_keys_provider(session, role)
+            except Exception as e:
+                log.warning('[sylk-zrtp] signing-keys provider raised: %s' % e)
+                result = None
+            if result is not None:
+                try:
+                    local_priv_blob, peer_pub_blob = result
+                except (TypeError, ValueError) as e:
+                    log.warning('[sylk-zrtp] signing-keys provider returned '
+                                'non-2-tuple: %s' % e)
+                    local_priv_blob = peer_pub_blob = None
+                if local_priv_blob is not None:
+                    self.local_priv_key = local_priv_blob
+                if peer_pub_blob is not None:
+                    self.peer_pub_key = peer_pub_blob
+
+        # Session-creation breadcrumb — symmetric with sylk-mobile's
+        # "created —" line in CallZrtp.js. Surfaces the things that
+        # silently being None used to mask: local_device_id (which the
+        # previous Account.sip lookup always read as None, breaking
+        # per-device rs1 keying), whether we have a continuity rs1
+        # stocked for this peer, and whether v3 signing keys were
+        # plumbed in. Logged once at __init__; a grep for the call_id
+        # then pairs this against the peer's "created —" line on the
+        # mobile side.
+        log.info('[sylk-zrtp] %s call %s: session created — '
+                 'local_device_id=%s local_rs_id_hex=%s peer_aor=%s '
+                 'peer_pgp=%s local_priv=%s'
+                 % (self.role, self.call_id,
+                    self.local_device_id or '<none>',
+                    self.local_rs_id_hex or '<none>',
+                    self.peer_aor or '<none>',
+                    'yes' if self.peer_pub_key else 'no',
+                    'yes' if self.local_priv_key else 'no'))
 
     def _store_key(self):
         """Composite SQLite key. Uses peer_aor + '#' + peer_device_id
