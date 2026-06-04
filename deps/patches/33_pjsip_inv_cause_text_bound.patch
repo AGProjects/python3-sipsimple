@@ -68,9 +68,9 @@
 #
 --- pjsip_orig/pjsip/src/pjsip-ua/sip_inv.c
 +++ pjsip/pjsip/src/pjsip-ua/sip_inv.c
-@@ -501,14 +501,36 @@
+@@ -350,13 +350,34 @@
  static void inv_set_cause(pjsip_inv_session *inv, int cause_code,
-                           const pj_str_t *cause_text)
+ 			  const pj_str_t *cause_text)
  {
 +    /*
 +     * Defensive bound on the reason phrase. RFC 3261 reason-phrases
@@ -84,27 +84,29 @@
 +    enum { INV_MAX_CAUSE_TEXT_LEN = 256 };
 +    pj_str_t src;
 +
-     if ((cause_code > (int)inv->cause) || inv->pending_bye) {
-         inv->cause = (pjsip_status_code) cause_code;
+     if ((cause_code > inv->cause) || inv->pending_bye) {
+-	inv->cause = (pjsip_status_code) cause_code;
+-	if (cause_text)
+-	    pj_strdup(inv->pool, &inv->cause_text, cause_text);
+-	else if (cause_code/100 == 2)
+-	    inv->cause_text = pj_str("Normal call clearing");
+-	else
+-	    inv->cause_text = *pjsip_get_status_text(cause_code);
++	inv->cause = (pjsip_status_code) cause_code;
++	if (cause_text)
++	    src = *cause_text;
++	else if (cause_code/100 == 2)
++	    src = pj_str("Normal call clearing");
++	else
++	    src = *pjsip_get_status_text(cause_code);
 +
-         if (cause_text)
--            pj_strdup(inv->pool, &inv->cause_text, cause_text);
-+            src = *cause_text;
-         else if (cause_code/100 == 2)
--            inv->cause_text = pj_str("Normal call clearing");
-+            src = pj_str("Normal call clearing");
-         else
--            inv->cause_text = *pjsip_get_status_text(cause_code);
-+            src = *pjsip_get_status_text(cause_code);
-+
-+        if (src.ptr == NULL || src.slen <= 0) {
-+            inv->cause_text.ptr = NULL;
-+            inv->cause_text.slen = 0;
-+        } else {
-+            if (src.slen > INV_MAX_CAUSE_TEXT_LEN)
-+                src.slen = INV_MAX_CAUSE_TEXT_LEN;
-+            pj_strdup(inv->pool, &inv->cause_text, &src);
-+        }
++	if (src.ptr == NULL || src.slen <= 0) {
++	    inv->cause_text.ptr = NULL;
++	    inv->cause_text.slen = 0;
++	} else {
++	    if (src.slen > INV_MAX_CAUSE_TEXT_LEN)
++		src.slen = INV_MAX_CAUSE_TEXT_LEN;
++	    pj_strdup(inv->pool, &inv->cause_text, &src);
++	}
      }
  }
-
