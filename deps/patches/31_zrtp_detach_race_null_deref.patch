@@ -85,49 +85,27 @@
 # all readers, but for the reproducer at hand the NULL-check is
 # sufficient and matches the defensive style of nearby pjmedia code.
 #
-# Note on whitespace
-# ------------------
-# transport_zrtp.c has two unusual "blank" lines inside this function
-# (file lines 893 and 895) that actually contain a single space, carried
-# over from the file-creation hunk in deps/patches/12_transport_zrtp.patch.
-# Representing those single-space lines verbatim in a unified diff is
-# fragile (most editors strip trailing whitespace), so this patch instead
-# REMOVES them outright (as a side cleanup) using bare `-` lines, and
-# relies on get_dependencies.sh applying the patch series with
-# `patch -l` (--ignore-whitespace) so the bare `-` matches the
-# single-space file line. If applying manually, use:
-#
-#     patch -l -p0 <deps/patches/31_zrtp_detach_race_null_deref.patch
 #
 --- pjsip_orig/pjmedia/src/pjmedia/transport_zrtp.c
 +++ pjsip/pjmedia/src/pjmedia/transport_zrtp.c
-@@ -886,12 +886,24 @@
- static void transport_rtp_cb2(pjmedia_tp_cb_param *param)
- {
-     struct tp_zrtp *zrtp = (struct tp_zrtp*)param->user_data;
-     pj_uint8_t* buffer = (pj_uint8_t*)param->pkt;
-     int32_t newLen = 0;
-     pj_status_t rc = PJ_SUCCESS;
+@@ -892,3 +892,17 @@
      pjmedia_tp_cb_param cbparam;
-+
+  
 +    /*
-+     * NULL-DEREF FIX: bail out if the stream has detached. The slave
-+     * UDP transport's detach is not synchronous with in-flight ioqueue
-+     * callbacks, so a packet that was already queued for dispatch can
-+     * still reach this wrapper after transport_detach() has cleared
-+     * stream_user_data and stream_rtp_cb2. pjproject 2.12's
-+     * stream.c::on_rx_rtp has no grp_lock / NULL guard of its own and
-+     * will segfault on a NULL user_data. See
++     * NULL-DEREF FIX: drop the packet if the stream has detached.
++     * The slave UDP transport detach is not synchronous with
++     * in-flight ioqueue callbacks, so a packet that was already
++     * queued for dispatch can still reach this wrapper after
++     * transport_detach() has cleared stream_user_data and
++     * stream_rtp_cb2. pjproject 2.12 stream.c::on_rx_rtp has no
++     * NULL guard and segfaults on a NULL user_data. See
 +     * deps/patches/31_zrtp_detach_race_null_deref.patch.
 +     */
 +    if (zrtp == NULL || zrtp->stream_user_data == NULL ||
 +        zrtp->stream_rtp_cb2 == NULL)
 +        return;
--
++
      pj_assert(zrtp && zrtp->stream_rtp_cb2 && param->pkt);
--
-     // check if this could be a real RTP/SRTP packet.
-     if ((*buffer & 0xf0) != 0x10)
 @@ -1073,6 +1085,13 @@
          pjmedia_transport_detach(zrtp->slave_tp, zrtp);
          zrtp->stream_user_data = NULL;
@@ -142,3 +120,4 @@
          zrtp->stream_rtcp_cb = NULL;
      }
  }
+

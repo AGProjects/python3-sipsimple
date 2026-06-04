@@ -61,25 +61,31 @@
      zrtp->zrtpBuffer = pj_pool_zalloc(pool, MAX_ZRTP_SIZE);
      zrtp->sendBuffer = pj_pool_zalloc(pool, MAX_RTP_BUFFER_LEN);
      zrtp->sendBufferCtrl = pj_pool_zalloc(pool, MAX_RTCP_BUFFER_LEN);
-@@ -1086,9 +1091,17 @@
+@@ -1090,16 +1090,23 @@
      if (zrtp->stream_user_data != NULL)
      {
          pjmedia_transport_detach(zrtp->slave_tp, zrtp);
-+        /* Acquire cb_lock — blocks until any in-flight transport_rtp_cb2
-+         * has released it. Then clear pointers under the lock, so any
-+         * future cb2 sees them NULL after we drop the lock. After this
-+         * function returns, pjmedia_stream_destroy can safely free the
-+         * stream pool. See deps/patches/32_zrtp_cb_lock_sync.patch. */
++        /* Block until any in-flight transport_rtp_cb2 has released
++         * cb_lock, then clear the callback pointers under the lock so
++         * any future cb2 sees them NULL after we drop it.  After this
++         * returns, pjmedia_stream_destroy can safely free the stream
++         * pool.  See deps/patches/32_zrtp_cb_lock_sync.patch. */
 +        pj_mutex_lock(zrtp->cb_lock);
          zrtp->stream_user_data = NULL;
          zrtp->stream_rtp_cb = NULL;
-+        zrtp->stream_rtp_cb2 = NULL;
+         /*
+          * NULL-DEREF FIX: also clear stream_rtp_cb2 so the cb2
+          * NULL-check in transport_rtp_cb2() actually trips on a
+          * post-detach ioqueue callback. See
+          * deps/patches/31_zrtp_detach_race_null_deref.patch.
+          */
+         zrtp->stream_rtp_cb2 = NULL;
          zrtp->stream_rtcp_cb = NULL;
 +        pj_mutex_unlock(zrtp->cb_lock);
      }
  }
-
-@@ -1366,6 +1379,11 @@
+ 
+@@ -1366,5 +1379,10 @@
      pj_mutex_lock(zrtp->zrtpMutex);
      pj_mutex_unlock(zrtp->zrtpMutex);
      pj_mutex_destroy(zrtp->zrtpMutex);
@@ -88,6 +94,5 @@
 +        pj_mutex_unlock(zrtp->cb_lock);
 +        pj_mutex_destroy(zrtp->cb_lock);
 +    }
-
+ 
      pj_pool_release(zrtp->pool);
-
