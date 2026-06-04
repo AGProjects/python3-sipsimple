@@ -2938,8 +2938,24 @@ class Session(object):
 
     def _NH_MediaStreamDidStart(self, notification):
         stream = notification.sender
+        # Guard against a race we hit on Mac -> Sylk video calls:
+        # stream.encryption.type can report 'ZRTP' (because the SDP /
+        # transport-level type was set to ZRTP) while the actual
+        # zrtp_options object hasn't been wired up yet
+        # (RTPStreamEncryption._NH_MediaStreamDidInitialize hasn't
+        # finished, or the FrameEncryptor for this codec wasn't
+        # installable - the Sylk ZRTP FrameEncryptor skips H.264
+        # STAP-A streams).  Accessing `stream.encryption.zrtp` then
+        # raises RuntimeError('ZRTP options have not been initialized')
+        # and the exception escapes this handler, aborting the rest
+        # of the media-stream setup including the renderer wiring -
+        # which presents to the user as a black video window.
+        # `__dict__.get('zrtp')` peeks past the property's check so we
+        # can skip the _enable() call when zrtp isn't actually ready,
+        # without losing the property-style API for normal callers.
         if stream.type == 'audio' and stream.encryption.type == 'ZRTP':
-            stream.encryption.zrtp._enable()
+            if stream.encryption.__dict__.get('zrtp') is not None:
+                stream.encryption.zrtp._enable()
         elif stream.type == 'video' and stream.encryption.type == 'ZRTP':
             # start ZRTP on the video stream, if applicable
             try:
@@ -2947,7 +2963,9 @@ class Session(object):
             except StopIteration:
                 pass
             else:
-                if audio_stream.encryption.type == 'ZRTP' and audio_stream.encryption.active:
+                if (audio_stream.encryption.type == 'ZRTP'
+                        and audio_stream.encryption.active
+                        and stream.encryption.__dict__.get('zrtp') is not None):
                     stream.encryption.zrtp._enable(audio_stream)
         # Sylk-ZRTP-over-MESSAGE deferred-install retry. The MESSAGE
         # handshake can complete before SDP/RTP setup finishes wiring

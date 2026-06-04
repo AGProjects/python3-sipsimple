@@ -250,14 +250,25 @@ class RTPStreamEncryption(object):
             # below stays dormant because we never call set_zrtp_enabled.
             self.__dict__['type'] = 'SRTP/SDES'
             self.__dict__['zrtp'] = None
-        else:
-            # SDES did not negotiate. Fall back to ZRTP -- the existing
-            # session-level _NH_MediaStreamDidStart handler will then call
+        elif self.__dict__['zrtp'] is not None:
+            # Opportunistic encryption was requested AND ZRTP options got
+            # allocated in _NH_MediaStreamDidInitialize.  SDES didn't win;
+            # fall back to ZRTP - the session-level
+            # _NH_MediaStreamDidStart handler will call
             # stream.encryption.zrtp._enable() and the ZRTP transport will
             # take it from there (success fires RTPTransportZRTPSecureOn,
             # failure fires RTPTransportZRTPNotSupportedByRemote, both of
             # which the existing observer methods already handle).
             self.__dict__['type'] = 'ZRTP'
+        # else: no encryption was requested in the first place
+        # (account.rtp.encryption.enabled was False, so the stream's
+        # _srtp_encryption was None and MediaStreamDidInitialize took
+        # none of the type-setting branches).  Leave self.type at None -
+        # claiming "ZRTP" here would lie to the session handler, which
+        # would then call .zrtp._enable() on a None zrtp object and raise
+        # RuntimeError('ZRTP options have not been initialized'), aborting
+        # the rest of MediaStreamDidStart and leaving the renderer pipeline
+        # un-wired (= black video window for the user).
 
     def _NH_MediaStreamDidStart(self, notification):
         # Defensive: if the stream forgot to resolve the type for the
