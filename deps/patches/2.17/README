@@ -47,6 +47,17 @@ Core SIP / dialog / signalling:
                                        inv->cause_text into inv->pool
                                        so a transaction-pool reason
                                        phrase can't outlive its source.
+  34_conf_get_frame_port_ref.patch     2.17-only - closes the get-frame
+                                       half of the conference-port UAF
+                                       that patch 30 only fixed on the
+                                       removal side.  Wraps the two
+                                       pjmedia_port_get_frame() calls
+                                       in conf.c::read_port() with
+                                       pj_grp_lock_add_ref/dec_ref so
+                                       the audio I/O thread can't
+                                       dispatch through a freed
+                                       function-pointer table during
+                                       hangup.
   30_conf_port_grp_lock_uaf.patch      ported - 2.17-only re-derivation
                                        of the conference-port UAF fix.
   31_stream_transport_grp_lock_uaf.patch
@@ -155,6 +166,15 @@ New 2.17-only support:
                                        transport_rtp_cb2 can finish
                                        before stream pool release.
                                        Renumbered to keep 46/47 adjacent.
+  48_h264_sylk_mobile_interop.patch    2.17-only - H.264 SDP fmtp:
+                                       profile-level-id 42e01e -> 42e01f
+                                       (Constrained Baseline Level 3.0
+                                       -> 3.1), strips the leading space
+                                       from " packetization-mode".
+                                       Matches Sylk Mobile / libwebrtc
+                                       / standard WebRTC, unlocking
+                                       720p negotiation on Mac -> Sylk
+                                       Mobile H.264 calls.
 
 
 Dropped permanently
