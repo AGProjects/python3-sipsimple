@@ -41,6 +41,12 @@ Core SIP / dialog / signalling:
                                        ported - was renamed from
                                        28_pjsip_tls_lis_create_*; same
                                        feature, simplified hook point.
+  33_pjsip_inv_cause_text_bound.patch  ported - rebased for the 2.17
+                                       sip_inv.c whitespace sweep and
+                                       the (int)inv->cause cast; bounds
+                                       inv->cause_text into inv->pool
+                                       so a transaction-pool reason
+                                       phrase can't outlive its source.
   30_conf_port_grp_lock_uaf.patch      ported - 2.17-only re-derivation
                                        of the conference-port UAF fix.
   31_stream_transport_grp_lock_uaf.patch
@@ -136,6 +142,19 @@ New 2.17-only support:
                                        format registry + libyuv I420
                                        conversion path used by the
                                        FrameBufferVideoRenderer.
+  46_zrtp_detach_race_null_deref.patch ported from 2.12 slot 31 - the
+                                       transport_zrtp.c file is byte-
+                                       identical post-12 so the patch
+                                       applies verbatim.  Renumbered to
+                                       46 because slot 31 in 2.17 is
+                                       taken by 31_stream_transport_*.
+  47_zrtp_cb_lock_sync.patch           ported from 2.12 slot 32 -
+                                       companion to 46; adds a cb_lock
+                                       around transport_detach's clear
+                                       block so an in-flight
+                                       transport_rtp_cb2 can finish
+                                       before stream pool release.
+                                       Renumbered to keep 46/47 adjacent.
 
 
 Dropped permanently
@@ -151,10 +170,6 @@ Still TODO
 ----------
 
 Tier 4 (medium risk):
-  32_zrtp_cb_lock_sync.patch           ZRTP callback lock sync.  Not yet
-                                       evaluated against 2.17.
-  33_pjsip_inv_cause_text_bound.patch  pjsip_inv cause-text bound check.
-                                       Not yet evaluated.
   pending/14_pjsip_tls_log_fix.patch   TLS cert info logging.  The
                                        update_certs_info(cert_info*)
                                        signature changed in 2.17.
