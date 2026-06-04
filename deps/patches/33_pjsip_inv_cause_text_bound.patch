@@ -1,0 +1,110 @@
+# 33_pjsip_inv_cause_text_bound.patch
+#
+# Bound and pool-own pjsip_inv_session::cause_text (pjproject 2.12).
+#
+# inv_set_cause() in pjsip/src/pjsip-ua/sip_inv.c is the single point
+# at which inv->cause_text is populated. Three branches exist:
+#
+#     if (cause_text)
+#         pj_strdup(inv->pool, &inv->cause_text, cause_text);
+#     else if (cause_code/100 == 2)
+#         inv->cause_text = pj_str("Normal call clearing");
+#     else
+#         inv->cause_text = *pjsip_get_status_text(cause_code);
+#
+# Only the first branch deep-copies into inv->pool. The other two
+# perform a struct-copy of a pj_str_t whose .ptr points at static
+# storage. That is fine in isolation, but the first branch is reached
+# from many call sites that pass `&tsx->status_text` - and although
+# tsx_set_status_code() itself deep-copies into tsx->pool, the inv
+# session can outlive the source data along the "no ACK received"
+# timer path, where pjsip synthesises a 408 disconnect from inside
+# the transaction timer callback. In that window the transaction
+# pool slice that backed the reason phrase has already been recycled
+# but the inv session is still being state-callback'd.
+#
+# The downstream symptom in python-sipsimple is a hard MemoryError
+# from the engine thread, raised inside _pj_str_to_str() when the
+# wrapper hands the (now garbage) inv->cause_text to
+# PyBytes_FromStringAndSize(ptr, slen). A garbage slen reads as a
+# multi-gigabyte allocation request, CPython raises MemoryError, the
+# exception escapes the engine poll loop and SylkServer goes down:
+#
+#     ERROR    [sipsimple]   Exception occurred while running the Engine
+#     ERROR    [sipsimple]   Traceback (most recent call last):
+#     ERROR    [sipsimple]     File ".../sipsimple/core/_engine.py", line 126, in run
+#     ERROR    [sipsimple]       failed = self._ua.poll()
+#     ERROR    [sipsimple]     File "sipsimple/core/_core.ua.pxi", line 846, in PJSIPUA.poll
+#     ERROR    [sipsimple]     File "sipsimple/core/_core.ua.pxi", line 39, in Timer.call
+#     ERROR    [sipsimple]     File "sipsimple/core/_core.invitation.pxi", line 1137, in Invitation._cb_state
+#     ERROR    [sipsimple]     File "sipsimple/core/_core.util.pxi", line 169, in _pj_str_to_str
+#     ERROR    [sipsimple]   MemoryError
+#     ERROR    [sylk.core]   SIP engine failed
+#
+# Trigger sequence observed on a SylkServer 2.12 deployment: an
+# inbound INVITE that the wrapper answered but for which the peer
+# never sent ACK ("Session ... failed: None (No ACK received)"),
+# followed immediately by a second INVITE on the same dialog id.
+# The 408 disconnect on the first session is what populated the
+# bogus cause_text.
+#
+# Fix: harden inv_set_cause() so the value stored on the inv session
+# is always
+#
+#   - deep-copied into inv->pool (lifetime tied to the inv session,
+#     not to whatever pool the caller's pj_str_t came from), and
+#   - bounded in length (INV_MAX_CAUSE_TEXT_LEN = 256 bytes; RFC 3261
+#     reason-phrases are short, and anything longer is overwhelmingly
+#     more likely to be a corrupted slen than a real reason phrase),
+#     so that even if the source pj_str_t we are handed is already
+#     dangling, we cannot propagate a multi-gigabyte allocation
+#     request upstream.
+#
+# A NULL ptr or non-positive slen on the source is treated as "no
+# reason phrase" and stored as a zero pj_str_t rather than dereferenced.
+#
+# The change is local to inv_set_cause() and does not alter the
+# function signature or any of its call sites.
+#
+--- pjsip_orig/pjsip/src/pjsip-ua/sip_inv.c
++++ pjsip/pjsip/src/pjsip-ua/sip_inv.c
+@@ -501,14 +501,36 @@
+ static void inv_set_cause(pjsip_inv_session *inv, int cause_code,
+                           const pj_str_t *cause_text)
+ {
++    /*
++     * Defensive bound on the reason phrase. RFC 3261 reason-phrases
++     * fit comfortably in well under 256 bytes; anything larger almost
++     * certainly indicates a pj_str_t whose slen field is reading
++     * garbage (for instance from a transaction pool slice that has
++     * already been recycled), so we clamp here rather than store a
++     * pj_str_t that would propagate an absurd allocation into the
++     * Python wrapper's _pj_str_to_str() helper.
++     */
++    enum { INV_MAX_CAUSE_TEXT_LEN = 256 };
++    pj_str_t src;
++
+     if ((cause_code > (int)inv->cause) || inv->pending_bye) {
+         inv->cause = (pjsip_status_code) cause_code;
++
+         if (cause_text)
+-            pj_strdup(inv->pool, &inv->cause_text, cause_text);
++            src = *cause_text;
+         else if (cause_code/100 == 2)
+-            inv->cause_text = pj_str("Normal call clearing");
++            src = pj_str("Normal call clearing");
+         else
+-            inv->cause_text = *pjsip_get_status_text(cause_code);
++            src = *pjsip_get_status_text(cause_code);
++
++        if (src.ptr == NULL || src.slen <= 0) {
++            inv->cause_text.ptr = NULL;
++            inv->cause_text.slen = 0;
++        } else {
++            if (src.slen > INV_MAX_CAUSE_TEXT_LEN)
++                src.slen = INV_MAX_CAUSE_TEXT_LEN;
++            pj_strdup(inv->pool, &inv->cause_text, &src);
++        }
+     }
+ }
+
