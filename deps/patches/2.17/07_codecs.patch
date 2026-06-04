@@ -1,26 +1,56 @@
-# 07_codecs.patch   (rebased for pjsip 2.17 — opus hunk only)
+# 07_codecs.patch   (rebased for pjsip 2.17)
 #
-# Force opus to be advertised as mono (channel_cnt = 1) instead of
-# pjsip default stereo. Keeps interop simple with the audio paths
-# (audiodev, AEC, telephone-event) which are mono throughout, and
-# avoids the SDP-side "channels=2" annotation that confuses some
-# B2BUAs.
+# Two unrelated codec defaults reverted to sipsimple's preferred values:
+#
+#   1. opus.c - advertise Opus as mono (channel_cnt = 1) instead of
+#      pjsip's RFC 7587 §7 default of 2.  Matches the rest of the audio
+#      pipeline (audiodev, AEC, telephone-event are all mono) and
+#      avoids the SDP "channels=2" annotation that confuses some
+#      B2BUAs.
+#
+#   2. ffmpeg_vid_codecs.c - retune the software-x264 encoder:
+#
+#        preset:  veryfast              -> ultrafast
+#        tune:    animation+zerolatency -> fastdecode+zerolatency
+#
+#      `ultrafast` trades a small amount of visual quality for
+#      noticeably less encoder CPU and lower glass-to-glass latency -
+#      the right knob for interactive video conferencing where a
+#      one-frame delay is more user-visible than a few percent of
+#      compression efficiency.
+#
+#      `fastdecode+zerolatency` swaps the `animation` content tune
+#      (which biases the rate controller toward flat-cell cartoon
+#      content) for `fastdecode`, which constrains the bitstream so
+#      the peer's decoder can run without buffering whole GOPs
+#      (no B-frames, no CABAC).  `zerolatency` is kept - that's the
+#      one that disables look-ahead and frame reordering, which is
+#      mandatory for real-time use.
+#
+#      Only the software libx264 path is affected.  On Apple Silicon
+#      H264 goes through VideoToolbox (hardware encoder), which
+#      ignores these AV_OPT_SET calls entirely, so this is a no-op
+#      on macOS.  Linux / fallback paths get the new defaults.
 #
 # Rebase notes (vs the 2.12 version):
-#   * 2.17 opus.c uses space indentation (pjsip 2.13 sweep). The
-#     original tab-indented hunk is re-cast with spaces.
-#   * Line numbers shifted but the surrounding logic is identical:
-#     factory_enum_codecs() still hard-codes channel_cnt = 2 per
-#     RFC 7587 §7. We override.
-#   * The ffmpeg_vid_codecs.c hunks from the 2.12 version (H264
-#     PROFILE_H264_HIGH, x264 preset ultrafast / tune fastdecode,
-#     AVCODEC_HAS_ENCODE simplification, avcodec_get_frame_defaults
-#     #ifdef rewrite) are NOT included here. 2.17 ships the
-#     send_frame/receive_packet FFmpeg 5+ migration upstream, so the
-#     ifdef/AV_OPT context no longer matches. The H264-high-profile
-#     and x264 tuning bits will be reintroduced as part of the
-#     tier-5 ffmpeg_vid_codecs work (alongside the rewrite of
-#     17_fix_ffmpeg.patch, most of which is also subsumed).
+#   * 2.17 opus.c uses space indentation (the pjsip 2.13 whitespace
+#     sweep).  The original tab-indented hunk is re-cast with spaces.
+#   * x264 preset/tune hunk lands at line 570 in 2.17 (was 440 in
+#     2.12) but is otherwise identical.
+#
+# Still NOT ported from the 2.12 version:
+#   * PROFILE_H264_HIGH support (2.12 hunks @266 and @404 in
+#     ffmpeg_vid_codecs.c).  pjmedia needs the constant + the
+#     `case PROFILE_H264_HIGH: profile = "high";` arm to recognise
+#     High Profile in the SDP fmtp `profile-level-id` field and pass
+#     it through to the encoder.  Without it, an offer of High
+#     Profile from the peer gets answered with Baseline, costing
+#     compression headroom on detailed scenes.  Will be folded into
+#     the tier-5 ffmpeg_vid_codecs rebase.
+#   * AVCODEC_HAS_ENCODE simplification - subsumed by 2.17's
+#     FFmpeg 5+ send_frame/receive_packet migration upstream.
+#   * avcodec_get_frame_defaults #ifdef rewrite - also subsumed
+#     upstream; the old API is gone in FFmpeg 3+.
 #
 --- pjsip_orig/pjmedia/src/pjmedia-codec/opus.c
 +++ pjsip/pjmedia/src/pjmedia-codec/opus.c
@@ -32,4 +62,39 @@
 +        codecs[0].channel_cnt   = 1;
          *count = 1;
      }
-
+ 
+--- pjsip_orig/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c
++++ pjsip/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c
+@@ -265,6 +265,7 @@
+ /* H264 constants */
+ #define PROFILE_H264_BASELINE           66
+ #define PROFILE_H264_MAIN               77
++#define PROFILE_H264_HIGH               100
+ 
+ /* Codec specific functions */
+ #if  PJMEDIA_HAS_FFMPEG_CODEC_VP8 || PJMEDIA_HAS_FFMPEG_CODEC_VP9
+@@ -531,6 +532,9 @@
+         case PROFILE_H264_MAIN:
+             profile = "main";
+             break;
++        case PROFILE_H264_HIGH:
++            profile = "high";
++            break;
+         default:
+             break;
+         }
+@@ -567,10 +567,10 @@
+         /* Misc x264 settings (performance, quality, latency, etc).
+          * Let's just use the x264 predefined preset & tune.
+          */
+-        if (!AV_OPT_SET(ctx->priv_data, "preset", "veryfast", 0)) {
+-            PJ_LOG(3, (THIS_FILE, "Failed to set x264 preset 'veryfast'"));
++        if (!AV_OPT_SET(ctx->priv_data, "preset", "ultrafast", 0)) {
++            PJ_LOG(3, (THIS_FILE, "Failed to set x264 preset 'ultrafast'"));
+         }
+-        if (!AV_OPT_SET(ctx->priv_data, "tune", "animation+zerolatency", 0)) {
+-            PJ_LOG(3, (THIS_FILE, "Failed to set x264 tune 'zerolatency'"));
++        if (!AV_OPT_SET(ctx->priv_data, "tune", "fastdecode+zerolatency", 0)) {
++            PJ_LOG(3, (THIS_FILE, "Failed to set x264 tune 'fastdecode+zerolatency'"));
+         }
+     }
