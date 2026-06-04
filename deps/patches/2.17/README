@@ -1,128 +1,219 @@
 deps/patches/2.17/
 ==================
 
-Rebased patch series for pjsip 2.17. Opted into at build time:
+Rebased patch series for pjsip 2.17.  Selected at build time:
 
-    PJSIP_VERSION=2.17 ./get_dependencies.sh
+    ./get_dependencies.sh --version 2.17
 
-The default (no env var, no positional arg) is still 2.12 and applies the
-patch series at deps/patches/[0-9][0-9]_*.patch. The 2.17 path uses this
-folder instead.
+The default (no --version flag) is 2.12 and applies the series at
+deps/patches/[0-9][0-9]_*.patch.  The 2.17 path uses this folder.
 
-See PJSIP_217_MIGRATION.md at the repository root for the per-patch
-verdicts, sequencing, and dropped/redirected items.
+See PJSIP_217_MIGRATION.md at the repository root for design notes.
 
 Numbering convention
 --------------------
-Keep the same NN_ prefixes as deps/patches/ so each patch is recognizable
-across versions. A patch dropped from the 2.17 path simply does not exist
-here; do not renumber. New 2.17-only patches use NN >= 40 to avoid
-colliding with the 2.12 series.
+Same NN_ prefixes as the 2.12 series so each patch is recognisable
+across versions.  A patch dropped from the 2.17 path simply doesn't
+exist here; do not renumber.  New 2.17-only patches use NN >= 40 to
+avoid colliding with the 2.12 series.
 
 
-Current status
-==============
+Current status (June 2026)
+==========================
 
-Present in this folder (10 of 25 ported, plus 4 deferred / 5 still TODO):
+Present in this folder
+----------------------
 
-  18_fix_uint_zrtp.patch                        copy-as-is — ZRTPCPP source, pinned commit
-  19_fix_zrtp_cstdint_include.patch             copy-as-is — ZRTPCPP source
-  13_zsrtp.patch                                copy-as-is — ZRTPCPP wrapper, version-independent
-  15_vpx.patch                                  ported — verified (no-op guard, preserve 2.12 behaviour)
-  20_sylk_aead_transport.patch                  rebased — Makefile hunk re-targeted against vanilla 2.17
-  27_pjmedia_rebind_remote_peer.patch           rebased — depends on 20; transport.h hunk verified
-  24_video_sdp_rtcp_fb.patch                    rebased — 4-space indent, verified clean apply
-  07_codecs.patch                               PARTIAL — opus mono only; H264/x264 hunks deferred
-  11_transport_ice.patch                        rebased — drops on_ice_complete2 (now upstream);
-                                                          .c line numbers approximate, needs real-tree
-                                                          verification
-  25_libswscale_converter_uaf.patch             rebased — clean 4-space, file unchanged in 2.17
+Foundation / build:
+  02_zsrtp_link.patch                  2.17-only - tweak ZSRTP linker flags
+                                       so the GnuTLS / OpenSSL split in
+                                       2.17 doesn't dead-strip cryptopp.
 
+Core SIP / dialog / signalling:
+  03_pjsip_signaling.patch             ported - INVITE / dialog rework
+                                       around 2.14 + RFC 6026 timing.
+  04_pjnath_ice_strans.patch           ported - early-candidate wiring,
+                                       offset-tracker hunk split fix.
+  11_transport_ice.patch               ported - drops on_ice_complete2
+                                       (upstream); pjmedia_ice_cb hunk
+                                       verified.
+  27_pjmedia_rebind_remote_peer.patch  ported - depends on 20.
+  28_pjsip_tls_route_sni_selector.patch
+                                       ported - was renamed from
+                                       28_pjsip_tls_lis_create_*; same
+                                       feature, simplified hook point.
+  30_conf_port_grp_lock_uaf.patch      ported - 2.17-only re-derivation
+                                       of the conference-port UAF fix.
+  31_stream_transport_grp_lock_uaf.patch
+                                       ported - 2.17-only re-derivation
+                                       of the stream-transport UAF fix.
 
-Deferred (must wait for another patch to land first)
-----------------------------------------------------
-  21_alsa_dev_pjsip212_log.patch        needs 05 (alsa_name field rename)
-  28_pjsip_tls_lis_create_*.patch       needs 03 (introduces the tls_name selector this fixes)
-  H264/x264 hunks of 07_codecs.patch    fold into a tier-5 ffmpeg_vid_codecs.c rebase
+Media / SDP / codecs:
+  07_codecs.patch                      ported - opus mono advertisement,
+                                       x264 preset/tune retune for lower
+                                       latency, and PROFILE_H264_HIGH
+                                       support in the SDP fmtp switch.
+                                       (Only AVCODEC_HAS_ENCODE and
+                                       avcodec_get_frame_defaults hunks
+                                       stay out - both subsumed by
+                                       2.17's FFmpeg 5+ migration.)
+  08_media_core.patch                  ported - vid_tee mutex wrap, RTCP
+                                       PLI, mixer_port, KEYFRAME_REQUESTED
+                                       event, real EC reset, TIAS disable,
+                                       MIXER signature.  Skipped:
+                                       converter.c debug logging.
+  15_vpx.patch                         ported - verified, no-op guard,
+                                       preserves 2.12 behaviour.
+  20_sylk_aead_transport.patch         ported - Makefile hunk re-targeted
+                                       against vanilla 2.17.
+  24_video_sdp_rtcp_fb.patch           ported - 4-space indent, clean.
+  22_srtp_transport_get_info_uaf.patch ported - 2.17 already NULLs the
+                                       libsrtp ctx pointers; this port
+                                       adds the SSRC-zero on stop and
+                                       the session_inited guards in
+                                       get_info as defense-in-depth.
+  25_libswscale_converter_uaf.patch    ported - clean 4-space.
+
+Devices:
+  05_audio_device.patch                ported - the ~1100 line audio
+                                       device patch rebased after the 2.13
+                                       whitespace sweep.
+  06_video_device.patch                ported - includes the real
+                                       pjmedia_vid_dev_fb_set_callback
+                                       and fb_dev.c.  Was a heavy lift
+                                       (~1800 lines) because the 2.15
+                                       Metal renderer landed upstream.
+  16_mac_audio_vpio_disable.patch      ported - disables AVAudioEngine
+                                       Voice-Processing IO on macOS
+                                       capture devices (renamed from
+                                       16_mac_audio_device_fix; functionally
+                                       the same fix as 2.12).
+  21_alsa_dev_pjsip217_log.patch       ported - was deferred until 05
+                                       renamed alsa_name field.
+
+ZRTP (copy-as-is from 2.12 - the ZRTPCPP source is version-independent):
+  13_zsrtp.patch                       copy-as-is - ZRTPCPP wrapper.
+  18_fix_uint_zrtp.patch               copy-as-is - ZRTPCPP source,
+                                       pinned commit.
+  19_fix_zrtp_cstdint_include.patch    copy-as-is - ZRTPCPP source.
+  29_zsrtp_hmac_ctx_lifetime.patch     copy-as-is - OpenSSL 3 HMAC_CTX
+                                       lifetime fix + -DZRTP_OPENSSL on
+                                       the Makefile.  Source files
+                                       byte-identical to 2.12 so the
+                                       same patch applies; Makefile
+                                       lands with line offset from 13.
+
+ZRTP / SRTP (2.17 needed surgery):
+  12_transport_zrtp.patch              ported - the ~2100 line transport
+                                       glue, intertwined with 2.17's
+                                       SRTP / ZRTP changes.
+  12a_zrtp_pjmedia_h_makefile.patch    ported - companion to 12, exposes
+                                       transport_zrtp.h via pjmedia.h
+                                       and adds the .o to the Makefile.
+                                       (.obsolete sibling is dead weight
+                                       and can be deleted.)
+
+VP9 / VPX (4 patches working together):
+  23_vpx_packetizer_libwebrtc_interop.patch
+                                       PARKED no-op - vanilla 2.17's
+                                       1-byte VP9 descriptor (B / E only)
+                                       is what libwebrtc actually wants.
+                                       Adding RFC-9628 fields broke Sylk
+                                       Mobile decode.  Kept as a slot
+                                       holder + rationale log.
+  44_vpx_encoder_rate_control.patch    2.17-only - 1.5 Mbps target, VBR,
+                                       dropframe_thresh=0.  Without this
+                                       the encoder produced ~0.8 fps to
+                                       Sylk Mobile.
+  45_vpx_encoder_quality_preset.patch  2.17-only - cpu_used 9->4,
+                                       rc_max_quantizer 56->48.  Removes
+                                       the pixelated / blocky picture
+                                       once 44 fixed framerate.
+
+New 2.17-only support:
+  40_videodev_extra_objs.patch         Makefile add-ons for the AVF /
+                                       fb_dev objects landed by patch 06.
+  42_pjmedia_argb_format.patch         Adds PJMEDIA_FORMAT_ARGB to the
+                                       format registry + libyuv I420
+                                       conversion path used by the
+                                       FrameBufferVideoRenderer.
 
 
 Dropped permanently
 -------------------
-  10_ffmpeg_util.patch                  FFmpeg 5+ migration is upstreamed
-  17_fix_ffmpeg.patch (most of it)      FFmpeg 5+ migration is upstreamed
-  30_diag_log_stream_info_from_sdp      diagnostic-only ("do NOT ship to production")
-  pending/02_pjlib_darwin.patch         GCD semaphores are now upstream
+  10_ffmpeg_util.patch                 FFmpeg 5+ migration is upstreamed.
+  17_fix_ffmpeg.patch                  Same.
+  30_diag_log_stream_info_from_sdp     Diagnostic-only ("do NOT ship").
+  pending/02_pjlib_darwin.patch        GCD semaphores are upstream now.
+  31_zrtp_detach_race_null_deref.old   Was .old in 2.12 too.
 
 
-Re-derive (not a literal port)
-------------------------------
-  22_srtp_transport_get_info_uaf.patch  fields live under srtp->srtp_ctx.* in 2.17;
-                                        fix concept still valid, must be rewritten
-  pending/14_pjsip_tls_log_fix.patch    update_certs_info(cert_info*) signature changed
+Still TODO
+----------
 
-
-Still TODO (tier 4 and tier 5+)
--------------------------------
 Tier 4 (medium risk):
-  04_pjnath_ice_strans.patch            pjnath ICE strans early-cand wiring
-  22_srtp_transport_get_info_uaf.patch  re-derive against srtp_ctx substruct
-  29_zsrtp_hmac_ctx_lifetime.patch      may need OpenSSL 3 EVP_MAC variant
+  32_zrtp_cb_lock_sync.patch           ZRTP callback lock sync.  Not yet
+                                       evaluated against 2.17.
+  33_pjsip_inv_cause_text_bound.patch  pjsip_inv cause-text bound check.
+                                       Not yet evaluated.
+  pending/14_pjsip_tls_log_fix.patch   TLS cert info logging.  The
+                                       update_certs_info(cert_info*)
+                                       signature changed in 2.17.
 
-Tier 5+ (heavy lifts — bulk of remaining work):
-  01_build_system.patch                 Makefile / config_auto rebase against 2.17 object list
-  08_media_core.patch                   conflicts with 2.15 async-conf-bridge port semantics
-  09_aec.patch                          AEC2 now in echo_webrtc.c, AEC3 in echo_webrtc_aec3.c (split)
-  05_audio_device.patch                 ~1100 lines, hit by 2.13 whitespace sweep
-  06_video_device.patch                 ~1800 lines, Metal renderer landed in 2.15
-  12_transport_zrtp.patch               ~2100 lines, intertwined with SRTP/ZRTP changes
-  03_pjsip_signaling.patch              affected by 2.14 INVITE/dialog rework and 2.17 RFC 6026 timing
-
-
-Rebase order (easy -> hard, so the tree compiles each step)
------------------------------------------------------------
-1.  18, 19, 21*, 24, 30~, 28*
-    (* deferred until 03/05; ~ dropped)
-2.  13, 15, 20, 27
-3.  07 (partial — opus only for now), 11, 25
-4.  04, 22, 29
-5.  01 (Makefile + config_auto)
-6.  08
-7.  09  (note: AEC3 split into echo_webrtc_aec3.c)
-8.  05  (audio devices)
-9.  06  (video devices)
-10. 12  (transport_zrtp)
-11. 03  (pjsip_signaling)
+Tier 5+ (heavy):
+  01_build_system.patch                Makefile / config_auto rebase
+                                       against the 2.17 object list.
+                                       The 2.17 build works without it
+                                       (individual patches touch their
+                                       own Makefile fragments) so this
+                                       is cleanup, not a blocker.
+  09_aec.patch                         AEC2 / AEC3 are split into
+                                       echo_webrtc.c (AEC2) and
+                                       echo_webrtc_aec3.c (AEC3) in
+                                       2.17.  The 2.12 patch was a
+                                       single-file drop; needs splitting.
+                                       Audio quality regression vs 2.12
+                                       until done.
 
 
-Verification notes
-------------------
-The rebased patches in this folder were tested by:
-  * 18, 19, 13: copy-from-2.12 — paths target pinned-commit ZRTPCPP
-    source, no rebase needed.
-  * 15: applied against a stub vpx.c with line-503 context (matches
-    2.17 structure). Hunk landed cleanly.
-  * 20: applied against a stub Makefile reproducing vanilla 2.17's
-    PJMEDIA_OBJS line layout. Two new file additions are byte-for-byte
-    drops; Makefile hunk fuzz=2 against the stub (will be exact
-    against real 2.17).
-  * 27: applied against a saved 2.17 transport.h + the sylk_aead
-    file from patch 20. transport.h hunk landed at line 775 with
-    offset 3.
-  * 24: applied against the real 2.17 endpoint.c. Hunk landed at
-    line 883 with offset 1.
-  * 07: applied against a stub opus.c reproducing the 2.17
-    factory_enum_codecs context. Landed at line 552 with offset -2.
-  * 25: applied against a structurally-equivalent libswscale file.
-    Two hunks landed.
-  * 11: NOT yet verified end-to-end. The header-hunk context lines
-    around pjmedia_ice_cb and pjmedia_ice_get_grp_lock match the
-    fetched 2.17 transport_ice.h. The .c hunk line numbers are
-    approximate (the function bodies were past the fetched range).
-    Run get_dependencies.sh against a real 2.17 tarball to verify.
+Cython / sipsimple-side work pending
+------------------------------------
+Patch 08 added two C symbols that nothing in Python calls yet:
 
-When applying the full series against a fresh 2.17 expand:
-  cd deps && wget https://github.com/pjsip/pjproject/archive/2.17.tar.gz
-  cd .. && PJSIP_VERSION=2.17 ./get_dependencies.sh
-expect each "Applying patch ..." line to be followed by zero "FAILED"
-or "rejects" messages. Hunks succeeding with offsets / fuzz are fine;
-hunks REJECTED need a manual look.
+  * pjmedia_rtcp_build_rtcp_pli() - needs a cdef extern in
+    _core.pxd plus a wrapper on whatever owns the RTCP session, so
+    sipsimple can actually request keyframes from peers when its
+    decoder loses sync.
+
+  * pjmedia_snd_port_reset_ec_state() is now real (was a no-op stub)
+    but the existing Python wrapper - if any - may still bail early
+    because it predates a working impl.
+
+
+Rebase / verification order
+---------------------------
+Patches apply in numeric order.  No special sequencing is needed for
+the currently-present set; just run:
+
+    ./get_dependencies.sh --version 2.17
+
+and every "Applying patch ..." line should be followed by zero
+"FAILED" or "rejects" lines.  Hunks landing with offset / fuzz are
+fine; rejections need a manual look.
+
+
+Notes for future ports
+----------------------
+gpatch's offset-tracker carries across hunks within a single file
+section.  If a hunk further down a patch silently misapplies after
+an earlier hunk added a large block, split the second hunk into its
+own  --- pjsip_orig/...  / +++ pjsip/...  section so the tracker
+resets.  See patch 04 for the pattern.
+
+Blank context lines in a unified diff must start with a single space.
+Most editors (including the tooling that generated some of these
+patches) strip trailing whitespace, which turns blank context lines
+into bare newlines and corrupts the patch.  When in doubt, run:
+
+    awk '/^@@/{h=1;print;next} /^(---|\+\+\+) /{h=0;print;next} \
+         h && /^$/{print " ";next} {print}' patch.patch > patch.fixed
