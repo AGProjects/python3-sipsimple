@@ -40,7 +40,12 @@ class H264Settings(SettingsGroup):
 class VideoSettings(SettingsGroup):
     device = Setting(type=str, default='system_default', nillable=True)
     resolution = Setting(type=VideoResolution, default=VideoResolution('1280x720'))
-    framerate = Setting(type=int, default=25)
+    # 30 fps default matches the libvpx (patch 44/45) and VideoToolbox
+    # encoder sweet spots at VGA / 720p, what every WebRTC stack
+    # advertises, and what Sylk Mobile expects.  Blink's
+    # PreferencesController auto-adjusts this to 25 fps when the user
+    # picks 1920x1080 to stay inside H.264 Level 4.0's bitrate budget.
+    framerate = Setting(type=int, default=30)
     max_bitrate = Setting(type=float, default=None, nillable=True)
     muted = RuntimeSetting(type=bool, default=False)
     h264 = H264Settings
@@ -71,15 +76,25 @@ except ImportError:
         port_range = Setting(type=PortRange, default=PortRange(50000, 50500))
         timeout = Setting(type=NonNegativeInteger, default=30)
         audio_codec_list = Setting(type=AudioCodecList, default=AudioCodecList(('opus', 'G722', 'PCMU', 'PCMA')))
-        # VP9 first so it wins SDP codec negotiation with peers that
-        # support it. H264 is moved last because the Sylk-flavoured ZRTP
-        # FrameEncryptor cannot safely E2E-encrypt H264 (STAP-A multi-NAL
-        # aggregation breaks the fixed-prefix scheme) and the install is
-        # skipped on both sides under H264 — see sip-session3's
+        # H.264 first so SDP negotiation prefers it - matches what every
+        # WebRTC stack (libwebrtc, Sylk Mobile, browsers) advertises
+        # first and gives the lowest CPU on Apple Silicon (VideoToolbox
+        # hardware encode/decode).  Default fmtp is Constrained Baseline
+        # Level 3.1 (profile-level-id=42e01f, packetization-mode=1) - see
+        # deps/patches/2.17/48_h264_sylk_mobile_interop.patch.  VP9
+        # second as the software fallback for peers without hardware
+        # H.264; VP8 last for legacy SIP peers.
+        #
+        # E2EE caveat: the Sylk-flavoured ZRTP FrameEncryptor cannot
+        # safely E2E-encrypt H264 (STAP-A multi-NAL aggregation breaks
+        # the fixed-prefix scheme) and the install is skipped on both
+        # sides under H264 - see sip-session3's
         # _install_aead_keys_on_stream and sylk-mobile's CallZrtp.js
-        # _shouldSkipVideoZrtpForCodec. With VP9 (or VP8) as the
-        # negotiated codec, video is fully end-to-end AES-128-GCM.
-        video_codec_list = Setting(type=VideoCodecList, default=VideoCodecList(('VP9', 'VP8', 'H264')))
+        # _shouldSkipVideoZrtpForCodec.  Users who require end-to-end
+        # AES-128-GCM video for their threat model should reorder the
+        # list to put VP9 / VP8 ahead of H264; SRTP / DTLS-SRTP is still
+        # active for hop-by-hop transport encryption regardless.
+        video_codec_list = Setting(type=VideoCodecList, default=VideoCodecList(('H264', 'VP9', 'VP8')))
 
 
 def sip_port_validator(port, sibling_port):
