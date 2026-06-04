@@ -1,7 +1,28 @@
-python3-sipsimple (5.4.3) unstable; urgency=medium
+python3-sipsimple (5.5.0) unstable; urgency=medium
 
-  * Implement sylk-zrtp protocol updates from
+  * Added EndpointExtension to conference info payload
+  * Added signal level retriever from audio mixer slots
+  * Added build number to the core
+  * Added video bandwidth negotiation in real-time
+  * Added support for re-negotating new RTP ports mid-call
+  * Implement sylk-zrtp protocol from
     https://github.com/AGProjects/sylk-mobile/blob/master/docs/encryption/zrtp/Readme.md
+  * Fix crash parsing cause_text in core
+  * Use device_id for zRTP negotiation
+  * Fix crashes in zRTP stream
+  * Fix crash when handling non utf8 payloads in core
+  * Allow start without audio card
+  * Use local sipclients3 folder for mac install
+  * Fix race condition of zRTP media and signaling out of order
+  * Allow sessions to start as long as at least one stream initialized
+  * Enhance logging MSRP init failures 
+  * Fix handling changing previously agreed media ports in re-Invite
+  * Fixed video crashes
+  * Fix some GIL issues inside core
+  * Make VPx video compatible with webrtc end-points
+  * Fix crash in pj transport
+  * Release GIL after PJSIP blocking operations
+  * Fix internal compiler error
 
  -- AG Projects <support@ag-projects.com>  Sat, 30 May 2026 09:00:00 +0200
 
