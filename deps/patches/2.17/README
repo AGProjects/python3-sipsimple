@@ -8,7 +8,6 @@ Rebased patch series for pjsip 2.17.  Selected at build time:
 The default (no --version flag) is 2.12 and applies the series at
 deps/patches/[0-9][0-9]_*.patch.  The 2.17 path uses this folder.
 
-See PJSIP_217_MIGRATION.md at the repository root for design notes.
 
 Numbering convention
 --------------------
