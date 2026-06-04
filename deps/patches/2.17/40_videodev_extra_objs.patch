@@ -38,11 +38,13 @@
 #    Darwin link error for pjmedia_avf_factory (avf_dev.m needs
 #    fb_dev.h for its declarations) and exposes the framebuffer
 #    renderer on every platform.
-#  * Add avf_dev.o only on Darwin (OS_NAME == darwinos).  This is the
-#    Objective-C piece that needs cc1obj.
-#  * Add dshow_filter.o only on Windows (OS_NAME == win32 / mingw).
-#    DShow has no Linux/Mac equivalent and the build needs the MS
-#    headers.
+#  * Add avf_dev.o only when TARGET_NAME contains "darwin" (the
+#    autotool target triple, e.g. aarch64-apple-darwin25.4.0).  This
+#    is the Objective-C piece that needs cc1obj.  We can't key off
+#    OS_NAME because pjsip's build.mak leaves OS_NAME=auto and the
+#    real platform info lives in TARGET_NAME.
+#  * Add dshow_filter.o only when TARGET_NAME contains "mingw".
+#    DShow has no Linux/Mac equivalent and the build needs MS headers.
 #
 # This belongs conceptually in patch 01 (build_system) which hasn't
 # been rebased for 2.17. Slot 40 because new 2.17-only patches use
@@ -58,10 +60,10 @@
 +				colorbar_dev.o v4l2_dev.o opengl_dev.o \
 +				fb_dev.o null_dev.o \
  				util.o
-+ifeq ($(OS_NAME),darwinos)
++ifneq ($(findstring darwin,$(TARGET_NAME)),)
 +export PJMEDIA_VIDEODEV_OBJS += avf_dev.o
 +endif
-+ifneq ($(findstring win,$(OS_NAME)),)
++ifneq ($(findstring mingw,$(TARGET_NAME)),)
 +export PJMEDIA_VIDEODEV_OBJS += dshow_filter.o
 +endif
  export PJMEDIA_VIDEODEV_CFLAGS += $(_CFLAGS)
