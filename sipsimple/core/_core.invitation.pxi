@@ -485,7 +485,18 @@ cdef class Invitation:
             to_header_parameters.pop("tag", None)
             to_header.parameters = {}
             to_header_str = PJSTR(to_header.body.encode())
-            contact_str = PJSTR(str(self.local_contact_header.body).encode())
+            # Strip the Contact header parameters before serializing the string
+            # handed to pjsip_dlg_create_uac. The parameters are applied to the
+            # dialog's local contact separately below (via _dict_to_pjsip_param),
+            # so leaving them in the parse string is redundant; worse, a header
+            # parameter such as +sip.instance="<urn:uuid:...>" makes
+            # pjsip_dlg_create_uac fail to parse the contact and return
+            # PJSIP_EINVALIDURI. This mirrors the from_header/to_header handling
+            # above. self.local_contact_header (frozen above) keeps the full
+            # contact, including parameters, for reference.
+            contact_header_parameters = contact_header.parameters.copy()
+            contact_header.parameters = {}
+            contact_str = PJSTR(str(contact_header.body).encode())
             self.request_uri = FrozenSIPURI.new(request_uri)
             struri = str(request_uri)
             request_uri_str = PJSTR(struri.encode())
@@ -507,7 +518,7 @@ cdef class Invitation:
                 self._dialog.local.contact.expires = contact_header.expires
             if contact_header.q is not None:
                 self._dialog.local.contact.q1000 = int(contact_header.q*1000)
-            contact_parameters = contact_header.parameters.copy()
+            contact_parameters = contact_header_parameters
             contact_parameters.pop("q", None)
             contact_parameters.pop("expires", None)
             _dict_to_pjsip_param(contact_parameters, &self._dialog.local.contact.other_param, self._dialog.pool)
