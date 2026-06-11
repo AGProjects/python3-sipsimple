@@ -24,6 +24,7 @@ python3-sipsimple (5.5.0) unstable; urgency=medium
   * Release GIL after PJSIP blocking operations
   * Fix internal compiler error
   * Allow custom parameters to Contact header for outgoing INVITE
+  * Request video key frame on start
 
  -- AG Projects <support@ag-projects.com>  Sat, 30 May 2026 09:00:00 +0200
 
