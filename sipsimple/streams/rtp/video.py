@@ -184,7 +184,17 @@ class VideoStream(RTPStream):
 
     def _NH_ExponentialTimerDidTimeout(self, notification):
         if self._transport is not None:
+            # Emit a keyframe from our encoder (so the peer can decode us) and
+            # also ask the peer for one via RTCP PLI (so we can decode them).
+            # The request half matters most for the call *offerer*: by the time
+            # our decoder is created (after the 200 OK is processed) the
+            # answerer has usually already finished its own start-time keyframe
+            # burst, so without a proactive PLI we would sit on undecodable
+            # P-frames and never display the remote video.  send_keyframe alone
+            # only helped the peer see us, which is why outgoing calls showed no
+            # incoming video while incoming calls worked.
             self._transport.send_keyframe()
+            self._transport.request_keyframe()
 
     def _create_transport(self, rtp_transport, remote_sdp=None, stream_index=None):
         settings = SIPSimpleSettings()
