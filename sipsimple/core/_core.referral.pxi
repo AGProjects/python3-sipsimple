@@ -87,17 +87,32 @@ cdef class Referral:
 
     def __dealloc__(self):
         cdef PJSIPUA ua = self._get_ua()
-        if ua is not None:
-            self._cancel_timers(ua, 1, 1)
-        if self._obj != NULL:
+        if ua is None:
+            return
+        self._cancel_timers(ua, 1, 1)
+        # This may run on a thread other than the PJSIP polling thread (e.g.
+        # when the object is garbage-collected via the Cocoa bridge on the main
+        # thread). Hold the dialog lock across teardown so we don't race the
+        # engine thread's timer/NOTIFY callbacks, which would corrupt the UA's
+        # dialog hash table. inc_lock at the top; dec_session + dec_lock at the
+        # end so the dialog is destroyed atomically once both counts reach zero.
+        if self._dlg != NULL:
+            with nogil:
+                pjsip_dlg_inc_lock(self._dlg)
+            if self._obj != NULL:
+                pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
+                with nogil:
+                    pjsip_evsub_terminate(self._obj, 0)
+                self._obj = NULL
+            with nogil:
+                pjsip_dlg_dec_session(self._dlg, &ua._module)
+                pjsip_dlg_dec_lock(self._dlg)
+            self._dlg = NULL
+        elif self._obj != NULL:
             pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
             with nogil:
                 pjsip_evsub_terminate(self._obj, 0)
             self._obj = NULL
-        if self._dlg != NULL:
-            with nogil:
-                pjsip_dlg_dec_session(self._dlg, &ua._module)
-            self._dlg = NULL
 
     def send_refer(self, int create_subscription=1, list extra_headers not None=list(), object timeout=None):
         cdef PJSIPUA ua = self._get_ua()
@@ -413,15 +428,28 @@ cdef class IncomingReferral:
         cdef PJSIPUA ua = self._get_ua(0)
         self._initial_response = NULL
         self._initial_tsx = NULL
-        if self._obj != NULL:
+        # If the UA is gone, _get_ua(0) has already NULLed self._obj and there is
+        # no live dialog to tear down. Otherwise, hold the dialog lock across
+        # teardown so we don't race the engine thread (see Referral.__dealloc__).
+        if ua is None:
+            return
+        if self._dlg != NULL:
+            with nogil:
+                pjsip_dlg_inc_lock(self._dlg)
+            if self._obj != NULL:
+                pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
+                with nogil:
+                    pjsip_evsub_terminate(self._obj, 0)
+                self._obj = NULL
+            with nogil:
+                pjsip_dlg_dec_session(self._dlg, &ua._module)
+                pjsip_dlg_dec_lock(self._dlg)
+            self._dlg = NULL
+        elif self._obj != NULL:
             pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
             with nogil:
                 pjsip_evsub_terminate(self._obj, 0)
             self._obj = NULL
-        if self._dlg != NULL and ua is not None:
-            with nogil:
-                pjsip_dlg_dec_session(self._dlg, &ua._module)
-            self._dlg = NULL
 
     cdef int init(self, PJSIPUA ua, pjsip_rx_data *rdata) except -1:
         global _incoming_refer_subs_cb
