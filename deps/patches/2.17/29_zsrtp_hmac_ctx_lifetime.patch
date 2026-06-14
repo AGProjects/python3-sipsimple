@@ -1,0 +1,198 @@
+# 29_zsrtp_hmac_ctx_lifetime.patch
+#
+# Fix the ZRTP/SRTP key-derivation crash under OpenSSL 3.
+#
+# Two problems combine into one segfault during the ZRTP handshake:
+#
+#   1. 13_zsrtp.patch ported the bundled GNU ZRTP code to the OpenSSL >= 1.1
+#      HMAC API and switched the HmacCtx union slot for SHA1-HMAC from an
+#      embedded HMAC_CTX to a HMAC_CTX*:
+#
+#          #ifdef ZRTP_OPENSSL
+#              #if OPENSSL_VERSION_NUMBER < 0x10100000L
+#                  HMAC_CTX         hmacSha1Ctx;
+#              #else
+#                  HMAC_CTX *       hmacSha1Ctx;
+#              #endif
+#          #else
+#                  hmacSha1Context  hmacSha1Ctx;
+#          #endif
+#
+#      …but CryptoContext::deriveSrtpKeys() and CryptoContextCtrl::
+#      deriveSrtcpKeys() still pass &hmacCtx.hmacSha1Ctx to
+#      initializeSha1HmacContext().  That hands a HMAC_CTX** in as a
+#      HMAC_CTX*, so HMAC_CTX_reset() walks garbage inside the union storage.
+#
+#   2. The pjsip/third_party/build/zsrtp/Makefile links the OpenSSL-flavored
+#      objects (zrtp/srtp/crypto/openssl/hmac.o, zrtpDH.o, …) but never
+#      defines ZRTP_OPENSSL on the command line, so:
+#
+#        - the headers' #ifdef ZRTP_OPENSSL branches fall through to the
+#          legacy `hmacSha1Context hmacSha1Ctx` slot (~3 sha1_ctx structs of
+#          uninitialized memory), while
+#        - the link still pulls in the OpenSSL initializeSha1HmacContext
+#          that calls HMAC_CTX_reset() on that slot.
+#
+#      OpenSSL 1.1 sometimes survived this (NULL-ish bytes); OpenSSL 3
+#      follows provider/EVP_PKEY_CTX references aggressively and segfaults
+#      the first time SRTP keys are derived during a ZRTP handshake:
+#
+#          #0  EVP_PKEY_CTX_free () from libcrypto.so.3
+#          #1  EVP_MD_CTX_reset  () from libcrypto.so.3
+#          #2  HMAC_CTX_reset    () from libcrypto.so.3
+#          #3  initializeSha1HmacContext()
+#          #4  CryptoContext::deriveSrtpKeys()
+#          #5  ZrtpCallbackWrapper::srtpSecretsReady()
+#          #6  ZRtp::srtpSecretsReady()
+#          #7  ZrtpStateClass::evWaitConfirm2()
+#          ...
+#
+# Fix:
+#
+#   a) Add -DZRTP_OPENSSL to the pjsip third_party zsrtp Makefile so the
+#      headers and sources agree with the OpenSSL implementation that's
+#      already being linked.  Without this, all the existing #ifdef
+#      ZRTP_OPENSSL paths (from 13_zsrtp.patch and this one) are dead code.
+#
+#   b) Under OpenSSL >= 1.1, allocate the HMAC_CTX with HMAC_CTX_new() on
+#      first use, hand the pointer (not its address) to
+#      initializeSha1HmacContext(), NULL-init it in the constructor, and
+#      HMAC_CTX_free() it in the destructor.
+#
+#   c) Bring CryptoContextCtrl.h's HmacCtx union in line with
+#      CryptoContext.h — it was still using `hmacSha1Context hmacSha1Ctx`
+#      unconditionally even though deriveSrtcpKeys() goes through the
+#      OpenSSL initializeSha1HmacContext.  Same latent crash, just on the
+#      SRTCP side.
+
+--- pjsip_orig/third_party/zsrtp/zrtp/srtp/CryptoContext.cpp
++++ pjsip/third_party/zsrtp/zrtp/srtp/CryptoContext.cpp
+@@ -46,6 +46,12 @@
+         macCtx(NULL), cipher(NULL), f8Cipher(NULL)
+ {
+     replay_window[0] = replay_window[1] = 0;
++#if defined(ZRTP_OPENSSL) && OPENSSL_VERSION_NUMBER >= 0x10100000L
++    // The union slot is a HMAC_CTX* under OpenSSL >= 1.1; NULL it so the
++    // destructor can safely free it and deriveSrtpKeys() can detect first
++    // use. (The Skein branch fully initializes its slot at derive time.)
++    hmacCtx.hmacSha1Ctx = nullptr;
++#endif
+     this->ealg = ealg;
+     this->aalg = aalg;
+     this->ekeyl = ekeyl;
+@@ -146,6 +152,12 @@
+         n_a = 0;
+         delete [] k_a;
+     }
++#if defined(ZRTP_OPENSSL) && OPENSSL_VERSION_NUMBER >= 0x10100000L
++    if (aalg == SrtpAuthenticationSha1Hmac && hmacCtx.hmacSha1Ctx != nullptr) {
++        HMAC_CTX_free(hmacCtx.hmacSha1Ctx);
++        hmacCtx.hmacSha1Ctx = nullptr;
++    }
++#endif
+     if (cipher != NULL) {
+         delete cipher;
+         cipher = NULL;
+@@ -307,8 +319,17 @@
+     // Initialize MAC context with the derived key
+     switch (aalg) {
+     case SrtpAuthenticationSha1Hmac:
++#if defined(ZRTP_OPENSSL) && OPENSSL_VERSION_NUMBER >= 0x10100000L
++        // hmacCtx.hmacSha1Ctx is a HMAC_CTX* (pointer), not an embedded
++        // HMAC_CTX. Allocate it on first use and pass the pointer itself
++        // (not its address) to initializeSha1HmacContext().
++        if (hmacCtx.hmacSha1Ctx == nullptr)
++            hmacCtx.hmacSha1Ctx = HMAC_CTX_new();
++        macCtx = initializeSha1HmacContext(hmacCtx.hmacSha1Ctx, k_a, n_a);
++#else
+         macCtx = &hmacCtx.hmacSha1Ctx;
+         macCtx = initializeSha1HmacContext(macCtx, k_a, n_a);
++#endif
+         break;
+     case SrtpAuthenticationSkeinHmac:
+         macCtx = &hmacCtx.hmacSkeinCtx;
+--- pjsip_orig/third_party/zsrtp/zrtp/srtp/CryptoContextCtrl.h
++++ pjsip/third_party/zsrtp/zrtp/srtp/CryptoContextCtrl.h
+@@ -25,6 +25,9 @@
+  * @{
+  */
+ 
++#ifdef ZRTP_OPENSSL
++#include <openssl/hmac.h>
++#endif
+ #include "crypto/hmac.h"
+ #include "cryptcommon/macSkein.h"
+ 
+@@ -298,7 +301,15 @@
+ 
+         typedef union _hmacCtx {
+             SkeinCtx_t       hmacSkeinCtx;
++#ifdef ZRTP_OPENSSL
++    #if OPENSSL_VERSION_NUMBER < 0x10100000L
++            HMAC_CTX         hmacSha1Ctx;
++    #else
++            HMAC_CTX *       hmacSha1Ctx;
++    #endif
++#else
+             hmacSha1Context  hmacSha1Ctx;
++#endif
+         } HmacCtx;
+ 
+         uint32_t ssrcCtx;
+--- pjsip_orig/third_party/zsrtp/zrtp/srtp/CryptoContextCtrl.cpp
++++ pjsip/third_party/zsrtp/zrtp/srtp/CryptoContextCtrl.cpp
+@@ -45,6 +45,12 @@
+ labelBase(3), macCtx(NULL), cipher(NULL), f8Cipher(NULL)        // SRTCP labels start at 3
+ 
+ {
++#if defined(ZRTP_OPENSSL) && OPENSSL_VERSION_NUMBER >= 0x10100000L
++    // The union slot is a HMAC_CTX* under OpenSSL >= 1.1; NULL it so the
++    // destructor can safely free it and deriveSrtcpKeys() can detect first
++    // use.
++    hmacCtx.hmacSha1Ctx = nullptr;
++#endif
+     this->ealg = ealg;
+     this->aalg = aalg;
+     this->ekeyl = ekeyl;
+@@ -145,6 +151,12 @@
+         memset_volatile(k_a, 0, n_a);
+         delete [] k_a;
+     }
++#if defined(ZRTP_OPENSSL) && OPENSSL_VERSION_NUMBER >= 0x10100000L
++    if (aalg == SrtpAuthenticationSha1Hmac && hmacCtx.hmacSha1Ctx != nullptr) {
++        HMAC_CTX_free(hmacCtx.hmacSha1Ctx);
++        hmacCtx.hmacSha1Ctx = nullptr;
++    }
++#endif
+     if (cipher != NULL) {
+         delete cipher;
+         cipher = NULL;
+@@ -303,8 +315,17 @@
+     // Initialize MAC context with the derived key
+     switch (aalg) {
+     case SrtpAuthenticationSha1Hmac:
++#if defined(ZRTP_OPENSSL) && OPENSSL_VERSION_NUMBER >= 0x10100000L
++        // hmacCtx.hmacSha1Ctx is a HMAC_CTX* (pointer), not an embedded
++        // HMAC_CTX. Allocate it on first use and pass the pointer itself
++        // (not its address) to initializeSha1HmacContext().
++        if (hmacCtx.hmacSha1Ctx == nullptr)
++            hmacCtx.hmacSha1Ctx = HMAC_CTX_new();
++        macCtx = initializeSha1HmacContext(hmacCtx.hmacSha1Ctx, k_a, n_a);
++#else
+         macCtx = &hmacCtx.hmacSha1Ctx;
+         macCtx = initializeSha1HmacContext(macCtx, k_a, n_a);
++#endif
+         break;
+     case SrtpAuthenticationSkeinHmac:
+         macCtx = &hmacCtx.hmacSkeinCtx;
+--- pjsip_orig/third_party/build/zsrtp/Makefile
++++ pjsip/third_party/build/zsrtp/Makefile
+@@ -27,7 +27,7 @@
+ 		   $(CC_INC)../../../pjlib-util/include \
+ 		   $(CC_INC)../../../pjmedia/include \
+ 		   $(CC_CFLAGS) $(OS_CFLAGS) $(HOST_CFLAGS) $(M_CFLAGS) \
+-		   $(CFLAGS)  -fno-strict-aliasing
++		   $(CFLAGS)  -fno-strict-aliasing -DZRTP_OPENSSL
+ export _CXXFLAGS:= $(_CFLAGS) $(CC_CXXFLAGS) $(OS_CXXFLAGS) $(M_CXXFLAGS) \
+ 		   $(HOST_CXXFLAGS) $(CXXFLAGS) -std=c++11
+ export _LDFLAGS := $(CC_LDFLAGS) $(OS_LDFLAGS) $(M_LDFLAGS) $(HOST_LDFLAGS) \
