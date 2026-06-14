@@ -1132,6 +1132,7 @@ cdef extern from "pjsip.h":
     void *pjsip_uri_get_uri(pjsip_uri *uri) nogil
     int pjsip_uri_print(pjsip_uri_context_e context, void *uri, char *buf, unsigned int size) nogil
     int PJSIP_URI_SCHEME_IS_SIP(pjsip_sip_uri *uri) nogil
+    int PJSIP_URI_SCHEME_IS_SIPS(pjsip_sip_uri *uri) nogil
     enum:
         PJSIP_PARSE_URI_AS_NAMEADDR
     pjsip_uri *pjsip_parse_uri(pj_pool_t *pool, char *buf, unsigned int size, unsigned int options) nogil

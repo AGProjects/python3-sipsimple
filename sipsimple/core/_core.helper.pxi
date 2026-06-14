@@ -205,6 +205,7 @@ cdef class SIPURI(BaseSIPURI):
     def parse(cls, object uri_str):
         cdef bytes uri_bytes = uri_str.encode() if isinstance(uri_str, str) else uri_str
         cdef pjsip_uri *uri = NULL
+        cdef pjsip_sip_uri *sip_uri = NULL
         cdef pj_pool_t *pool = NULL
         cdef pj_str_t tmp
         cdef char buffer[4096]
@@ -215,7 +216,10 @@ cdef class SIPURI(BaseSIPURI):
         uri = pjsip_parse_uri(pool, tmp.ptr, tmp.slen, 0)
         if uri == NULL:
             raise SIPCoreError("Not a valid SIP URI: %s" % uri_str)
-        return SIPURI_create(<pjsip_sip_uri *>pjsip_uri_get_uri(uri))
+        sip_uri = <pjsip_sip_uri *> pjsip_uri_get_uri(uri)
+        if sip_uri == NULL or not (PJSIP_URI_SCHEME_IS_SIP(sip_uri) or PJSIP_URI_SCHEME_IS_SIPS(sip_uri)):
+            raise SIPCoreError("Not a valid SIP URI: %s" % uri_str)
+        return SIPURI_create(sip_uri)
 
 
 cdef class FrozenSIPURI(BaseSIPURI):
@@ -264,6 +268,7 @@ cdef class FrozenSIPURI(BaseSIPURI):
     def parse(cls, object uri_str):
         cdef bytes uri_bytes = uri_str.encode() if isinstance(uri_str, str) else uri_str
         cdef pjsip_uri *uri = NULL
+        cdef pjsip_sip_uri *sip_uri = NULL
         cdef pj_pool_t *pool = NULL
         cdef pj_str_t tmp
         cdef char buffer[4096]
@@ -274,7 +279,10 @@ cdef class FrozenSIPURI(BaseSIPURI):
         uri = pjsip_parse_uri(pool, tmp.ptr, tmp.slen, 0)
         if uri == NULL:
             raise SIPCoreError("Not a valid SIP URI: %s" % uri_str)
-        return FrozenSIPURI_create(<pjsip_sip_uri *>pjsip_uri_get_uri(uri))
+        sip_uri = <pjsip_sip_uri *> pjsip_uri_get_uri(uri)
+        if sip_uri == NULL or not (PJSIP_URI_SCHEME_IS_SIP(sip_uri) or PJSIP_URI_SCHEME_IS_SIPS(sip_uri)):
+            raise SIPCoreError("Not a valid SIP URI: %s" % uri_str)
+        return FrozenSIPURI_create(sip_uri)
 
 
 # Factory functions
@@ -318,7 +326,7 @@ cdef dict _pj_sipuri_to_dict(pjsip_sip_uri *uri):
         parameters["maddr"] = _pj_str_to_str(uri.maddr_param)
     param = <pjsip_param *> (<pj_list *> &uri.other_param).next
 
-    while param != &uri.other_param:
+    while param != NULL and param != &uri.other_param:
         if param.value.slen == 0:
             parameters[_pj_str_to_str(param.name)] = None
         else:
@@ -326,7 +334,7 @@ cdef dict _pj_sipuri_to_dict(pjsip_sip_uri *uri):
         param = <pjsip_param *> (<pj_list *> param).next
     param = <pjsip_param *> (<pj_list *> &uri.header_param).next
 
-    while param != &uri.header_param:
+    while param != NULL and param != &uri.header_param:
         if param.value.slen == 0:
             headers[_pj_str_to_str(param.name)] = None
         else:
