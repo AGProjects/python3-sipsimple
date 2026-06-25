@@ -20,7 +20,12 @@ class AudioStream(RTPStream):
         super(AudioStream, self).__init__()
 
         from sipsimple.application import SIPApplication
-        self.mixer = SIPApplication.voice_audio_mixer
+        from sipsimple.streams.rtp import stream_creation_context
+        # Born on the mixer chosen by the application's factory (set per-thread
+        # in Session.init_incoming), or the default voice mixer. Building the
+        # bridge on the right mixer here avoids moving it later.
+        mixer = getattr(stream_creation_context, 'mixer', None)
+        self.mixer = mixer if mixer is not None else SIPApplication.voice_audio_mixer
         self.bridge = AudioBridge(self.mixer)
         self.device = AudioDevice(self.mixer)
         self._audio_rec = None

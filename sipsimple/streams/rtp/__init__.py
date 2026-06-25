@@ -11,8 +11,16 @@ import weakref
 from abc import ABCMeta, abstractmethod
 from application.notification import IObserver, NotificationCenter, NotificationData, ObserverWeakrefProxy
 from application.python import Null
-from threading import RLock
+from threading import RLock, local as _thread_local
 from zope.interface import implementer
+
+
+# Per-thread hint used to choose the audio mixer an AudioStream is *born* on,
+# so the stream's bridge is built on the right mixer from the start (no later,
+# race-prone bridge replacement). Session.init_incoming sets `mixer` here from
+# RTPStream.mixer_factory(request_uri) around stream construction; AudioStream
+# reads it in __init__. Defaults to None (the application's voice mixer).
+stream_creation_context = _thread_local()
 
 from sipsimple.account import BonjourAccount
 from sipsimple.configuration.settings import SIPSimpleSettings
@@ -351,6 +359,11 @@ class RTPStream(object, metaclass=RTPStreamType):
     priority = None
 
     hold_supported = True
+
+    # Optional callable(request_uri) -> AudioMixer or None, set by the
+    # application (SylkServer) to spread audio across a pool of mixers/cores.
+    # Consulted in Session.init_incoming when streams are created.
+    mixer_factory = None
 
     def __init__(self):
         self.notification_center = NotificationCenter()
