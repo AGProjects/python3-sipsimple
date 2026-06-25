@@ -519,6 +519,21 @@ cdef extern from "pjmedia.h":
     int pjmedia_conf_adjust_rx_level(pjmedia_conf *conf, unsigned slot, int adj_level) nogil
     int pjmedia_conf_adjust_tx_level(pjmedia_conf *conf, unsigned slot, int adj_level) nogil
     int pjmedia_conf_get_signal_level(pjmedia_conf *conf, unsigned slot, unsigned *tx_level, unsigned *rx_level) nogil
+    # Async conference bridge (pjsip 2.15+): port add/remove are queued and
+    # completed on the clock (audio I/O) thread. pjmedia_conf_set_op_cb()
+    # registers a completion callback so the application can learn when a
+    # queued REMOVE_PORT has actually been applied, and only then free the
+    # underlying media port + its pool. See _AudioMixer_conf_op_cb.
+    enum pjmedia_conf_op_type:
+        PJMEDIA_CONF_OP_REMOVE_PORT
+    # Only the fields read from Cython are modelled; the op_param union is read
+    # in C (see _sipsimple_conf_op_remove_slot) so its layout is not declared.
+    struct pjmedia_conf_op_info:
+        pjmedia_conf *conf
+        pjmedia_conf_op_type op_type
+        int status
+    ctypedef void (*pjmedia_conf_op_cb)(const pjmedia_conf_op_info *info) noexcept nogil
+    int pjmedia_conf_set_op_cb(pjmedia_conf *conf, pjmedia_conf_op_cb cb) nogil
 
     # video devices
     enum pjmedia_vid_dev_cap:
@@ -1958,12 +1973,23 @@ cdef class AudioMixer(object):
     cdef readonly unicode output_device
     cdef readonly unicode real_input_device
     cdef readonly unicode real_output_device
+    # Deferred port teardown (async conf bridge, pjsip 2.15+):
+    # _op_done is a flag array indexed by conf slot, set from the audio
+    # thread by the conf op-completion callback once REMOVE_PORT has been
+    # applied. _pending_free maps slot -> (port_ptr, pool_ptr) awaiting a
+    # safe free; _reap_timer drives the reaper on the polling thread.
+    cdef int *_op_done
+    cdef dict _pending_free
+    cdef Timer _reap_timer
 
     # private methods
     cdef void _start_sound_device(self, PJSIPUA ua, unicode input_device, unicode output_device, int ec_tail_length)
     cdef void _stop_sound_device(self, PJSIPUA ua)
     cdef int _add_port(self, PJSIPUA ua, pj_pool_t *pool, pjmedia_port *port) except -1
     cdef int _remove_port(self, PJSIPUA ua, unsigned int slot) except -1
+    cdef int _remove_port_deferred(self, PJSIPUA ua, unsigned int slot, pjmedia_port *port, pj_pool_t *pool) except -1
+    cdef int _reap_pending(self, int force) except -1
+    cdef int _cb_reap_pending(self, timer) except -1
     cdef int _cb_postpoll_stop_sound(self, timer) except -1
 
 cdef class ToneGenerator(object):

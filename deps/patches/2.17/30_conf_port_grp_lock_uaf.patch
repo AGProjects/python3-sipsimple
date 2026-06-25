@@ -22,6 +22,23 @@
 #      with pj_grp_lock_create() instead of pjmedia_port_init_grp_lock
 #      — skips the port_on_destroy handler that would deref the freed
 #      port (crash B).
+#
+# UPDATE (durable fix now in core): the root cause — the application freeing a
+# conf port's pool while the async REMOVE_PORT is still in flight — is resolved
+# in sipsimple/core (_core.sound.pxi). AudioMixer registers
+# pjmedia_conf_set_op_cb() and defers pjmedia_port_destroy() +
+# release_memory_pool() until REMOVE_PORT has actually been applied on the
+# audio thread (the deferred-teardown reaper). That removes the dangling
+# cport->port condition for the hangup path and also fixes the prior
+# tone-generator refcount leak (ToneGenerator now always calls
+# pjmedia_port_destroy(), balancing the bare grp_lock's owner +1 ref).
+#
+# This patch is KEPT as in-bridge hardening, not reverted: the cached
+# port_grp_lock keeps op_remove_port2() (and the get_frame/put_frame paths in
+# patch 34) safe against a momentarily dangling cport->port — e.g. when the
+# sound device is stopped and pending ports are force-freed before a queued
+# removal has been applied. Do NOT revert to pristine
+# pjmedia_port_init_grp_lock() without reworking that path.
 --- pjsip_orig/pjmedia/src/pjmedia/conference.c
 +++ pjsip/pjmedia/src/pjmedia/conference.c
 @@ -115,2 +115,3 @@
