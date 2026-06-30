@@ -1,3 +1,33 @@
+# 06_video_device.patch   (ported; AG Projects custom macOS video backend)
+#
+# Introduces the framebuffer renderer (fb_dev.c) and, on macOS, our own
+# AVFoundation capture backend avf_dev.m - which REPLACES upstream's
+# darwin_dev.m/metal_dev.m on Darwin (see 40_videodev_extra_objs.patch for
+# the build wiring).
+#
+# Fix note (June 2026) - avf_factory_refresh() crash + UAF
+# --------------------------------------------------------
+# The avf_dev.m this patch creates originally contained three defects of
+# our own making (not upstream); they are fixed inline here, so the
+# interim stand-alone patches 50_avf_dev_refresh_overflow and
+# 51_avf_dev_device_retain_uaf are no longer needed and have been removed:
+#
+#   1. Heap buffer overflow in avf_factory_refresh(). The device list was
+#      counted and filled in two passes over [AVCaptureDevice devices]
+#      using the live -isSuspended predicate; a camera becoming usable
+#      between the passes (Continuity Camera, USB hot-plug, wake) let the
+#      fill pass write past the dev_pool allocation -> crash inside
+#      pjmedia_vid_dev_refresh() (folded symbol; static fn) on the
+#      PJSIPUA.refresh_video_devices() worker thread. Now sized by the
+#      array length with a hard bound guard.
+#   2. NULL deref: pj_ansi_strncpy(..., [device.localizedName UTF8String])
+#      crashed when localizedName was transiently nil. Now falls back to
+#      "Unknown camera".
+#   3. Use-after-free: di->dev stored an unretained AVCaptureDevice from
+#      the autoreleased device array (drained by [apool release]); later
+#      reused in init_avf_stream(). Now [device retain]ed, balanced by
+#      release loops in refresh() and factory_destroy() (avf_dev.m is MRC).
+#
 diff -ruN pjproject-2.10/pjmedia/include/pjmedia-videodev/fb_dev.h pjsip/pjmedia/include/pjmedia-videodev/fb_dev.h
 --- pjproject-2.10/pjmedia/include/pjmedia-videodev/fb_dev.h	1970-01-01 01:00:00.000000000 +0100
 +++ pjsip/pjmedia/include/pjmedia-videodev/fb_dev.h	2021-02-06 18:43:39.220193284 +0100
@@ -47,7 +77,7 @@ diff -ruN pjproject-2.10/pjmedia/include/pjmedia_videodev.h pjsip/pjmedia/includ
 diff -ruN pjproject-2.10/pjmedia/src/pjmedia-videodev/avf_dev.m pjsip/pjmedia/src/pjmedia-videodev/avf_dev.m
 --- pjproject-2.10/pjmedia/src/pjmedia-videodev/avf_dev.m	1970-01-01 01:00:00.000000000 +0100
 +++ pjsip/pjmedia/src/pjmedia-videodev/avf_dev.m	2021-02-06 18:46:39.045322874 +0100
-@@ -0,0 +1,682 @@
+@@ -0,0 +1,733 @@
 +/*
 + * Copyright (C) 2014-present AG Projects (http://ag-projects.com)
 + * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
@@ -250,6 +280,15 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-videodev/avf_dev.m pjsip/pjmedia/sr
 +    struct avf_factory *af = (struct avf_factory*)f;
 +    pj_pool_t *pool = af->pool;
 +
++    if (af->dev_info) {
++        unsigned i;
++        for (i = 0; i < af->dev_count; i++) {
++            [af->dev_info[i].dev release];
++            af->dev_info[i].dev = nil;
++        }
++        af->dev_info = NULL;
++        af->dev_count = 0;
++    }
 +    if (af->dev_pool)
 +        pj_pool_release(af->dev_pool);
 +    af->pool = NULL;
@@ -268,17 +307,39 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-videodev/avf_dev.m pjsip/pjmedia/sr
 +    NSAutoreleasePool *apool = [[NSAutoreleasePool alloc]init];
 +    NSArray *dev_array;
 +
++    /* Release the AVCaptureDevice references retained by the previous
++     * refresh BEFORE discarding the pool that backs the dev_info array.
++     * pj_pool_release() does not run destructors, so the per-device
++     * retains added below would otherwise leak - and the objects must be
++     * actively released so the OS can reclaim a camera that was unplugged.
++     * Note the order: dev_info points into dev_pool, so it must be walked
++     * before the pool is freed. */
++    if (af->dev_info) {
++        unsigned i;
++        for (i = 0; i < af->dev_count; i++) {
++            [af->dev_info[i].dev release];
++            af->dev_info[i].dev = nil;
++        }
++        af->dev_info = NULL;
++    }
 +    if (af->dev_pool) {
 +        pj_pool_release(af->dev_pool);
 +        af->dev_pool = NULL;
 +    }
 +
 +    dev_array = [AVCaptureDevice devices];
-+    for (AVCaptureDevice *device in dev_array) {
-+	if ([device hasMediaType:AVMediaTypeVideo] && ![device isSuspended]) {
-+	    dev_count++;
-+	}
-+    }
++
++    /* Size dev_info by the *array length*, never by a separate filtered
++     * pre-count.  -[AVCaptureDevice isSuspended] (and the device set
++     * itself) is queried live, so a camera waking up or appearing
++     * between a counting pass and a fill pass - Continuity Camera
++     * connecting, a USB cam being hot-plugged or un-suspended - would
++     * let the fill pass emit more entries than the count pass reserved,
++     * overflowing the dev_pool allocation.  That heap corruption is what
++     * crashes inside pjmedia_vid_dev_refresh().  The fill loop walks this
++     * same array, so its length is a hard upper bound and the TOCTOU
++     * window disappears. */
++    dev_count = (unsigned)[dev_array count];
 +
 +    /* Initialize input and output devices here */
 +    af->dev_count = 0;
@@ -286,14 +347,34 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-videodev/avf_dev.m pjsip/pjmedia/sr
 +
 +    af->dev_info = (struct avf_dev_info*) pj_pool_calloc(af->dev_pool, dev_count, sizeof(struct avf_dev_info));
 +    for (AVCaptureDevice *device in dev_array) {
++        const char *dev_name;
++
 +	if (![device hasMediaType:AVMediaTypeVideo] || [device isSuspended]) {
 +	    continue;
 +	}
 +
++        /* Belt-and-braces: never write past the allocated buffer even if
++         * the array were to grow under us. */
++        if (af->dev_count >= dev_count)
++            break;
++
 +        di = &af->dev_info[af->dev_count++];
 +        pj_bzero(di, sizeof(*di));
-+        di->dev = device;
-+        pj_ansi_strncpy(di->info.name, [device.localizedName UTF8String], sizeof(di->info.name));
++        /* Take ownership: dev_array is autoreleased and drained by
++         * [apool release] at the end of this function, and the device can
++         * also be torn down on hot-unplug.  Retaining keeps di->dev valid
++         * for later avf_factory_create_stream()/init_avf_stream() use.
++         * Balanced by [release] in refresh (above) and factory_destroy. */
++        di->dev = [device retain];
++
++        /* -[AVCaptureDevice localizedName] can be nil for a device that
++         * is mid-connect; -UTF8String then returns NULL and
++         * pj_ansi_strncpy() would dereference it.  Fall back to a
++         * placeholder. */
++        dev_name = [device.localizedName UTF8String];
++        if (!dev_name)
++            dev_name = "Unknown camera";
++        pj_ansi_strncpy(di->info.name, dev_name, sizeof(di->info.name));
 +        pj_ansi_strncpy(di->info.driver, "AVF", sizeof(di->info.driver));
 +        di->info.dir = PJMEDIA_DIR_CAPTURE;
 +        di->info.has_callback = PJ_TRUE;

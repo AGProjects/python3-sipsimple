@@ -99,6 +99,15 @@ Devices:
                                        and fb_dev.c.  Was a heavy lift
                                        (~1800 lines) because the 2.15
                                        Metal renderer landed upstream.
+                                       June 2026: folds in the
+                                       avf_factory_refresh() crash fix
+                                       (heap overflow + nil-name deref)
+                                       and the AVCaptureDevice retain/
+                                       release UAF fix - both were bugs
+                                       in the avf_dev.m this patch
+                                       introduces, so they are fixed at
+                                       source rather than layered on top.
+                                       Supersedes the interim 50/51.
   16_mac_audio_vpio_disable.patch      ported - disables AVAudioEngine
                                        Voice-Processing IO on macOS
                                        capture devices (renamed from
