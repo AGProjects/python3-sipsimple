@@ -1,7 +1,0 @@
-# This file has been renamed away from the [0-9][0-9]_*.patch glob
-# in get_dependencies.sh because its hunks (pjmedia.h include +
-# Makefile transport_zrtp.o entry) are now part of
-# 12_transport_zrtp.patch directly.
-#
-# Original 12a_zrtp_pjmedia_h_makefile.patch — moved aside to prevent
-# duplicate-apply on the next get_dependencies.sh run.
