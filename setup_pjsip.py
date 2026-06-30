@@ -44,12 +44,24 @@ if sys_platform == "darwin":
     vpx_cflags = "-I/opt/local/include"
     vpx_ldflags = "-L/opt/local/lib"
     
-    # for cross-compiling on Apple M processor for x86_64 architecture
-    # arch_flags =  "-arch x86_64 -mmacosx-version-min=%s" % min_osx_version
-    # and revert the patch deps/patches/009_aconfigure.patch that sets the CPU flags for webrtc AEC
-    
+    # Honor an explicit target architecture so the x86_64 slice can be
+    # cross-built on Apple Silicon for a universal app. 04-install_sipsimple.sh
+    # sets SIPSIMPLE_TARGET_ARCH=x86_64 (or arm64) per pass; when unset we build
+    # for the native arch exactly as before. This is required because we also
+    # force os.environ['ARCHFLAGS'] below, which would otherwise override any
+    # arch the caller tried to pass — leaving the build stuck on the host arch.
+    #
+    # NOTE (2.12 only): when cross-building x86_64 against PJSIP 2.12 you also
+    # had to drop deps/patches/009_aconfigure.patch (it hardcodes the webrtc AEC
+    # CPU flags). The 2.17 series does not ship that patch. If an x86_64 build
+    # ever fails compiling echo_webrtc_aec3.c, revisit the AEC CPU flags here.
+    _target_arch = os.environ.get("SIPSIMPLE_TARGET_ARCH", "").strip()
+
     # Prepare final flags
-    arch_flags =  "-mmacosx-version-min=%s" % min_osx_version
+    if _target_arch:
+        arch_flags = "-arch %s -mmacosx-version-min=%s" % (_target_arch, min_osx_version)
+    else:
+        arch_flags = "-mmacosx-version-min=%s" % min_osx_version
     local_cflags = " %s %s %s %s %s -mmacosx-version-min=%s -isysroot %s" % (arch_flags, ossl_cflags, sqlite_cflags, opus_cflags, vpx_cflags, min_osx_version, osx_sdk_path)
     local_ldflags = " %s %s %s %s %s -headerpad_max_install_names -isysroot %s" % (arch_flags, ossl_ldflags, sqlite_ldflags, opus_ldflags, vpx_ldflags, osx_sdk_path)
     os.environ['CFLAGS'] = os.environ.get('CFLAGS', '') + local_cflags
