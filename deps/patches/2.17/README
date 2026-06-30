@@ -123,6 +123,13 @@ ZRTP / SRTP (2.17 needed surgery):
   12_transport_zrtp.patch              ported - the ~2100 line transport
                                        glue, intertwined with 2.17's
                                        SRTP / ZRTP changes.
+                                       June 2026: the transport_zrtp.c
+                                       crash/locking fixes formerly carried
+                                       as separate patches 46/47/49 are now
+                                       folded into the file this patch
+                                       creates (all were bugs in our own
+                                       module).  Net result is byte-identical
+                                       to 12 -> 46 -> 47 -> 49.
   12a_zrtp_pjmedia_h_makefile.patch    ported - companion to 12, exposes
                                        transport_zrtp.h via pjmedia.h
                                        and adds the .o to the Makefile.
@@ -153,19 +160,13 @@ New 2.17-only support:
                                        format registry + libyuv I420
                                        conversion path used by the
                                        FrameBufferVideoRenderer.
-  46_zrtp_detach_race_null_deref.patch ported from 2.12 slot 31 - the
-                                       transport_zrtp.c file is byte-
-                                       identical post-12 so the patch
-                                       applies verbatim.  Renumbered to
-                                       46 because slot 31 in 2.17 is
-                                       taken by 31_stream_transport_*.
-  47_zrtp_cb_lock_sync.patch           ported from 2.12 slot 32 -
-                                       companion to 46; adds a cb_lock
-                                       around transport_detach's clear
-                                       block so an in-flight
-                                       transport_rtp_cb2 can finish
-                                       before stream pool release.
-                                       Renumbered to keep 46/47 adjacent.
+  (46_zrtp_detach_race_null_deref,     FOLDED into 12 (June 2026) - these
+   47_zrtp_cb_lock_sync,               three transport_zrtp.c crash/locking
+   49_zrtp_cb2_lock_body)              fixes were bugs in our own module and
+                                       are now baked into the file patch 12
+                                       creates; the standalone patches were
+                                       removed.  See patch 12's header for
+                                       what each one did.
   48_h264_sylk_mobile_interop.patch    2.17-only - H.264 SDP fmtp:
                                        profile-level-id 42e01e -> 42e01f
                                        (Constrained Baseline Level 3.0

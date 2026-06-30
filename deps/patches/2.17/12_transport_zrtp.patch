@@ -1,3 +1,35 @@
+# 12_transport_zrtp.patch   (ported; AG Projects GNU ZRTP transport for pjmedia)
+#
+# Creates pjmedia/transport_zrtp.{h,c} - the ZRTP/SRTP transport adapter.
+# ZRTP is NOT part of upstream pjsip; this whole module is ours (built on
+# the GNU ZRTP core vendored by patch 13).
+#
+# Fix note (June 2026) - transport_zrtp.c crash/locking fixes folded in
+# --------------------------------------------------------------------
+# transport_zrtp.c originally accreted three follow-up crash fixes as
+# separate patches because the races were discovered one at a time. As
+# they were all bugs in this, our own file, they are now baked into the
+# file this patch creates, and the interim patches
+#   46_zrtp_detach_race_null_deref
+#   47_zrtp_cb_lock_sync
+#   49_zrtp_cb2_lock_body
+# have been removed. What they did (kept here so the history isn't lost):
+#
+#   46  NULL-deferences on a transport detach/teardown race: the RTP/RTCP
+#       callbacks could fire after the ZRTP stream context was being torn
+#       down. Added NULL checks on the detach path.
+#   47  Those NULL checks alone were not enough (a check-then-use window
+#       remained), so 47 introduced cb_lock and serialized the callback
+#       path against detach. Its own header predicted a residual window.
+#   49  Closed that residual window: the NULL re-check from 46 is repeated
+#       *inside* cb_lock in the cb2 body, so a detach between check and use
+#       can no longer slip through.
+#
+# Net effect is identical to applying 12 -> 46 -> 47 -> 49 in series;
+# verified by reproducing the post-chain transport_zrtp.c byte-for-byte.
+# (Companion patch 31 on stream.c/vid_stream.c is unaffected and remains
+# a separate patch - it is not part of this file.)
+#
 diff -ruN pjproject-2.10/pjmedia/include/pjmedia/transport_zrtp.h pjsip/pjmedia/include/pjmedia/transport_zrtp.h
 --- pjproject-2.10/pjmedia/include/pjmedia/transport_zrtp.h	1970-01-01 01:00:00.000000000 +0100
 +++ pjsip/pjmedia/include/pjmedia/transport_zrtp.h	2021-02-06 16:42:58.084103561 +0100
@@ -652,7 +684,7 @@ diff -ruN pjproject-2.10/pjmedia/include/pjmedia/transport_zrtp.h pjsip/pjmedia/
 diff -ruN pjproject-2.10/pjmedia/src/pjmedia/transport_zrtp.c pjsip/pjmedia/src/pjmedia/transport_zrtp.c
 --- pjproject-2.10/pjmedia/src/pjmedia/transport_zrtp.c	1970-01-01 01:00:00.000000000 +0100
 +++ pjsip/pjmedia/src/pjmedia/transport_zrtp.c	2021-02-06 16:42:04.322625052 +0100
-@@ -0,0 +1,1261 @@
+@@ -0,0 +1,1472 @@
 +/* $Id$ */
 +/*
 + * Copyright (C) 2010 Werner Dittmann
@@ -733,6 +765,8 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/transport_zrtp.c pjsip/pjmedia/src/
 +        pjmedia_dir dir,
 +        unsigned pct_lost);
 +static pj_status_t transport_destroy(pjmedia_transport *tp);
++static pj_status_t transport_attach2(pjmedia_transport *tp,
++                           pjmedia_transport_attach_param *att_param);
 +
 +
 +/* The transport operations */
@@ -749,7 +783,8 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/transport_zrtp.c pjsip/pjmedia/src/
 +    &transport_media_start,
 +    &transport_media_stop,
 +    &transport_simulate_lost,
-+    &transport_destroy
++    &transport_destroy,
++    &transport_attach2
 +};
 +
 +/* The transport zrtp instance */
@@ -763,6 +798,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/transport_zrtp.c pjsip/pjmedia/src/
 +    void (*stream_rtp_cb)(void *user_data,
 +                          void *pkt,
 +                          pj_ssize_t);
++    void (*stream_rtp_cb2)(pjmedia_tp_cb_param *param);
 +    void (*stream_rtcp_cb)(void *user_data,
 +                           void *pkt,
 +                           pj_ssize_t);
@@ -775,6 +811,10 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/transport_zrtp.c pjsip/pjmedia/src/
 +    pj_timer_heap_t* timer_heap;
 +    pj_timer_entry timeoutEntry;
 +    pj_mutex_t* zrtpMutex;
++    /* Serializes transport_detach against in-flight transport_rtp_cb2
++     * so detach waits for any callback to finish before pool release.
++     * See deps/patches/32_zrtp_cb_lock_sync.patch. */
++    pj_mutex_t* cb_lock;
 +    ZsrtpContext* srtpReceive;
 +    ZsrtpContext* srtpSend;
 +    ZsrtpContextCtrl* srtcpReceive;
@@ -875,6 +915,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/transport_zrtp.c pjsip/pjmedia/src/
 +    zrtp->clientIdString = clientId;    /* Set standard name */
 +    zrtp->zrtpSeq = 1;                  /* TODO: randomize */
 +    pj_mutex_create_simple(zrtp->pool, "zrtp", &zrtp->zrtpMutex);
++    pj_mutex_create_simple(zrtp->pool, "zrtp_cb", &zrtp->cb_lock);
 +    zrtp->zrtpBuffer = pj_pool_zalloc(pool, MAX_ZRTP_SIZE);
 +    zrtp->sendBuffer = pj_pool_zalloc(pool, MAX_RTP_BUFFER_LEN);
 +    zrtp->sendBufferCtrl = pj_pool_zalloc(pool, MAX_RTCP_BUFFER_LEN);
@@ -1449,7 +1490,7 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/transport_zrtp.c pjsip/pjmedia/src/
 +    int32_t newLen = 0;
 +    pj_status_t rc = PJ_SUCCESS;
 +
-+    pj_assert(zrtp && zrtp->stream_rtcp_cb && pkt);
++    pj_assert(zrtp && zrtp->stream_rtp_cb && pkt);
 +
 +    // check if this could be a real RTP/SRTP packet.
 +    if ((*buffer & 0xf0) != 0x10)
@@ -1531,6 +1572,150 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/transport_zrtp.c pjsip/pjmedia/src/
 +    }
 +}
 +
++/* This is our RTP callback, that is called by the slave transport when it
++ * receives RTP packet.
++ */
++static void transport_rtp_cb2(pjmedia_tp_cb_param *param)
++{
++    struct tp_zrtp *zrtp = (struct tp_zrtp*)param->user_data;
++    pj_uint8_t* buffer = (pj_uint8_t*)param->pkt;
++    int32_t newLen = 0;
++    pj_status_t rc = PJ_SUCCESS;
++    pjmedia_tp_cb_param cbparam;
++ 
++    /*
++     * zrtp comes from param->user_data (the ZRTP transport itself),
++     * which outlives the stream, so it is safe to read before locking.
++     */
++    if (zrtp == NULL)
++        return;
++
++    /*
++     * CB2 LOCK FIX: hold cb_lock across the whole callback body so
++     * transport_detach() -- which takes the same cb_lock before
++     * clearing the callback pointers and letting pjmedia_stream_destroy
++     * free the stream pool -- cannot run between the NULL-check below
++     * and the zrtp->stream_rtp_cb2() call(s) that dereference the
++     * stream through param->user_data.  In 2.17 on_rx_rtp lives in
++     * stream_imp_common.c and still has no grp_lock / NULL guard of its
++     * own, so the wrapper must provide the synchronisation.  The
++     * NULL-check from patch 46 is repeated *inside* the lock so a detach
++     * that completed before we acquired it is observed.  EVERY return
++     * path below must release cb_lock first.
++     * See deps/patches/2.17/49_zrtp_cb2_lock_body.patch.
++     */
++    pj_mutex_lock(zrtp->cb_lock);
++
++    /*
++     * NULL-DEREF FIX: drop the packet if the stream has detached.
++     * The slave UDP transport detach is not synchronous with
++     * in-flight ioqueue callbacks, so a packet that was already
++     * queued for dispatch can still reach this wrapper after
++     * transport_detach() has cleared stream_user_data and
++     * stream_rtp_cb2. pjproject 2.12 stream.c::on_rx_rtp has no
++     * NULL guard and segfaults on a NULL user_data. See
++     * deps/patches/2.17/46_zrtp_detach_race_null_deref.patch.
++     */
++    if (zrtp->stream_user_data == NULL || zrtp->stream_rtp_cb2 == NULL) {
++        pj_mutex_unlock(zrtp->cb_lock);
++        return;
++    }
++
++    pj_assert(zrtp && zrtp->stream_rtp_cb2 && param->pkt);
++ 
++    // check if this could be a real RTP/SRTP packet.
++    if ((*buffer & 0xf0) != 0x10)
++    {
++        //  Could be real RTP, check if we are in secure mode
++        if (zrtp->srtpReceive == NULL || param->size < 0)
++        {
++            pj_memcpy(&cbparam, param, sizeof(cbparam));
++            cbparam.user_data = zrtp->stream_user_data;
++            zrtp->stream_rtp_cb2(&cbparam);
++        }
++        else
++        {
++            rc = zsrtp_unprotect(zrtp->srtpReceive, param->pkt, param->size, &newLen);
++            if (rc == 1)
++            {
++                zrtp->unprotect++;
++               param->size = newLen;
++                pj_memcpy(&cbparam, param, sizeof(cbparam));
++                cbparam.user_data = zrtp->stream_user_data;
++                zrtp->stream_rtp_cb2(&cbparam);
++                //zrtp->stream_rtp_cb(zrtp->stream_user_data, pkt,
++                //                    newLen);
++                zrtp->unprotect_err = 0;
++            }
++            else
++            {
++                if (zrtp->cb.show_message)
++                {
++                    if (rc == -1)
++                        zrtp->cb.show_message(&zrtp->base, zrtp_Warning, zrtp_WarningSRTPauthError);
++                    else
++                        zrtp->cb.show_message(&zrtp->base, zrtp_Warning, zrtp_WarningSRTPreplayError);
++                }
++                zrtp->unprotect_err = rc;
++                /* We failed to decrypt the packet, but forward it regardless to the slave
++                 * transport, it might not have been encrypted after all */
++                pj_memcpy(&cbparam, param, sizeof(cbparam));
++                cbparam.user_data = zrtp->stream_user_data;
++                zrtp->stream_rtp_cb2(&cbparam);
++            }
++        }
++        if (!zrtp->started && zrtp->enableZrtp)
++            pjmedia_transport_zrtp_startZrtp((pjmedia_transport *)zrtp);
++
++        pj_mutex_unlock(zrtp->cb_lock);
++        return;
++    }
++
++    // We assume all other packets are ZRTP packets here. Process
++    // if ZRTP processing is enabled. Because valid RTP packets are
++    // already handled we delete any packets here after processing.
++    if (zrtp->enableZrtp && zrtp->zrtpCtx != NULL)
++    {
++        // Get CRC value into crc (see above how to compute the offset)
++        pj_uint16_t temp = param->size - CRC_SIZE;
++        pj_uint32_t crc = *(uint32_t*)(buffer + temp);
++        crc = pj_ntohl(crc);
++
++        if (!zrtp_CheckCksum(buffer, temp, crc))
++        {
++            if (zrtp->cb.show_message)
++                zrtp->cb.show_message(&zrtp->base, zrtp_Warning, zrtp_WarningCRCmismatch);
++            pj_mutex_unlock(zrtp->cb_lock);
++            return;
++        }
++
++        pj_uint32_t magic = *(pj_uint32_t*)(buffer + 4);
++        magic = pj_ntohl(magic);
++
++        // Check if it is really a ZRTP packet, return, no further processing
++        if (magic != ZRTP_MAGIC) {
++            pj_mutex_unlock(zrtp->cb_lock);
++            return;
++        }
++
++        // cover the case if the other party sends _only_ ZRTP packets at the
++        // beginning of a session. Start ZRTP in this case as well.
++        if (!zrtp->started)
++        {
++            pjmedia_transport_zrtp_startZrtp((pjmedia_transport *)zrtp);
++        }
++        // this now points beyond the undefined and length field.
++        // We need them, thus adjust
++        unsigned char* zrtpMsg = (buffer + 12);
++
++        // store peer's SSRC in host order, used when creating the CryptoContext
++        zrtp->peerSSRC = *(pj_uint32_t*)(buffer + 8);
++        zrtp->peerSSRC = pj_ntohl(zrtp->peerSSRC);
++        zrtp_processZrtpMessage(zrtp->zrtpCtx, zrtpMsg, zrtp->peerSSRC, param->size);
++    }
++
++    pj_mutex_unlock(zrtp->cb_lock);
++}
 +
 +/* This is our RTCP callback, that is called by the slave transport when it
 + * receives RTCP packet.
@@ -1622,9 +1807,23 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/transport_zrtp.c pjsip/pjmedia/src/
 +    if (zrtp->stream_user_data != NULL)
 +    {
 +        pjmedia_transport_detach(zrtp->slave_tp, zrtp);
++        /* Block until any in-flight transport_rtp_cb2 has released
++         * cb_lock, then clear the callback pointers under the lock so
++         * any future cb2 sees them NULL after we drop it.  After this
++         * returns, pjmedia_stream_destroy can safely free the stream
++         * pool.  See deps/patches/32_zrtp_cb_lock_sync.patch. */
++        pj_mutex_lock(zrtp->cb_lock);
 +        zrtp->stream_user_data = NULL;
 +        zrtp->stream_rtp_cb = NULL;
++        /*
++         * NULL-DEREF FIX: also clear stream_rtp_cb2 so the cb2
++         * NULL-check in transport_rtp_cb2() actually trips on a
++         * post-detach ioqueue callback. See
++         * deps/patches/2.17/46_zrtp_detach_race_null_deref.patch.
++         */
++        zrtp->stream_rtp_cb2 = NULL;
 +        zrtp->stream_rtcp_cb = NULL;
++        pj_mutex_unlock(zrtp->cb_lock);
 +    }
 +}
 +
@@ -1905,164 +2104,17 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/transport_zrtp.c pjsip/pjmedia/src/
 +    pj_mutex_lock(zrtp->zrtpMutex);
 +    pj_mutex_unlock(zrtp->zrtpMutex);
 +    pj_mutex_destroy(zrtp->zrtpMutex);
++    if (zrtp->cb_lock) {
++        pj_mutex_lock(zrtp->cb_lock);
++        pj_mutex_unlock(zrtp->cb_lock);
++        pj_mutex_destroy(zrtp->cb_lock);
++    }
 +
 +    pj_pool_release(zrtp->pool);
 +
 +    return PJ_SUCCESS;
 +}
 +
-+
-+
-+
---- pjsip/pjmedia/src/pjmedia/transport_zrtp.c	2021-02-05 12:38:15.913793992 +0100
-+++ pjsip/pjmedia/src/pjmedia/transport_zrtp.c	2021-03-11 09:20:35.134754145 +0100
-@@ -78,6 +78,8 @@
-         pjmedia_dir dir,
-         unsigned pct_lost);
- static pj_status_t transport_destroy(pjmedia_transport *tp);
-+static pj_status_t transport_attach2(pjmedia_transport *tp,
-+                           pjmedia_transport_attach_param *att_param);
- 
- 
- /* The transport operations */
-@@ -94,7 +96,8 @@
-     &transport_media_start,
-     &transport_media_stop,
-     &transport_simulate_lost,
--    &transport_destroy
-+    &transport_destroy,
-+    &transport_attach2
- };
- 
- /* The transport zrtp instance */
-@@ -108,6 +111,7 @@
-     void (*stream_rtp_cb)(void *user_data,
-                           void *pkt,
-                           pj_ssize_t);
-+    void (*stream_rtp_cb2)(pjmedia_tp_cb_param *param);
-     void (*stream_rtcp_cb)(void *user_data,
-                            void *pkt,
-                            pj_ssize_t);
-@@ -794,7 +798,7 @@
-     int32_t newLen = 0;
-     pj_status_t rc = PJ_SUCCESS;
- 
--    pj_assert(zrtp && zrtp->stream_rtcp_cb && pkt);
-+    pj_assert(zrtp && zrtp->stream_rtp_cb && pkt);
- 
-     // check if this could be a real RTP/SRTP packet.
-     if ((*buffer & 0xf0) != 0x10)
-@@ -876,6 +880,106 @@
-     }
- }
- 
-+/* This is our RTP callback, that is called by the slave transport when it
-+ * receives RTP packet.
-+ */
-+static void transport_rtp_cb2(pjmedia_tp_cb_param *param)
-+{
-+    struct tp_zrtp *zrtp = (struct tp_zrtp*)param->user_data;
-+    pj_uint8_t* buffer = (pj_uint8_t*)param->pkt;
-+    int32_t newLen = 0;
-+    pj_status_t rc = PJ_SUCCESS;
-+    pjmedia_tp_cb_param cbparam;
-+ 
-+    pj_assert(zrtp && zrtp->stream_rtp_cb2 && param->pkt);
-+ 
-+    // check if this could be a real RTP/SRTP packet.
-+    if ((*buffer & 0xf0) != 0x10)
-+    {
-+        //  Could be real RTP, check if we are in secure mode
-+        if (zrtp->srtpReceive == NULL || param->size < 0)
-+        {
-+            pj_memcpy(&cbparam, param, sizeof(cbparam));
-+            cbparam.user_data = zrtp->stream_user_data;
-+            zrtp->stream_rtp_cb2(&cbparam);
-+        }
-+        else
-+        {
-+            rc = zsrtp_unprotect(zrtp->srtpReceive, param->pkt, param->size, &newLen);
-+            if (rc == 1)
-+            {
-+                zrtp->unprotect++;
-+               param->size = newLen;
-+                pj_memcpy(&cbparam, param, sizeof(cbparam));
-+                cbparam.user_data = zrtp->stream_user_data;
-+                zrtp->stream_rtp_cb2(&cbparam);
-+                //zrtp->stream_rtp_cb(zrtp->stream_user_data, pkt,
-+                //                    newLen);
-+                zrtp->unprotect_err = 0;
-+            }
-+            else
-+            {
-+                if (zrtp->cb.show_message)
-+                {
-+                    if (rc == -1)
-+                        zrtp->cb.show_message(&zrtp->base, zrtp_Warning, zrtp_WarningSRTPauthError);
-+                    else
-+                        zrtp->cb.show_message(&zrtp->base, zrtp_Warning, zrtp_WarningSRTPreplayError);
-+                }
-+                zrtp->unprotect_err = rc;
-+                /* We failed to decrypt the packet, but forward it regardless to the slave
-+                 * transport, it might not have been encrypted after all */
-+                pj_memcpy(&cbparam, param, sizeof(cbparam));
-+                cbparam.user_data = zrtp->stream_user_data;
-+                zrtp->stream_rtp_cb2(&cbparam);
-+            }
-+        }
-+        if (!zrtp->started && zrtp->enableZrtp)
-+            pjmedia_transport_zrtp_startZrtp((pjmedia_transport *)zrtp);
-+
-+        return;
-+    }
-+
-+    // We assume all other packets are ZRTP packets here. Process
-+    // if ZRTP processing is enabled. Because valid RTP packets are
-+    // already handled we delete any packets here after processing.
-+    if (zrtp->enableZrtp && zrtp->zrtpCtx != NULL)
-+    {
-+        // Get CRC value into crc (see above how to compute the offset)
-+        pj_uint16_t temp = param->size - CRC_SIZE;
-+        pj_uint32_t crc = *(uint32_t*)(buffer + temp);
-+        crc = pj_ntohl(crc);
-+
-+        if (!zrtp_CheckCksum(buffer, temp, crc))
-+        {
-+            if (zrtp->cb.show_message)
-+                zrtp->cb.show_message(&zrtp->base, zrtp_Warning, zrtp_WarningCRCmismatch);
-+            return;
-+        }
-+
-+        pj_uint32_t magic = *(pj_uint32_t*)(buffer + 4);
-+        magic = pj_ntohl(magic);
-+
-+        // Check if it is really a ZRTP packet, return, no further processing
-+        if (magic != ZRTP_MAGIC)
-+            return;
-+
-+        // cover the case if the other party sends _only_ ZRTP packets at the
-+        // beginning of a session. Start ZRTP in this case as well.
-+        if (!zrtp->started)
-+        {
-+            pjmedia_transport_zrtp_startZrtp((pjmedia_transport *)zrtp);
-+        }
-+        // this now points beyond the undefined and length field.
-+        // We need them, thus adjust
-+        unsigned char* zrtpMsg = (buffer + 12);
-+
-+        // store peer's SSRC in host order, used when creating the CryptoContext
-+        zrtp->peerSSRC = *(pj_uint32_t*)(buffer + 8);
-+        zrtp->peerSSRC = pj_ntohl(zrtp->peerSSRC);
-+        zrtp_processZrtpMessage(zrtp->zrtpCtx, zrtpMsg, zrtp->peerSSRC, param->size);
-+    }
-+}
- 
- /* This is our RTCP callback, that is called by the slave transport when it
-  * receives RTCP packet.
-@@ -1256,6 +1359,45 @@
-     return PJ_SUCCESS;
- }
- 
 +/*
 + * attach2() is called by stream to register callbacks that we should
 + * call on receipt of RTP and RTCP packets.
@@ -2102,6 +2154,6 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia/transport_zrtp.c pjsip/pjmedia/src/
 +
 +    return PJ_SUCCESS;
 +}
- 
-
- 
++
++
++
