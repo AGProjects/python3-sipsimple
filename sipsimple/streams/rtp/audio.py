@@ -228,7 +228,13 @@ class AudioStream(RTPStream):
 
     def _create_transport(self, rtp_transport, remote_sdp=None, stream_index=None):
         settings = SIPSimpleSettings()
-        available_codecs = self.session.account.rtp.audio_codec_list or settings.rtp.audio_codec_list
+        available_codecs = list(self.session.account.rtp.audio_codec_list or settings.rtp.audio_codec_list)
+        if remote_sdp is not None:
+            # Enforce audio_codec_list preference order
+            remote_codecs = list(remote_sdp.media[stream_index or 0].codec_list)
+            preferred_codec = next((codec for codec in available_codecs if codec in remote_codecs), None)
+            if preferred_codec is not None:
+                available_codecs = [preferred_codec] + [codec for codec in available_codecs if codec not in remote_codecs]
         codecs = list(c.encode() for c in available_codecs)
         return AudioTransport(self.mixer, rtp_transport, remote_sdp=remote_sdp, sdp_index=stream_index or 0, codecs=codecs)
 
