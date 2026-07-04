@@ -563,6 +563,45 @@ cdef class PJMEDIAEndpoint:
                 raise PJSIPError("Could not set video options", status)
 
 
+cdef dict _pj_ssl_cert_info_to_dict(pj_ssl_cert_info *cert):
+    cdef _sipsimple_cert_name_entry *entries
+    cdef unsigned int i
+    cdef list alt_names = []
+    from datetime import datetime, timezone
+    entries = <_sipsimple_cert_name_entry *> cert.subj_alt_name_entry
+    if entries != NULL:
+        for i in range(cert.subj_alt_name_cnt):
+            alt_names.append(_pj_str_to_str(entries[i].name))
+    serial = bytes((<unsigned char *> cert.serial_no)[:20]).lstrip(b'\x00').hex() or '00'
+    return dict(subject=_pj_str_to_str(cert.subject_cn),
+                subject_info=_pj_str_to_str(cert.subject_info),
+                issuer=_pj_str_to_str(cert.issuer_cn),
+                issuer_info=_pj_str_to_str(cert.issuer_info),
+                version=cert.version,
+                serial=serial,
+                not_before=datetime.fromtimestamp(cert.validity_start.sec, timezone.utc).strftime('%Y-%m-%d %H:%M:%S GMT'),
+                not_after=datetime.fromtimestamp(cert.validity_end.sec, timezone.utc).strftime('%Y-%m-%d %H:%M:%S GMT'),
+                alternative_names=alt_names,
+                pem=_pj_str_to_str(cert.raw) or None)
+
+
+cdef dict _pj_ssl_info_to_dict(pjsip_transport *tp, pj_ssl_sock_info *ssl_info):
+    cdef char buf[PJ_INET6_ADDRSTRLEN]
+    cdef pj_ssl_cert_info *cert_info
+    cdef dict ssl_dict = {}
+    ssl_dict['remote_hostname'] = _pj_str_to_str(tp.remote_name.host)
+    if pj_sockaddr_has_addr(&ssl_info.remote_addr):
+        pj_sockaddr_print(&ssl_info.remote_addr, buf, 512, 0)
+        ssl_dict['remote_ip'] = '%s:%d' % (_buf_to_str(buf), pj_sockaddr_get_port(&ssl_info.remote_addr))
+    else:
+        ssl_dict['remote_ip'] = None
+    ssl_dict['tls_cipher'] = _buf_to_str(pj_ssl_cipher_name(ssl_info.cipher)) or None
+    ssl_dict['verify_status'] = ssl_info.verify_status
+    cert_info = ssl_info.remote_cert_info
+    ssl_dict['certificate'] = _pj_ssl_cert_info_to_dict(cert_info) if cert_info != NULL else None
+    return ssl_dict
+
+
 cdef void _transport_state_cb_impl(pjsip_transport *tp, pjsip_transport_state state, pjsip_transport_state_info_ptr_const info) with gil:
     cdef PJSIPUA ua
     cdef str local_address
@@ -575,6 +614,7 @@ cdef void _transport_state_cb_impl(pjsip_transport *tp, pjsip_transport_state st
     cdef unsigned int verify_count
     cdef unsigned int i
     cdef list certificate_errors
+    cdef pj_ssl_cert_info *cert_info
     try:
         ua = _get_ua()
     except:
@@ -591,6 +631,14 @@ cdef void _transport_state_cb_impl(pjsip_transport *tp, pjsip_transport_state st
     event_dict = dict(transport=transport, local_address=local_address, remote_address=remote_address)
     
     if state == PJSIP_TP_STATE_CONNECTED:
+        if transport == 'tls' and info.ext_info != NULL:
+            tls_info = <pjsip_tls_state_info *> info.ext_info
+            ssl_info = tls_info.ssl_sock_info
+            if ssl_info != NULL:
+                verify_dict = dict(event_dict)
+                verify_dict.update(_pj_ssl_info_to_dict(tp, ssl_info))
+                verify_dict['verified'] = ssl_info.verify_status == 0
+                _add_event("SIPEngineTransportDidVerifyCertificate", verify_dict)
         _add_event("SIPEngineTransportDidConnect", event_dict)
     else:
         reason = _pj_status_to_str(info.status)
@@ -604,8 +652,8 @@ cdef void _transport_state_cb_impl(pjsip_transport *tp, pjsip_transport_state st
                     certificate_errors = [_buf_to_str(verify_strings[i]) for i in range(verify_count)]
                 reason = '%s: %s' % (reason, ', '.join(certificate_errors) or 'unknown verification error')
                 verify_dict = dict(event_dict)
+                verify_dict.update(_pj_ssl_info_to_dict(tp, ssl_info))
                 verify_dict['reason'] = ', '.join(certificate_errors) or reason
-                verify_dict['verify_status'] = ssl_info.verify_status
                 verify_dict['certificate_errors'] = certificate_errors
                 _add_event("SIPEngineTransportGotCertificateError", verify_dict)
         event_dict['reason'] = reason
