@@ -569,6 +569,12 @@ cdef void _transport_state_cb_impl(pjsip_transport *tp, pjsip_transport_state st
     cdef str remote_address
     cdef char buf[PJ_INET6_ADDRSTRLEN]
     cdef dict event_dict
+    cdef pjsip_tls_state_info *tls_info
+    cdef pj_ssl_sock_info *ssl_info
+    cdef char_ptr_const verify_strings[16]
+    cdef unsigned int verify_count
+    cdef unsigned int i
+    cdef list certificate_errors
     try:
         ua = _get_ua()
     except:
@@ -588,6 +594,20 @@ cdef void _transport_state_cb_impl(pjsip_transport *tp, pjsip_transport_state st
         _add_event("SIPEngineTransportDidConnect", event_dict)
     else:
         reason = _pj_status_to_str(info.status)
+        if transport == 'tls' and info.ext_info != NULL:
+            tls_info = <pjsip_tls_state_info *> info.ext_info
+            ssl_info = tls_info.ssl_sock_info
+            if ssl_info != NULL and ssl_info.verify_status != 0:
+                certificate_errors = []
+                verify_count = 16
+                if pj_ssl_cert_get_verify_status_strings(ssl_info.verify_status, verify_strings, &verify_count) == 0:
+                    certificate_errors = [_buf_to_str(verify_strings[i]) for i in range(verify_count)]
+                reason = '%s: %s' % (reason, ', '.join(certificate_errors) or 'unknown verification error')
+                verify_dict = dict(event_dict)
+                verify_dict['reason'] = ', '.join(certificate_errors) or reason
+                verify_dict['verify_status'] = ssl_info.verify_status
+                verify_dict['certificate_errors'] = certificate_errors
+                _add_event("SIPEngineTransportGotCertificateError", verify_dict)
         event_dict['reason'] = reason
         _add_event("SIPEngineTransportDidDisconnect", event_dict)
 

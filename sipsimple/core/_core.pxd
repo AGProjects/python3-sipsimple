@@ -166,6 +166,17 @@ cdef extern from "pjlib.h":
         int last
         int mean
 
+cdef extern from *:
+    """
+    typedef struct _sipsimple_cert_name_entry {
+        pj_ssl_cert_name_type type;
+        pj_str_t name;
+    } _sipsimple_cert_name_entry;
+    """
+    ctypedef struct _sipsimple_cert_name_entry:
+        int type
+        pj_str_t name
+
 cdef extern from "pjlib-util.h":
 
     # init
@@ -326,6 +337,31 @@ cdef extern from "pjmedia.h":
     struct pjsip_tpmgr
     struct pjsip_transport_state_info:
         int status
+        void *ext_info
+    struct pj_ssl_cert_info:
+        unsigned int version
+        unsigned char serial_no[20]
+        pj_str_t subject_cn "subject.cn"
+        pj_str_t subject_info "subject.info"
+        pj_str_t issuer_cn "issuer.cn"
+        pj_str_t issuer_info "issuer.info"
+        pj_time_val validity_start "validity.start"
+        pj_time_val validity_end "validity.end"
+        int validity_gmt "validity.gmt"
+        unsigned int subj_alt_name_cnt "subj_alt_name.cnt"
+        void *subj_alt_name_entry "subj_alt_name.entry"
+        pj_str_t raw
+    struct pj_ssl_sock_info:
+        int established
+        unsigned int proto
+        int cipher
+        pj_sockaddr remote_addr
+        pj_ssl_cert_info *remote_cert_info
+        unsigned int verify_status
+    struct pjsip_tls_state_info:
+        pj_ssl_sock_info *ssl_sock_info
+    int pj_ssl_cert_get_verify_status_strings(unsigned int verify_status, char_ptr_const *error_strings, unsigned int *count) nogil
+    char_ptr_const pj_ssl_cipher_name(int cipher) nogil
     enum pjsip_transport_state:
         PJSIP_TP_STATE_CONNECTED
         PJSIP_TP_STATE_DISCONNECTED
