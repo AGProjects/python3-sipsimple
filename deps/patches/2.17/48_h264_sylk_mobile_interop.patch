@@ -1,0 +1,106 @@
+# 48_h264_sylk_mobile_interop.patch
+#
+# Match Sylk Mobile / WebRTC standard for the H.264 SDP fmtp line.
+#
+# Symptom
+# -------
+# Mac -> Sylk Mobile H.264 calls negotiate but the mobile side sees a
+# resolution capped at 720x576 instead of 720p / 1080p.  Sylk Mobile's
+# react-native-sylkrtc rewrites every incoming non-Baseline
+# profile-level-id to "42e0<level>" (Constrained Baseline at the
+# original level) and DOES NOT touch the level.  So whatever level
+# pjsip advertises is what gets negotiated.
+#
+# pjsip 2.17 ships every H.264 codec backend (vid_toolbox.m,
+# ffmpeg_vid_codecs.c, openh264.cpp, and_vid_mediacodec.cpp) hardcoded
+# to:
+#
+#     profile-level-id = "42e01e"      ; Constrained Baseline, Level 3.0
+#     " packetization-mode" = "1"      ; note the leading space
+#
+# Level 3.0 caps at 720x576 @ 25-30 fps / ~10 Mbps.  Modern WebRTC
+# stacks (libwebrtc, Safari, Chrome, Sylk Mobile) advertise and expect
+# Level 3.1 (1280x720 @ 30 fps / ~14 Mbps).  When pjsip offers Level
+# 3.0, Sylk Mobile's libwebrtc receiver caps the decoded picture at
+# the announced level and the user-visible result is a soft 4CIF /
+# half-720p image instead of HD.
+#
+# The leading space on " packetization-mode" is a long-standing
+# pjsip quirk (the comment in ffmpeg_vid_codecs.c calls it "for
+# better compatibility (strange indeed!)").  In practice the SDP
+# printer emits ";  packetization-mode=1" which most peers tolerate
+# but it's not conformant with RFC 6184 / RFC 4566 fmtp grammar.
+# Strip it.
+#
+# Fix
+# ---
+#  1. profile-level-id 42e01e -> 42e01f in all four codec backends.
+#     Constrained Baseline Level 3.1 matches what libwebrtc / Sylk
+#     Mobile / every modern WebRTC stack advertises, so the negotiated
+#     resolution can go up to 1280x720@30.
+#  2. " packetization-mode" -> "packetization-mode" (strip the leading
+#     space) for cleanliness.  packetization-mode=1 (non-interleaved,
+#     supports STAP-A and FU-A) stays unchanged - that's the standard
+#     WebRTC H.264 mode and is what Sylk Mobile uses.
+#
+# References
+# ----------
+#   * RFC 6184 5.4 - H.264 fmtp parameter syntax
+#   * react-native-sylkrtc+1.6.5.patch in sylk-mobile/patches/ -
+#     contains the "profile-level-id rewrite" mungeSdp logic this
+#     patch makes us compatible with.
+#
+# Notes
+# -----
+# This patch only touches default-fmtp tables.  The actual encoder
+# bitstream level on the wire is still determined at encode time by
+# the codec backend (VideoToolbox auto-selects; libx264 is told via
+# the x264 preset tuning).  Apple Silicon VideoToolbox happily
+# encodes at Level 3.1 for VGA/720p inputs and at Level 4.0+ above
+# that - the SDP level is advisory for the peer's decoder, not a
+# hard cap on what we emit.
+#
+--- pjsip_orig/pjmedia/src/pjmedia-codec/vid_toolbox.m
++++ pjsip/pjmedia/src/pjmedia-codec/vid_toolbox.m
+@@ -298,9 +298,9 @@
+     /* Decoding fmtp */
+     attr->dec_fmtp.cnt = 2;
+     attr->dec_fmtp.param[0].name = pj_str((char*)"profile-level-id");
+-    attr->dec_fmtp.param[0].val = pj_str((char*)"42e01e");
+-    attr->dec_fmtp.param[1].name = pj_str((char*)" packetization-mode");
++    attr->dec_fmtp.param[0].val = pj_str((char*)"42e01f");
++    attr->dec_fmtp.param[1].name = pj_str((char*)"packetization-mode");
+     attr->dec_fmtp.param[1].val = pj_str((char*)"1");
+
+     /* Bitrate */
+     attr->enc_fmt.det.vid.avg_bps = DEFAULT_AVG_BITRATE;
+--- pjsip_orig/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c
++++ pjsip/pjmedia/src/pjmedia-codec/ffmpeg_vid_codecs.c
+@@ -295,13 +295,12 @@
+ #if PJMEDIA_HAS_FFMPEG_CODEC_H264
+     {
+         {PJMEDIA_FORMAT_H264, AVC_H264_PT, {"H264",4},
+-         {"Constrained Baseline (level=30, pack=1)", 39}},
++         {"Constrained Baseline (level=31, pack=1)", 39}},
+         0,
+         {720, 480},     {15, 1},        256000, 256000,
+         &h264_packetize, &h264_unpacketize, &h264_preopen, &h264_postopen,
+         &pjmedia_vid_codec_h264_match_sdp,
+-        /* Leading space for better compatibility (strange indeed!) */
+-        {2, { {{"profile-level-id",16},    {"42e01e",6}},
+-              {{" packetization-mode",19},  {"1",1}}, } },
++        {2, { {{"profile-level-id",16},   {"42e01f",6}},
++              {{"packetization-mode",18}, {"1",1}}, } },
+     },
+ #endif
+--- pjsip_orig/pjmedia/src/pjmedia-codec/openh264.cpp
++++ pjsip/pjmedia/src/pjmedia-codec/openh264.cpp
+@@ -290,6 +290,6 @@
+     /* Decoding fmtp */
+     attr->dec_fmtp.cnt = 2;
+     attr->dec_fmtp.param[0].name = pj_str((char*)"profile-level-id");
+-    attr->dec_fmtp.param[0].val = pj_str((char*)"42e01e");
+-    attr->dec_fmtp.param[1].name = pj_str((char*)" packetization-mode");
++    attr->dec_fmtp.param[0].val = pj_str((char*)"42e01f");
++    attr->dec_fmtp.param[1].name = pj_str((char*)"packetization-mode");
+     attr->dec_fmtp.param[1].val = pj_str((char*)"1");

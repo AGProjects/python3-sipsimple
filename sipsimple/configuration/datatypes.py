@@ -214,18 +214,18 @@ class CodecList(List):
     @values.setter
     def values(self, values):
         if not set(values).issubset(self.available_values):
-            raise ValueError("illegal codec values: %s" % ', '.join(values))
+            raise ValueError("illegal codecs: %s must be a subset of %s" % (', '.join(set(values)), self.available_values))
         self.__dict__['values'] = values
 
 
 # Audio datatypes
 
 class AudioCodecList(CodecList):
-    available_values = {'opus', 'speex', 'G722', 'GSM', 'iLBC', 'PCMU', 'PCMA', 'AMR-WB'}
+    available_values = {'opus', 'speex', 'G722', 'G729', 'GSM', 'iLBC', 'PCMU', 'PCMA', 'AMR-WB'}
 
 
 class SampleRate(int):
-    valid_values = (16000, 32000, 44100, 48000)
+    valid_values = (16000, 32000, 48000)
 
     def __new__(cls, value):
         value = int(value)

@@ -1,0 +1,120 @@
+# 28_pjsip_tls_lis_create_transport_uninit_tls_name.patch
+#
+# Fix an uninitialised-pj_str_t read in pjsip's TLS listener
+# transport creation path (pjproject 2.12).
+#
+# lis_create_transport() in sip_transport_tls.c declares
+#
+#     pj_str_t remote_name;
+#     pj_str_t tls_name;
+#
+# on the stack and is supposed to fill them in from the outgoing tdata
+# before passing them to pj_ssl_sock_create() via ssock_param.server_name.
+#
+# `remote_name` is correctly handled: it is assigned from
+# tdata->dest_info.name when tdata is non-NULL, and `pj_bzero`'d in the
+# else-branch.
+#
+# `tls_name`, however, is only ever assigned in the deeply-nested
+# branch:
+#
+#     if (tdata) {
+#         ...
+#         if (route_hdr != NULL) {
+#             if (PJSIP_URI_SCHEME_IS_SIPS(...) ||
+#                 PJSIP_URI_SCHEME_IS_SIP(...)) {
+#                 ...
+#                 while (p != &sip_uri->other_param) {
+#                     if (pj_stricmp(&p->name, &st_name) == 0) {
+#                         pj_strdup(pool, &tls_name, &p->value);
+#                         break;
+#                     }
+#                 ...
+#                 }
+#             }
+#         }
+#     }
+#
+# In every other code path (no tdata, no Route header, non-SIP(S)
+# Route URI, or Route URI without a `tls_name` parameter) `tls_name`
+# is left holding whatever stack bytes happen to be there.
+#
+# The variable is then read unconditionally a few lines later:
+#
+#     if (tls_name.slen)
+#         ssock_param.server_name = tls_name;
+#     else
+#         ssock_param.server_name = remote_name;
+#
+# If `tls_name.slen` happens to be non-zero (which it will be whenever
+# the stack slot holds anything other than zeros), the garbage
+# `tls_name.ptr` propagates into ssock_param.server_name and is
+# eventually dereferenced inside
+#
+#     pj_ssl_sock_create
+#       -> pj_ssl_sock_param_copy
+#         -> pj_strdup_with_null
+#           -> _platform_memmove   <-- SIGSEGV
+#
+# trying to copy `slen` bytes from the bogus pointer into the pool.
+#
+# Reported via Blink for macOS (com.agprojects.Blink) when terminating
+# a Subscription over TLS - Subscription.end() sends an unSUBSCRIBE
+# (Expires: 0), which causes the transport manager to acquire a fresh
+# TLS transport via the listener, which lands in lis_create_transport()
+# in the no-Route-header / no-tls_name-param case. The crash address
+# observed was 0x6574616572632029 - eight ASCII bytes ") created"
+# left over from a previous PJ_LOG buffer on the stack, treated as a
+# pointer.
+#
+# Backtrace from the macOS crash report:
+#
+#     frame 0  _platform_memmove + 144
+#     frame 1  pj_strdup_with_null + 56
+#     frame 2  pj_ssl_sock_param_copy + 204
+#     frame 3  pj_ssl_sock_create + 332
+#     frame 4  lis_create_transport + 860
+#     frame 5  pjsip_tpmgr_acquire_transport2 + 1140
+#     frame 6  stateless_send_transport_cb + 252
+#     frame 7  pjsip_resolve + 1612
+#     frame 8  pjsip_endpt_send_request_stateless + 232
+#     frame 9  tsx_send_msg + 612
+#     frame 10 tsx_on_state_null + 140
+#     frame 11 pjsip_tsx_send_msg + 148
+#     frame 12 pjsip_dlg_send_request + 528
+#     frame 13 pjsip_evsub_send_request + 76
+#     frame 14 Subscription._send_subscribe + 3276
+#     frame 15 Subscription.end + 2492
+#
+# Note: the `if (tls_name.slen) ... else ...` selector is a
+# sipsimple-local addition on top of upstream pjsip 2.12 (compare
+# sip_transport_tls.c with sip_transport_tls.c.orig - upstream
+# unconditionally does `ssock_param.server_name = remote_name;`).
+# The fix is to pj_bzero `tls_name` (and, defensively, `remote_name`)
+# at function entry so the post-conditional read always sees a
+# well-defined zero pj_str_t.
+#
+# The fix is local to pjsip/src/pjsip/sip_transport_tls.c.
+#
+--- pjsip_orig/pjsip/src/pjsip/sip_transport_tls.c
++++ pjsip/pjsip/src/pjsip/sip_transport_tls.c
+@@ -1171,6 +1171,19 @@
+     pjsip_sip_uri *sip_uri = NULL;
+     pjsip_route_hdr *route_hdr = NULL;
+
++    /*
++     * Make sure tls_name is zero-initialised. It is only assigned inside
++     * the "if (tdata) { if (route_hdr) { ... } }" block below when a
++     * "tls_name" parameter is found on the Route URI. In every other
++     * code path (no tdata, no Route header, non-SIP(S) Route URI,
++     * Route URI with no "tls_name" param) the variable was previously
++     * left uninitialised, and the later test "if (tls_name.slen)"
++     * could observe stack garbage and dereference an invalid
++     * tls_name.ptr inside pj_ssl_sock_param_copy() -> pj_strdup_with_null().
++     */
++    pj_bzero(&tls_name, sizeof(tls_name));
++    pj_bzero(&remote_name, sizeof(remote_name));
++
+     /* Sanity checks */
+     PJ_ASSERT_RETURN(factory && mgr && endpt && rem_addr &&
+ 		     addr_len && p_transport, PJ_EINVAL);

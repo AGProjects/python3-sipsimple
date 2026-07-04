@@ -2,6 +2,79 @@
 import sys
 
 
+# --- Deferred conference-port teardown (pjsip 2.15+ async conf bridge) -------
+#
+# In pjsip 2.15+ pjmedia_conf_remove_port() only *queues* the removal; the
+# slot is actually released later, on the clock (audio I/O) thread, inside
+# get_frame()/handle_op_queue(). Freeing the underlying media port + its pool
+# right after the call (the historical pattern) therefore races the audio
+# thread, which may still be in read_port()/write_port() on that port. Tearing
+# down several calls at once widens the window and reliably crashes with a
+# use-after-free (jump through a freed port's vtable). See the audio-teardown
+# paths in ToneGenerator / WaveFile / RecordingWaveFile.
+#
+# Fix: register a completion callback via pjmedia_conf_set_op_cb(). When the
+# bridge reports that a REMOVE_PORT has been applied, it is safe to free the
+# port. The callback runs on the audio thread and only receives info->conf, so
+# we keep a tiny C registry mapping conf -> per-slot "done" flag array, set the
+# flag from the callback, and reap (free port + pool) from the polling thread.
+
+cdef enum:
+    _MAX_TRACKED_MIXERS = 8
+
+cdef pjmedia_conf *_conf_op_confs[_MAX_TRACKED_MIXERS]
+cdef int *_conf_op_done_arrays[_MAX_TRACKED_MIXERS]
+cdef int _conf_op_maxslots[_MAX_TRACKED_MIXERS]
+
+cdef extern from *:
+    """
+    #include <pjmedia/conference.h>
+    /* Read the slot id of a REMOVE_PORT completion out of the (anonymous)
+       op_param union in real C, so Cython needn't model the union layout. */
+    static unsigned _sipsimple_conf_op_remove_slot(const pjmedia_conf_op_info *info) {
+        return info->op_param.remove_port.port;
+    }
+    """
+    unsigned _sipsimple_conf_op_remove_slot(const pjmedia_conf_op_info *info) nogil
+
+
+cdef void _AudioMixer_conf_op_cb(const pjmedia_conf_op_info *info) noexcept nogil:
+    # Runs on the audio I/O thread. Keep it minimal and allocation-free: just
+    # mark the completed slot done for the matching conf bridge.
+    cdef int i
+    cdef unsigned slot
+    if info == NULL or info.op_type != PJMEDIA_CONF_OP_REMOVE_PORT or info.status != 0:
+        return
+    slot = _sipsimple_conf_op_remove_slot(info)
+    for i in range(_MAX_TRACKED_MIXERS):
+        if _conf_op_confs[i] == info.conf:
+            if <int>slot <= _conf_op_maxslots[i] and _conf_op_done_arrays[i] != NULL:
+                _conf_op_done_arrays[i][slot] = 1
+            return
+
+
+cdef int _conf_op_register(pjmedia_conf *conf, int *done, int maxslot) except -1:
+    # Called on the Python thread before the mixer's device starts.
+    cdef int i
+    for i in range(_MAX_TRACKED_MIXERS):
+        if _conf_op_confs[i] == NULL:
+            _conf_op_done_arrays[i] = done
+            _conf_op_maxslots[i] = maxslot
+            _conf_op_confs[i] = conf   # publish the key last
+            return 0
+    raise SIPCoreError("too many AudioMixer instances to track conference op callbacks")
+
+
+cdef void _conf_op_unregister(pjmedia_conf *conf):
+    cdef int i
+    for i in range(_MAX_TRACKED_MIXERS):
+        if _conf_op_confs[i] == conf:
+            _conf_op_confs[i] = NULL   # unpublish the key first
+            _conf_op_done_arrays[i] = NULL
+            _conf_op_maxslots[i] = 0
+            return
+
+
 cdef class AudioMixer:
 
     def __cinit__(self, *args, **kwargs):
@@ -56,6 +129,21 @@ cdef class AudioMixer:
                                               <unsigned int>(sample_rate / 50), 16, null_port_address)
         if status != 0:
             raise PJSIPError("Could not create null audio port", status)
+
+        # Deferred port teardown: per-slot completion flags live in the conf
+        # pool (freed last, in __dealloc__). Register the completion callback
+        # before the sound device — hence the audio thread — can start.
+        self._pending_free = {}
+        self._reap_timer = None
+        self._op_done = <int *> pj_pool_alloc(conf_pool, (slot_count + 1) * sizeof(int))
+        if self._op_done == NULL:
+            raise SIPCoreError("Could not allocate conference op completion flags")
+        for status in range(slot_count + 1):
+            self._op_done[status] = 0
+        with nogil:
+            pjmedia_conf_set_op_cb(self._obj, _AudioMixer_conf_op_cb)
+        _conf_op_register(self._obj, self._op_done, slot_count)
+
         self._start_sound_device(ua, input_device, output_device, ec_tail_length)
         if not (input_device is None and output_device is None):
             self._stop_sound_device(ua)
@@ -272,6 +360,47 @@ cdef class AudioMixer:
             with nogil:
                 pj_mutex_unlock(lock)
 
+    def get_signal_level(self, int slot):
+        """Return (tx_level, rx_level) for the given conference bridge slot.
+
+        Both values are pjmedia short-window peak levels in the range 0..255.
+
+        rx_level is the loudness of audio coming *from* the slot *into* the
+        conference bridge (i.e. how loud this participant is speaking).
+        tx_level is the loudness of audio going *from* the bridge *to* the
+        slot (i.e. what the participant is currently hearing).
+
+        Raises ValueError if `slot` is negative and PJSIPError if the
+        underlying pjmedia call fails (for example because the slot is
+        not currently registered with the bridge).
+        """
+        cdef int status
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjmedia_conf *conf_bridge
+        cdef unsigned tx_level = 0
+        cdef unsigned rx_level = 0
+        cdef PJSIPUA ua
+
+        ua = _get_ua()
+
+        if slot < 0:
+            raise ValueError("slot argument cannot be negative")
+
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            conf_bridge = self._obj
+            with nogil:
+                status = pjmedia_conf_get_signal_level(conf_bridge, slot, &tx_level, &rx_level)
+            if status != 0:
+                raise PJSIPError("Could not get signal level for slot %d" % slot, status)
+            return (int(tx_level), int(rx_level))
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
     def reset_ec(self):
         cdef int status
         cdef pj_mutex_t *lock = self._lock
@@ -445,7 +574,16 @@ cdef class AudioMixer:
                 pjmedia_master_port_destroy(master_port, 0)
             self._master_port = NULL
 
-    cdef int _add_port(self, PJSIPUA ua, pj_pool_t *pool, pjmedia_port *port) except -1 with gil:
+        # The audio thread is gone now, so any ports queued for deferred
+        # teardown are safe to free immediately: the conf op callback that
+        # would otherwise signal completion can no longer run.
+        if self._pending_free:
+            self._reap_pending(1)
+        if self._reap_timer is not None:
+            self._reap_timer.cancel()
+            self._reap_timer = None
+
+    cdef int _add_port(self, PJSIPUA ua, pj_pool_t *pool, pjmedia_port *port) except -1:
         cdef int input_device_i
         cdef int output_device_i
         cdef unsigned int slot
@@ -472,7 +610,7 @@ cdef class AudioMixer:
             with nogil:
                 pj_mutex_unlock(lock)
 
-    cdef int _remove_port(self, PJSIPUA ua, unsigned int slot) except -1 with gil:
+    cdef int _remove_port(self, PJSIPUA ua, unsigned int slot) except -1:
         cdef int status
         cdef pj_mutex_t *lock = self._lock
         cdef pjmedia_conf* conf_bridge
@@ -496,6 +634,110 @@ cdef class AudioMixer:
                 timer = Timer()
                 timer.schedule(0, <timer_callback>self._cb_postpoll_stop_sound, self)
             return 0
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
+    cdef int _remove_port_deferred(self, PJSIPUA ua, unsigned int slot, pjmedia_port *port, pj_pool_t *pool) except -1:
+        # Remove a port from the bridge and take ownership of freeing its media
+        # port + pool. Because removal is asynchronous, the free is deferred
+        # until the conf op callback reports the slot has actually been removed
+        # on the audio thread (or done immediately when no device is running).
+        cdef int status
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjmedia_conf *conf_bridge
+        cdef Timer timer
+
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            conf_bridge = self._obj
+
+            # Clear any stale completion flag before queuing, so a flag left
+            # from a previous occupant of this slot can't free the new port.
+            if self._op_done != NULL and <int>slot <= self.slot_count:
+                self._op_done[slot] = 0
+
+            with nogil:
+                status = pjmedia_conf_remove_port(conf_bridge, slot)
+            if status != 0:
+                # Not in the bridge (any more): no audio-thread reference can
+                # exist, so free now rather than leak.
+                if port != NULL:
+                    with nogil:
+                        pjmedia_port_destroy(port)
+                if pool != NULL:
+                    ua.release_memory_pool(pool)
+                return 0
+
+            self._connected_slots = [connection for connection in self._connected_slots if slot not in connection]
+            self.used_slot_count -= 1
+
+            if self._snd == NULL:
+                # No clock thread; the bridge cannot be touching the port.
+                if port != NULL:
+                    with nogil:
+                        pjmedia_port_destroy(port)
+                if pool != NULL:
+                    ua.release_memory_pool(pool)
+            else:
+                self._pending_free[slot] = (<size_t> port, <size_t> pool)
+                if self._reap_timer is None:
+                    timer = Timer()
+                    timer.schedule(0.020, <timer_callback>self._cb_reap_pending, self)
+                    self._reap_timer = timer
+
+            if self.used_slot_count == 0 and not (self.input_device is None and self.output_device is None):
+                timer = Timer()
+                timer.schedule(0, <timer_callback>self._cb_postpoll_stop_sound, self)
+            return 0
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
+    cdef int _reap_pending(self, int force) except -1:
+        # Free ports whose REMOVE_PORT has completed (or all of them when
+        # force is set, e.g. once the sound device has been stopped). Must be
+        # called with self._lock held, or from a context where no audio thread
+        # is running (force).
+        cdef PJSIPUA ua = _get_ua()
+        cdef list slots
+        cdef pjmedia_port *port
+        cdef pj_pool_t *pool
+        cdef tuple entry
+
+        slots = list(self._pending_free.keys())
+        for slot in slots:
+            if force or self._snd == NULL or (self._op_done != NULL and self._op_done[slot]):
+                entry = self._pending_free.pop(slot)
+                port = <pjmedia_port *> (<size_t> entry[0])
+                pool = <pj_pool_t *> (<size_t> entry[1])
+                if port != NULL:
+                    with nogil:
+                        pjmedia_port_destroy(port)
+                if pool != NULL:
+                    ua.release_memory_pool(pool)
+        return 0
+
+    cdef int _cb_reap_pending(self, timer) except -1:
+        cdef int status
+        cdef pj_mutex_t *lock = self._lock
+        cdef Timer new_timer
+
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            self._reap_timer = None
+            self._reap_pending(0)
+            if self._pending_free:
+                # Some removals not yet applied; check again shortly.
+                new_timer = Timer()
+                new_timer.schedule(0.020, <timer_callback>self._cb_reap_pending, self)
+                self._reap_timer = new_timer
         finally:
             with nogil:
                 pj_mutex_unlock(lock)
@@ -532,6 +774,13 @@ cdef class AudioMixer:
             return
 
         self._stop_sound_device(ua)
+        # Stop receiving op-completion callbacks and drop the registry entry
+        # before the conf (and the conf pool holding _op_done) goes away.
+        if self._obj != NULL:
+            _conf_op_unregister(self._obj)
+        self._op_done = NULL
+        if self._pending_free:
+            self._reap_pending(1)
         if self._null_port != NULL:
             with nogil:
                 pjmedia_port_destroy(null_port)
@@ -726,13 +975,18 @@ cdef class ToneGenerator:
         if ua is None:
             return
 
+        # _stop() transfers the port + pool to the mixer for deferred teardown
+        # when a slot was assigned. Anything left here was never added to the
+        # bridge, so it is safe to free directly.
         self._stop(ua)
         if self._obj != NULL:
             with nogil:
                 pjmedia_tonegen_stop(port)
+                pjmedia_port_destroy(port)
             self._obj = NULL
-        ua.release_memory_pool(self._pool)
-        self._pool = NULL
+        if self._pool != NULL:
+            ua.release_memory_pool(self._pool)
+            self._pool = NULL
         if self._lock != NULL:
             pj_mutex_destroy(self._lock)
 
@@ -839,8 +1093,13 @@ cdef class ToneGenerator:
             self._timer.cancel()
             self._timer = None
         if self._slot != -1:
-            self.mixer._remove_port(ua, self._slot)
+            # Hand the tonegen port + pool to the mixer; it frees them only
+            # after the asynchronous REMOVE_PORT has been applied, so the
+            # audio thread can no longer be reading from this port.
+            self.mixer._remove_port_deferred(ua, self._slot, self._obj, self._pool)
             self._slot = -1
+            self._obj = NULL
+            self._pool = NULL
         return 0
 
     cdef int _cb_check_done(self, timer) except -1:
@@ -983,14 +1242,20 @@ cdef class RecordingWaveFile:
         cdef pjmedia_port *port = self._port
 
         if self._slot != -1:
-            self.mixer._remove_port(ua, self._slot)
+            # Defer freeing port + pool until the async REMOVE_PORT completes;
+            # the mixer takes ownership of both.
+            self.mixer._remove_port_deferred(ua, self._slot, self._port, self._pool)
             self._slot = -1
-        if self._port != NULL:
-            with nogil:
-                pjmedia_port_destroy(port)
             self._port = NULL
-        ua.release_memory_pool(self._pool)
-        self._pool = NULL
+            self._pool = NULL
+        else:
+            if self._port != NULL:
+                with nogil:
+                    pjmedia_port_destroy(port)
+                self._port = NULL
+            if self._pool != NULL:
+                ua.release_memory_pool(self._pool)
+                self._pool = NULL
         return 0
 
     def __dealloc__(self):
@@ -1154,15 +1419,21 @@ cdef class WaveFile:
 
         if self._slot != -1:
             was_active = 1
-            self.mixer._remove_port(ua, self._slot)
+            # Defer freeing port + pool until the async REMOVE_PORT completes;
+            # the mixer takes ownership of both.
+            self.mixer._remove_port_deferred(ua, self._slot, self._port, self._pool)
             self._slot = -1
-        if self._port != NULL:
-            with nogil:
-                pjmedia_port_destroy(port)
             self._port = NULL
-            was_active = 1
-        ua.release_memory_pool(self._pool)
-        self._pool = NULL
+            self._pool = NULL
+        else:
+            if self._port != NULL:
+                with nogil:
+                    pjmedia_port_destroy(port)
+                self._port = NULL
+                was_active = 1
+            if self._pool != NULL:
+                ua.release_memory_pool(self._pool)
+                self._pool = NULL
         if notify and was_active:
             _add_event("WaveFileDidFinishPlaying", dict(obj=self))
 
@@ -1329,14 +1600,20 @@ cdef class MixerPort:
         port = self._port
 
         if self._slot != -1:
-            self.mixer._remove_port(ua, self._slot)
+            # Defer freeing port + pool until the async REMOVE_PORT completes;
+            # the mixer takes ownership of both.
+            self.mixer._remove_port_deferred(ua, self._slot, self._port, self._pool)
             self._slot = -1
-        if self._port != NULL:
-            with nogil:
-                pjmedia_port_destroy(port)
             self._port = NULL
-        ua.release_memory_pool(self._pool)
-        self._pool = NULL
+            self._pool = NULL
+        else:
+            if self._port != NULL:
+                with nogil:
+                    pjmedia_port_destroy(port)
+                self._port = NULL
+            if self._pool != NULL:
+                ua.release_memory_pool(self._pool)
+                self._pool = NULL
         return 0
 
     def __dealloc__(self):
@@ -1369,7 +1646,7 @@ cdef int _AudioMixer_dealloc_handler(object obj) except -1:
     finally:
         pj_mutex_unlock(mixer._lock)
 
-cdef int cb_play_wav_eof(pjmedia_port *port, void *user_data) with gil:
+cdef int cb_play_wav_eof_impl(pjmedia_port *port, void *user_data) with gil:
     cdef Timer timer
     cdef WaveFile wav_file
 
@@ -1379,4 +1656,10 @@ cdef int cb_play_wav_eof(pjmedia_port *port, void *user_data) with gil:
         timer.schedule(0, <timer_callback>wav_file._cb_eof, wav_file)
     # do not return PJ_SUCCESS because if you do pjsip will access the just deallocated port
     return 1
+
+cdef int cb_play_wav_eof(pjmedia_port *port, void *user_data) noexcept nogil:
+    cdef int result
+    with gil:
+        result = cb_play_wav_eof_impl(port, user_data)
+    return result
 

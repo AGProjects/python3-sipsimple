@@ -1,0 +1,79 @@
+# 42_pjmedia_argb_format.patch
+#
+# Re-add PJMEDIA_FORMAT_ARGB to pjmedia 2.17. The enum was dropped
+# upstream in favour of just RGBA/BGRA, but Blink's framebuffer
+# video renderer expects pixel data in memory order A,R,G,B (the
+# byte order 2.12's PJMEDIA_FORMAT_ARGB produced).
+#
+# Symptom on 2.17 build (3 June 2026):
+#   "video works but colors look wrong, like another color space, alien"
+#
+# Without this patch, fb_dev.c on Darwin advertises BGRA, which
+# pjmedia 2.17 maps to libyuv's I420ToARGB function. Per libyuv's
+# own header comments:
+#
+#   I420ToARGB → memory bytes B, G, R, A   ← what 2.17 currently does
+#   I420ToBGRA → memory bytes A, R, G, B   ← what Blink expects
+#
+# (libyuv names colors by 32-bit word layout, little-endian; pjmedia
+# names them by memory order. So libyuv "BGRA" = memory A,R,G,B = the
+# byte order historically called ARGB by pjmedia/2.12.)
+#
+# Fix:
+#   1. Add PJMEDIA_FORMAT_ARGB back to the format enum (just an
+#      identifier — same FourCC as 2.12).
+#   2. Add converter mappings in converter_libyuv.c so YUV → ARGB
+#      output goes through libyuv's I420ToBGRA (memory A,R,G,B), and
+#      the reverse path via BGRAToI420.
+#
+# fb_dev.c is updated separately (06_video_device.patch) to advertise
+# PJMEDIA_FORMAT_ARGB on Darwin again.
+#
+--- pjsip_orig/pjmedia/include/pjmedia/format.h
++++ pjsip/pjmedia/include/pjmedia/format.h
+@@ -100,6 +100,7 @@
+      * 32bit RGB with alpha channel
+      */
+     PJMEDIA_FORMAT_RGBA     = PJMEDIA_FORMAT_PACK('R', 'G', 'B', 'A'),
++    PJMEDIA_FORMAT_ARGB     = PJMEDIA_FORMAT_PACK('A', 'R', 'G', 'B'),
+     PJMEDIA_FORMAT_BGRA     = PJMEDIA_FORMAT_PACK('B', 'G', 'R', 'A'),
+
+     /**
+--- pjsip_orig/pjmedia/src/pjmedia/format.c
++++ pjsip/pjmedia/src/pjmedia/format.c
+@@ -78,6 +78,7 @@
+     {PJMEDIA_FORMAT_RGB24, "RGB24", PJMEDIA_COLOR_MODEL_RGB, 24, 1, &apply_packed_fmt},
+     {PJMEDIA_FORMAT_RGBA,  "RGBA", PJMEDIA_COLOR_MODEL_RGB, 32, 1, &apply_packed_fmt},
+     {PJMEDIA_FORMAT_BGRA,  "BGRA", PJMEDIA_COLOR_MODEL_RGB, 32, 1, &apply_packed_fmt},
++    {PJMEDIA_FORMAT_ARGB,  "ARGB", PJMEDIA_COLOR_MODEL_RGB, 32, 1, &apply_packed_fmt},
+     {PJMEDIA_FORMAT_DIB ,  "DIB ", PJMEDIA_COLOR_MODEL_RGB, 24, 1, &apply_packed_fmt},
+     {PJMEDIA_FORMAT_GBRP,  "GBRP", PJMEDIA_COLOR_MODEL_RGB, 24, 3, &apply_planar_444},
+     {PJMEDIA_FORMAT_AYUV,  "AYUV", PJMEDIA_COLOR_MODEL_YUV, 32, 1, &apply_packed_fmt},
+--- pjsip_orig/pjmedia/src/pjmedia/ffmpeg_util.c
++++ pjsip/pjmedia/src/pjmedia/ffmpeg_util.c
+@@ -36,6 +36,7 @@
+     { PJMEDIA_FORMAT_RGBA, AV(PIX_FMT_RGBA)},
+     { PJMEDIA_FORMAT_RGB24,AV(PIX_FMT_BGR24)},
+     { PJMEDIA_FORMAT_BGRA, AV(PIX_FMT_BGRA)},
++    { PJMEDIA_FORMAT_ARGB, AV(PIX_FMT_ARGB)},
+     { PJMEDIA_FORMAT_GBRP, AV(PIX_FMT_GBRP)},
+
+     { PJMEDIA_FORMAT_AYUV, AV(PIX_FMT_NONE)},
+--- pjsip_orig/pjmedia/src/pjmedia/converter_libyuv.c
++++ pjsip/pjmedia/src/pjmedia/converter_libyuv.c
+@@ -175,6 +175,7 @@
+ {
+     {MAP_CONV_PACK_TO_PLANAR(RGB24,I420,RGB24ToI420)},
+     {MAP_CONV_PACK_TO_PLANAR(RGBA,I420,ABGRToI420)},
++    {MAP_CONV_PACK_TO_PLANAR(ARGB,I420,BGRAToI420)},
+     {MAP_CONV_PACK_TO_PLANAR(BGRA,I420,ARGBToI420)},
+     {MAP_CONV_PACK_TO_PLANAR(YUY2,I420,YUY2ToI420)},
+     {MAP_CONV_PACK_TO_PLANAR(UYVY,I420,UYVYToI420)},
+@@ -185,6 +186,7 @@
+ {
+     {MAP_CONV_PLANAR_TO_PACK(I420,RGB24,I420ToRGB24)},
+     {MAP_CONV_PLANAR_TO_PACK(I420,RGBA,I420ToABGR)},
++    {MAP_CONV_PLANAR_TO_PACK(I420,ARGB,I420ToBGRA)},
+     {MAP_CONV_PLANAR_TO_PACK(I420,BGRA,I420ToARGB)},
+     {MAP_CONV_PLANAR_TO_PACK(I420,YUY2,I420ToYUY2)},
+     {MAP_CONV_PLANAR_TO_PACK(I420,UYVY,I420ToUYVY)},

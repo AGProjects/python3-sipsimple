@@ -1,0 +1,123 @@
+# 31_zrtp_detach_race_null_deref.patch
+#
+# Fix a NULL-deref race in pjmedia's ZRTP transport wrapper (pjproject 2.12).
+#
+# Reproduced via SIGSEGV in the media worker thread:
+#
+#     Thread 4 "python3" received signal SIGSEGV, Segmentation fault.
+#     #0  on_rx_rtp (param=0x7fffe3ff8af0) at ../src/pjmedia/stream.c:1843
+#     #1  0x... in transport_rtp_cb2 (param=0x7fffe3ff8b50)
+#                at ../src/pjmedia/transport_zrtp.c:915
+#     #2  0x... in call_rtp_cb        at ../src/pjmedia/transport_udp.c:485
+#     #3  0x... in on_rx_rtp          at ../src/pjmedia/transport_udp.c:556
+#     #4  0x... in ioqueue_dispatch_read_event
+#     #5  0x... in pj_ioqueue_poll
+#     #6  0x... in worker_proc        at ../src/pjmedia/endpoint.c:349
+#
+#     (gdb) p param->user_data
+#     $1 = (void *) 0x0
+#
+# Root cause
+# ----------
+# The ZRTP transport wrapper forwards incoming RTP packets to the audio
+# stream's on_rx_rtp via the rtp_cb2 callback. transport_attach2() stashes
+# the stream's user_data in zrtp->stream_user_data and the stream's RTP
+# callback in zrtp->stream_rtp_cb2; transport_rtp_cb2() then synthesises
+# a new pjmedia_tp_cb_param with cbparam.user_data = zrtp->stream_user_data
+# and invokes zrtp->stream_rtp_cb2(&cbparam).
+#
+# transport_detach() tears that down with:
+#
+#     if (zrtp->stream_user_data != NULL)
+#     {
+#         pjmedia_transport_detach(zrtp->slave_tp, zrtp);
+#         zrtp->stream_user_data = NULL;
+#         zrtp->stream_rtp_cb    = NULL;
+#         zrtp->stream_rtcp_cb   = NULL;
+#     }
+#
+# Two defects converge to produce the crash:
+#
+#   (1) pjmedia_transport_detach() on the UDP slave is NOT synchronous
+#       with in-flight ioqueue callbacks. A packet that was already
+#       pulled off the socket and dispatched through ioqueue can still
+#       reach transport_rtp_cb2() after transport_detach() returns. The
+#       gdb dump confirms this: no other thread is currently inside
+#       teardown -- the detach has already completed, and the worker is
+#       draining a packet that was queued before detach fired.
+#
+#   (2) transport_detach() leaves zrtp->stream_rtp_cb2 untouched (only
+#       the non-`2' variant is cleared), so the assert at the top of
+#       transport_rtp_cb2()
+#
+#           pj_assert(zrtp && zrtp->stream_rtp_cb2 && param->pkt);
+#
+#       passes. The wrapper then reads zrtp->stream_user_data, which
+#       detach has just NULLed, copies that NULL into cbparam.user_data,
+#       and invokes the audio stream's on_rx_rtp with a NULL stream
+#       pointer.
+#
+# pjproject 2.12's pjmedia/src/pjmedia/stream.c::on_rx_rtp has no
+# grp_lock / NULL guard of its own (that protection was added later, in
+# 2.17, when on_rx_rtp moved to stream_imp_common.c and gained a
+# pj_grp_lock_add_ref(c_strm->grp_lock) at function entry). On 2.12 the
+# first dereference inside on_rx_rtp faults.
+#
+# Fix shape
+# ---------
+# The minimum-surface fix lives entirely in transport_zrtp.c:
+#
+#   1. transport_rtp_cb2(): insert a runtime NULL check immediately
+#      after the local declarations -- before the existing assert and
+#      the first dereference -- that drops the packet if either
+#      stream_user_data or stream_rtp_cb2 has been cleared. The assert
+#      is kept so debug builds still flag attach-time bugs; the runtime
+#      check handles the post-detach release-build case the assert
+#      misses.
+#
+#   2. transport_detach(): also clear stream_rtp_cb2 so the cb2 leg of
+#      the check added in (1) actually trips. Without this, only the
+#      stream_user_data leg would catch the race.
+#
+# This is intentionally not a full memory barrier; it closes the
+# observed crash window (detach completed, worker still draining a
+# queued packet). A complete fix would mutex the field tuple against
+# all readers, but for the reproducer at hand the NULL-check is
+# sufficient and matches the defensive style of nearby pjmedia code.
+#
+#
+--- pjsip_orig/pjmedia/src/pjmedia/transport_zrtp.c
++++ pjsip/pjmedia/src/pjmedia/transport_zrtp.c
+@@ -892,3 +892,17 @@
+     pjmedia_tp_cb_param cbparam;
+  
++    /*
++     * NULL-DEREF FIX: drop the packet if the stream has detached.
++     * The slave UDP transport detach is not synchronous with
++     * in-flight ioqueue callbacks, so a packet that was already
++     * queued for dispatch can still reach this wrapper after
++     * transport_detach() has cleared stream_user_data and
++     * stream_rtp_cb2. pjproject 2.12 stream.c::on_rx_rtp has no
++     * NULL guard and segfaults on a NULL user_data. See
++     * deps/patches/31_zrtp_detach_race_null_deref.patch.
++     */
++    if (zrtp == NULL || zrtp->stream_user_data == NULL ||
++        zrtp->stream_rtp_cb2 == NULL)
++        return;
++
+     pj_assert(zrtp && zrtp->stream_rtp_cb2 && param->pkt);
+@@ -1073,6 +1085,13 @@
+         pjmedia_transport_detach(zrtp->slave_tp, zrtp);
+         zrtp->stream_user_data = NULL;
+         zrtp->stream_rtp_cb = NULL;
++        /*
++         * NULL-DEREF FIX: also clear stream_rtp_cb2 so the cb2
++         * NULL-check in transport_rtp_cb2() actually trips on a
++         * post-detach ioqueue callback. See
++         * deps/patches/31_zrtp_detach_race_null_deref.patch.
++         */
++        zrtp->stream_rtp_cb2 = NULL;
+         zrtp->stream_rtcp_cb = NULL;
+     }
+ }
+

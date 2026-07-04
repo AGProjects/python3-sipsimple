@@ -25,9 +25,13 @@ from eventlib.proc import spawn, ProcExit
 from functools import partial
 from msrplib.protocol import FailureReportHeader, SuccessReportHeader, UseNicknameHeader
 from msrplib.session import MSRPSession, contains_mime_type
-from otr import OTRSession, OTRTransport, OTRState, SMPStatus
-from otr.cryptography import DSAPrivateKey
-from otr.exceptions import IgnoreMessage, UnencryptedMessage, EncryptedMessageError, OTRError
+try:
+    from otr import OTRSession, OTRTransport, OTRState, SMPStatus
+    from otr.cryptography import DSAPrivateKey
+    from otr.exceptions import IgnoreMessage, UnencryptedMessage, EncryptedMessageError, OTRError
+except ModuleNotFoundError:
+    IgnoreMessage = None
+
 from zope.interface import implementer
 
 from sipsimple.core import SIPURI, BaseSIPURI
@@ -150,9 +154,12 @@ class OTRCache(object, metaclass=Singleton):
                 self.private_key = DSAPrivateKey.load(self.key_file)
                 if self.private_key.key_size != 1024:
                     raise ValueError
+            except NameError:
+                return
             except (EnvironmentError, ValueError):
                 self.private_key = DSAPrivateKey.generate()
                 self.private_key.save(self.key_file)
+
             try:
                 self.trusted_peers = pickle.load(open(self.trusted_file, 'rb'))
                 if not isinstance(self.trusted_peers, OTRTrustedPeerSet) or not all(isinstance(item, OTRTrustedPeer) for item in self.trusted_peers):
@@ -162,7 +169,11 @@ class OTRCache(object, metaclass=Singleton):
                 self.save()
         else:
             self.key_file = self.trusted_file = None
-            self.private_key = DSAPrivateKey.generate()
+            try:
+                self.private_key = DSAPrivateKey.generate()
+            except NameError:
+                pass
+
             self.trusted_peers = OTRTrustedPeerSet()
 
     # def generate_private_key(self):
@@ -183,7 +194,13 @@ class OTREncryption(object):
     def __init__(self, stream):
         self.stream = stream
         self.otr_cache = OTRCache()
-        self.otr_session = OTRSession(self.otr_cache.private_key, self.stream, supported_versions={3})  # we need at least OTR-v3 for question based SMP
+
+        try:
+            self.otr_session = OTRSession(self.otr_cache.private_key, self.stream, supported_versions={3})  # we need at least OTR-v3 for question based SMP
+        except NameError:
+            self.otr_session = Null
+            return
+
 
         notification_center = NotificationCenter()
         notification_center.add_observer(self, sender=stream)
@@ -258,13 +275,19 @@ class OTREncryption(object):
 
     @run_in_twisted_thread
     def start(self):
-        if self.otr_session is not None:
-            self.otr_session.start()
+        try:
+            if self.otr_session is not None:
+                self.otr_session.start()
+        except AttributeError:
+            pass
 
     @run_in_twisted_thread
     def stop(self):
-        if self.otr_session is not None:
-            self.otr_session.stop()
+        try:
+            if self.otr_session is not None:
+                self.otr_session.stop()
+        except AttributeError:
+            pass
 
     @run_in_twisted_thread
     def smp_verify(self, secret, question=None):
@@ -460,27 +483,28 @@ class ChatStream(MSRPStreamBase):
             message = Message(payload.content, payload.content_type, sender=self.remote_identity, recipients=[self.local_identity], timestamp=ISOTimestamp.now())
             private = False
 
-        try:
-            content = message.content if isinstance(message.content, bytes) else message.content.encode()
-            message.content = self.encryption.otr_session.handle_input(content, message.content_type)
-        except IgnoreMessage:
-            self.msrp_session.send_report(chunk, 200, 'OK')
-            return
-        except UnencryptedMessage:
-            encrypted = False
-            encryption_active = True
-        except EncryptedMessageError as e:
-            self.msrp_session.send_report(chunk, 400, str(e))
-            notification_center = NotificationCenter()
-            notification_center.post_notification('ChatStreamOTRError', sender=self, data=NotificationData(error=str(e)))
-            return
-        except OTRError as e:
-            self.msrp_session.send_report(chunk, 200, 'OK')
-            notification_center = NotificationCenter()
-            notification_center.post_notification('ChatStreamOTRError', sender=self, data=NotificationData(error=str(e)))
-            return
-        else:
-            encrypted = encryption_active = self.encryption.active
+        if IgnoreMessage:
+            try:
+                content = message.content if isinstance(message.content, bytes) else message.content.encode()
+                message.content = self.encryption.otr_session.handle_input(content, message.content_type)
+            except IgnoreMessage:
+                self.msrp_session.send_report(chunk, 200, 'OK')
+                return
+            except UnencryptedMessage:
+                encrypted = False
+                encryption_active = True
+            except EncryptedMessageError as e:
+                self.msrp_session.send_report(chunk, 400, str(e))
+                notification_center = NotificationCenter()
+                notification_center.post_notification('ChatStreamOTRError', sender=self, data=NotificationData(error=str(e)))
+                return
+            except OTRError as e:
+                self.msrp_session.send_report(chunk, 200, 'OK')
+                notification_center = NotificationCenter()
+                notification_center.post_notification('ChatStreamOTRError', sender=self, data=NotificationData(error=str(e)))
+                return
+            else:
+                encrypted = encryption_active = self.encryption.active
 
         if payload.charset is not None:
             message.content = message.content.decode(payload.charset)
@@ -656,7 +680,10 @@ class ChatStream(MSRPStreamBase):
         return message_id
 
 
-OTRTransport.register(ChatStream)
+try:
+    OTRTransport.register(ChatStream)
+except NameError:
+    pass
 
 
 # Chat related objects, including CPIM support as defined in RFC3862
@@ -759,11 +786,13 @@ class SimplePayload(object):
 
     @classmethod
     def decode(cls, content, content_type):
-        if not isinstance(content, bytes):
-            raise TypeError("content should be an instance of bytes")
+        if not isinstance(content, bytes) and not isinstance(content, str):
+            raise TypeError("content should be an instance of bytes or string")
         type_helper = EmailParser().parsestr('Content-Type: {}'.format(content_type))
         content_type = type_helper.get_content_type()
         charset = type_helper.get_content_charset()
+        if isinstance(content, str):
+            content = content.encode(charset if charset else "ascii", "replace")
         return cls(content, content_type, charset)
 
 

@@ -1006,7 +1006,7 @@ cdef class PJSIPThread:
 
 # callback functions
 
-cdef void _cb_audio_dev_process_event(pjmedia_aud_dev_event event) with gil:
+cdef void _cb_audio_dev_process_event_impl(pjmedia_aud_dev_event event) with gil:
     cdef PJSIPUA ua
     event_dict = dict()
     try:
@@ -1035,7 +1035,11 @@ cdef void _cb_audio_dev_process_event(pjmedia_aud_dev_event event) with gil:
     except:
         ua._handle_exception(1)
 
-cdef void _cb_detect_nat_type(void *user_data, pj_stun_nat_detect_result_ptr_const res) with gil:
+cdef void _cb_audio_dev_process_event(pjmedia_aud_dev_event event) noexcept nogil:
+    with gil:
+        _cb_audio_dev_process_event_impl(event)
+
+cdef void _cb_detect_nat_type_impl(void *user_data, pj_stun_nat_detect_result_ptr_const res) with gil:
     cdef PJSIPUA ua
     cdef dict event_dict
     cdef object user_data_obj = <object> user_data
@@ -1056,7 +1060,11 @@ cdef void _cb_detect_nat_type(void *user_data, pj_stun_nat_detect_result_ptr_con
     except:
         ua._handle_exception(0)
 
-cdef int _PJSIPUA_cb_rx_request(pjsip_rx_data *rdata) with gil:
+cdef void _cb_detect_nat_type(void *user_data, pj_stun_nat_detect_result_ptr_const res) noexcept nogil:
+    with gil:
+        _cb_detect_nat_type_impl(user_data, res)
+
+cdef int _PJSIPUA_cb_rx_request_impl(pjsip_rx_data *rdata) with gil:
     cdef PJSIPUA ua
     try:
         ua = _get_ua()
@@ -1067,7 +1075,13 @@ cdef int _PJSIPUA_cb_rx_request(pjsip_rx_data *rdata) with gil:
     except:
         ua._handle_exception(0)
 
-cdef int _cb_opus_fix_tx(pjsip_tx_data *tdata) with gil:
+cdef int _PJSIPUA_cb_rx_request(pjsip_rx_data *rdata) noexcept nogil:
+    cdef int result
+    with gil:
+        result = _PJSIPUA_cb_rx_request_impl(rdata)
+    return result
+
+cdef int _cb_opus_fix_tx_impl(pjsip_tx_data *tdata) with gil:
     cdef PJSIPUA ua
     cdef pjsip_msg_body *body
     cdef pjsip_msg_body *new_body
@@ -1110,7 +1124,13 @@ cdef int _cb_opus_fix_tx(pjsip_tx_data *tdata) with gil:
         ua._handle_exception(0)
     return 0
 
-cdef int _cb_opus_fix_rx(pjsip_rx_data *rdata) with gil:
+cdef int _cb_opus_fix_tx(pjsip_tx_data *tdata) noexcept nogil:
+    cdef int result
+    with gil:
+        result = _cb_opus_fix_tx_impl(tdata)
+    return result
+
+cdef int _cb_opus_fix_rx_impl(pjsip_rx_data *rdata) with gil:
     cdef PJSIPUA ua
     cdef pjsip_msg_body *body
     cdef int pos1
@@ -1138,7 +1158,13 @@ cdef int _cb_opus_fix_rx(pjsip_rx_data *rdata) with gil:
         ua._handle_exception(0)
     return 0
 
-cdef int _cb_trace_rx(pjsip_rx_data *rdata) with gil:
+cdef int _cb_opus_fix_rx(pjsip_rx_data *rdata) noexcept nogil:
+    cdef int result
+    with gil:
+        result = _cb_opus_fix_rx_impl(rdata)
+    return result
+
+cdef int _cb_trace_rx_impl(pjsip_rx_data *rdata) with gil:
     cdef PJSIPUA ua
     try:
         ua = _get_ua()
@@ -1158,7 +1184,13 @@ cdef int _cb_trace_rx(pjsip_rx_data *rdata) with gil:
         ua._handle_exception(0)
     return 0
 
-cdef int _cb_trace_tx(pjsip_tx_data *tdata) with gil:
+cdef int _cb_trace_rx(pjsip_rx_data *rdata) noexcept nogil:
+    cdef int result
+    with gil:
+        result = _cb_trace_rx_impl(rdata)
+    return result
+
+cdef int _cb_trace_tx_impl(pjsip_tx_data *tdata) with gil:
     cdef PJSIPUA ua
     try:
         ua = _get_ua()
@@ -1178,7 +1210,13 @@ cdef int _cb_trace_tx(pjsip_tx_data *tdata) with gil:
         ua._handle_exception(0)
     return 0
 
-cdef int _cb_add_user_agent_hdr(pjsip_tx_data *tdata) with gil:
+cdef int _cb_trace_tx(pjsip_tx_data *tdata) noexcept nogil:
+    cdef int result
+    with gil:
+        result = _cb_trace_tx_impl(tdata)
+    return result
+
+cdef int _cb_add_user_agent_hdr_impl(pjsip_tx_data *tdata) with gil:
     cdef PJSIPUA ua
     cdef pjsip_hdr *hdr
     cdef void *found_hdr
@@ -1198,7 +1236,13 @@ cdef int _cb_add_user_agent_hdr(pjsip_tx_data *tdata) with gil:
         ua._handle_exception(0)
     return 0
 
-cdef int _cb_add_server_hdr(pjsip_tx_data *tdata) with gil:
+cdef int _cb_add_user_agent_hdr(pjsip_tx_data *tdata) noexcept nogil:
+    cdef int result
+    with gil:
+        result = _cb_add_user_agent_hdr_impl(tdata)
+    return result
+
+cdef int _cb_add_server_hdr_impl(pjsip_tx_data *tdata) with gil:
     cdef PJSIPUA ua
     cdef pjsip_hdr *hdr
     cdef void *found_hdr
@@ -1218,6 +1262,12 @@ cdef int _cb_add_server_hdr(pjsip_tx_data *tdata) with gil:
         ua._handle_exception(0)
     return 0
 
+cdef int _cb_add_server_hdr(pjsip_tx_data *tdata) noexcept nogil:
+    cdef int result
+    with gil:
+        result = _cb_add_server_hdr_impl(tdata)
+    return result
+
 # functions
 
 cdef PJSIPUA _get_ua():
@@ -1229,7 +1279,7 @@ cdef PJSIPUA _get_ua():
     ua._check_thread()
     return ua
 
-cdef int deallocate_weakref(object weak_ref, object timer) except -1 with gil:
+cdef int deallocate_weakref(object weak_ref, object timer) except -1:
     Py_DECREF(weak_ref)
 
 

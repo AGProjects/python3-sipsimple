@@ -1,0 +1,79 @@
+# 25_libswscale_converter_uaf.patch
+#
+# Fix a use-after-free / NULL-deref in pjmedia's libswscale converter
+# (pjproject 2.12).
+#
+# libswscale_conv_destroy() (correctly) NULLs fcv->sws_ctx BEFORE
+# calling sws_freeContext() to close the swap-then-free race for
+# competing threads. But libswscale_conv_convert() and
+# libswscale_conv_convert2() then call
+#
+#     h = sws_scale(fcv->sws_ctx, ...);
+#
+# WITHOUT a NULL check. The destroy runs from the stop path; the
+# convert runs from pjmedia's clock_thread (video decoder output
+# pump). Concurrent stop while a frame is mid-render → sws_scale is
+# handed NULL → faults at offset 0x40 inside sws_scale (FFmpeg
+# dereferences ctx->func very early).
+#
+# Backtrace:
+#   sws_scale + 72
+#   libswscale_conv_convert + 100  (the bl just before)
+#   pjmedia_converter_convert
+#   vidstream_render_cb (vid_port.c) — the dispatch site;
+#       it already NULL-checks stream->conv at the top of the
+#       callback but there's no lock between the check and the
+#       dispatch, and even an atomic check can't see a free
+#       that races inside the converter.
+#   pjmedia_clock_callback
+#   clock_thread (pjmedia clock thread)
+#   thread_main (pj thread wrapper)
+#   _pthread_start
+#
+# The minimal fix: NULL-check fcv->sws_ctx inside both
+# libswscale_conv_convert and libswscale_conv_convert2 before
+# handing it to sws_scale. If the destroy has run, the convert
+# silently returns PJ_EINVALIDOP — the frame is dropped, the
+# render callback in vid_port.c sees a non-zero return from
+# pjmedia_converter_convert and bails (the `cbnz w0` at +464 in
+# the assembly), which is what we want during a stop.
+#
+# This doesn't close the full window where destroy frees the
+# SwsContext while convert is INSIDE sws_scale already. Closing
+# that needs either a refcount on the converter or a mutex held
+# during the sws_scale call — both bigger surgical changes.
+# The NULL-check catches the common case (stop completes, then
+# a queued render fires) which accounts for the crashes we've
+# seen on hangup / re-INVITE-removing-video.
+#
+--- pjsip_orig/pjmedia/src/pjmedia/converter_libswscale.c
++++ pjsip/pjmedia/src/pjmedia/converter_libswscale.c
+@@ -155,6 +155,17 @@
+ 	            *dst = &fcv->dst;
+     int h;
+ 
++    /* Defensive NULL check. libswscale_conv_destroy() NULLs
++     * fcv->sws_ctx before sws_freeContext(). If destroy ran on
++     * another thread between the dispatch from vid_port's render
++     * callback and this point, fcv->sws_ctx will be NULL here.
++     * Handing NULL to sws_scale faults at offset 0x40 inside FFmpeg
++     * (ctx->func is dereferenced very early). Bail with
++     * PJ_EINVALIDOP — the render callback treats it as a frame
++     * drop. */
++    if (!fcv->sws_ctx)
++	return PJ_EINVALIDOP;
++
+     src->apply_param.buffer = src_frame->buf;
+     (*src->fmt_info->apply_fmt)(src->fmt_info, &src->apply_param);
+ 
+@@ -194,6 +205,10 @@
+     pjmedia_rect_size orig_src_size;
+     pjmedia_rect_size orig_dst_size;
+ 
++    /* Same NULL guard as libswscale_conv_convert above. */
++    if (!fcv->sws_ctx)
++	return PJ_EINVALIDOP;
++
+     PJ_UNUSED_ARG(param);
+ 
+     /* Save original conversion sizes */

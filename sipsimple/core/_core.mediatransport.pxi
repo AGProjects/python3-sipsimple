@@ -28,6 +28,7 @@ cdef class RTPTransport:
 
         pool = ua.create_memory_pool(pool_name, 4096, 4096)
         self._pool = pool
+        self._zrtp_transport = NULL
         self.state = "NULL"
 
     def __init__(self, encryption=None, use_ice=False, ice_stun_address=None, ice_stun_port=PJ_STUN_PORT):
@@ -56,11 +57,28 @@ cdef class RTPTransport:
             transport.user_data = NULL
             if self._wrapped_transport != NULL:
                 self._wrapped_transport.user_data = NULL
+            if self._zrtp_transport != NULL:
+                # Middle layer of the opportunistic stacked chain. The
+                # outermost SRTP transport will cascade-close it via
+                # close_member_tp; we only need to NULL out user_data so
+                # late ZRTP callbacks don't try to resolve a dead weakref.
+                self._zrtp_transport.user_data = NULL
+            # Mark the wrapper as invalid BEFORE freeing the underlying
+            # pjmedia transport. The guard in _get_info() checks this
+            # state under the lock and bails out instead of walking the
+            # freed SRTP streams[] table. Without this ordering a
+            # concurrent greenlet calling _get_info() between
+            # pjmedia_transport_close() and the `self._obj = NULL`
+            # assignment below would still see a non-NULL self._obj
+            # pointing at freed memory.
+            self._srtp_streams_dangling = 1
+            self.state = "INVALID"
             with nogil:
                 pjmedia_transport_media_stop(transport)
                 pjmedia_transport_close(transport)
             self._obj = NULL
             self._wrapped_transport = NULL
+            self._zrtp_transport = NULL
         ua.release_memory_pool(self._pool)
         self._pool = NULL
         if self._lock != NULL:
@@ -86,14 +104,75 @@ cdef class RTPTransport:
     cdef void _get_info(self, pjmedia_transport_info *info):
         cdef int status
         cdef pjmedia_transport *transport
+        cdef pj_mutex_t *lock = self._lock
 
-        transport = self._obj
-
+        # Always zero the info struct first. pjmedia_transport_get_info()
+        # zeroes internally on each entry too, so doing it here is
+        # idempotent — but it also means the early-exit guards below
+        # leave the caller with a deterministic empty sock_info instead
+        # of whatever stack garbage happened to live in `info`.
         with nogil:
             pjmedia_transport_info_init(info)
-            status = pjmedia_transport_get_info(transport, info)
-        if status != 0:
-            raise PJSIPError("Could not get transport info", status)
+
+        # Defensive guard against use-after-free in pjmedia's SRTP
+        # transport wrapper.
+        #
+        # Observed crash: EXC_BAD_ACCESS at a poisoned heap address
+        # inside srtp_get_stream_roc(), called from
+        # pjmedia_transport_srtp::transport_get_info, called from the
+        # pjmedia_transport_get_info() invocation below. The trigger
+        # is AudioTransport.__init__ being constructed against an
+        # RTPTransport whose SRTP context has been torn down on a
+        # parallel greenlet by a hang-up / re-INVITE path: the SRTP
+        # wrapper still holds a stale srtp_streams[] pointer at that
+        # point and dereferencing one of those streams crashes.
+        #
+        # The defensive layers are:
+        #   1. Refuse to enter if self._obj is NULL or the wrapper's
+        #      state says the transport is gone. ``_check_ua`` may
+        #      have nulled the obj already; ``__dealloc__`` does too.
+        #   2. Take the wrapper's own recursive lock so we serialise
+        #      against any concurrent state mutation on a different
+        #      greenlet (set_LOCAL / set_REMOTE / set_INIT). The lock
+        #      is RECURSIVE (pj_mutex_create_recursive at __cinit__)
+        #      so callers that already hold it stay safe.
+        #   3. Re-check under the lock — between the first check and
+        #      the lock acquire another greenlet may have closed the
+        #      transport.
+        if self._obj == NULL or self.state in ("NULL", "INVALID"):
+            raise SIPCoreError("RTPTransport._get_info called on a closed transport (state=%s)" % self.state)
+        if self._srtp_streams_dangling:
+            raise SIPCoreError("RTPTransport._get_info called after media_stop but before media_start "
+                               "(SRTP streams[] is dangling — would crash in srtp_get_stream_roc); state=%s" % self.state)
+
+        if lock != NULL:
+            with nogil:
+                status = pj_mutex_lock(lock)
+            if status != 0:
+                raise PJSIPError("failed to acquire RTPTransport lock", status)
+        try:
+            transport = self._obj
+            if transport == NULL or self.state in ("NULL", "INVALID"):
+                raise SIPCoreError("RTPTransport._get_info called on a closed transport (state=%s)" % self.state)
+            if self._srtp_streams_dangling:
+                # Re-check under the lock: set_INIT() may have flipped
+                # this on a different greenlet while we were waiting
+                # for the lock acquire.
+                raise SIPCoreError("RTPTransport._get_info called after media_stop but before media_start "
+                                   "(SRTP streams[] is dangling); state=%s" % self.state)
+
+            with nogil:
+                # Zero again under the lock; cheap, and removes any
+                # window where another thread observed the partially-
+                # filled info from the first zero.
+                pjmedia_transport_info_init(info)
+                status = pjmedia_transport_get_info(transport, info)
+            if status != 0:
+                raise PJSIPError("Could not get transport info", status)
+        finally:
+            if lock != NULL:
+                with nogil:
+                    pj_mutex_unlock(lock)
 
     property local_rtp_port:
 
@@ -480,10 +559,216 @@ cdef class RTPTransport:
                 status = pjmedia_transport_media_start(transport, self._pool, pj_local_sdp, pj_remote_sdp, sdp_index)
             if status != 0:
                 raise PJSIPError("Could not start media transport", status)
+            # SRTP streams[] has just been re-allocated inside
+            # pjmedia_transport_srtp::media_start. Walking it via
+            # transport_get_info is safe again until the next media_stop.
+            self._srtp_streams_dangling = 0
             self.state = "ESTABLISHED"
         finally:
             with nogil:
                 pj_mutex_unlock(lock)
+
+    def rebind_remote_peer(self, BaseSDPSession remote_sdp, int sdp_index):
+        """Update the underlying pjmedia transport's remote RTP/RTCP peer
+        addresses in place from a new remote SDP, without going through
+        media_stop / media_start. SRTP keying, ROC counters and any Sylk
+        AEAD wrapper state are preserved.
+
+        Used by AudioStream.update() in sipsimple/streams/rtp/audio.py
+        when an incoming re-INVITE renumbers the peer's media port.
+        Without this hook the old codepath teared down the AudioTransport
+        and rebuilt it, which failed with "Could not generate base SDP
+        (PJ_EAFNOTSUP)" because the new AudioTransport's _get_info read
+        sock_info from an SRTP wrapper whose member transport had just
+        been stopped.
+
+        The C-level rebind is implemented in pjmedia/include/pjmedia/
+        transport.h:pjmedia_transport_rebind_remote_peer, documented by
+        deps/patches/27_pjmedia_rebind_remote_peer.patch. It is just a
+        second pjmedia_transport_attach2() with NULL callbacks; SRTP's
+        attach2 explicitly skips callback rebinding in that case and
+        the new addresses propagate down to the UDP layer.
+        """
+        cdef int status
+        cdef int af
+        cdef int port
+        cdef int rtcp_port = 0
+        cdef bytes addr_bytes
+        cdef pj_str_t addr_str
+        cdef pj_sockaddr rem_rtp
+        cdef pj_sockaddr rem_rtcp
+        cdef pj_sockaddr *rem_rtcp_ptr
+        cdef pjmedia_transport *transport
+        cdef pj_mutex_t *lock = self._lock
+        cdef unsigned int addr_len
+
+        _get_ua()
+
+        if remote_sdp is None:
+            raise SIPCoreError("remote_sdp argument cannot be None")
+        if sdp_index < 0 or sdp_index >= len(remote_sdp.media):
+            raise SIPCoreError("sdp_index out of range")
+
+        media = remote_sdp.media[sdp_index]
+        connection = media.connection or remote_sdp.connection
+        if connection is None:
+            raise SIPCoreError("remote SDP has no connection address")
+
+        addr_bytes = connection.address
+        if b':' in addr_bytes:
+            af = pj_AF_INET6()
+        else:
+            af = pj_AF_INET()
+        _str_to_pj_str(addr_bytes, &addr_str)
+        port = media.port
+
+        with nogil:
+            status = pj_sockaddr_init(af, &rem_rtp, &addr_str, port)
+        if status != 0:
+            raise PJSIPError("Could not parse remote RTP address", status)
+        addr_len = pj_sockaddr_get_len(&rem_rtp)
+
+        # If the peer included a=rtcp:<port>, honour it; otherwise the
+        # C helper derives port+1.
+        rem_rtcp_ptr = NULL
+        for attr in media.attributes:
+            if attr.name == b'rtcp':
+                try:
+                    parts = attr.value.split()
+                    rtcp_port = int(parts[0])
+                    if len(parts) >= 4:
+                        # "<port> IN IP4 <addr>" form
+                        rtcp_addr_bytes = parts[3]
+                    else:
+                        rtcp_addr_bytes = addr_bytes
+                    if b':' in rtcp_addr_bytes:
+                        af = pj_AF_INET6()
+                    else:
+                        af = pj_AF_INET()
+                    _str_to_pj_str(rtcp_addr_bytes, &addr_str)
+                    with nogil:
+                        status = pj_sockaddr_init(af, &rem_rtcp, &addr_str, rtcp_port)
+                    if status == 0:
+                        rem_rtcp_ptr = &rem_rtcp
+                except (ValueError, IndexError):
+                    pass
+                break
+
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire RTPTransport lock", status)
+        try:
+            transport = self._obj
+            if transport == NULL or self.state in ("NULL", "INVALID"):
+                raise SIPCoreError("RTPTransport.rebind_remote_peer called on a closed transport (state=%s)" % self.state)
+            with nogil:
+                status = pjmedia_transport_rebind_remote_peer(transport, &rem_rtp, rem_rtcp_ptr, addr_len)
+            if status != 0:
+                raise PJSIPError("Could not rebind remote peer", status)
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
+    def set_aead_keys(self, bytes send_key, bytes send_salt,
+                            bytes recv_key, bytes recv_salt,
+                            int key_id=1, int video_prefix=0):
+        """Activate the Sylk AES-128-GCM transport adapter for this RTP transport.
+
+        Called after the in-dialog ZRTP handshake completes and Python has
+        derived per-direction keys + salts via HKDF. The adapter (installed
+        at set_INIT() time, sitting between the stream and the SRTP layer)
+        switches from passthrough to active mode: outgoing RTP payload is
+        AES-128-GCM encrypted, incoming RTP payload is decrypted + tag-
+        verified. Permissive decrypt — payload that doesn't look like ours
+        passes through unchanged so audio survives a mid-call rekey window.
+
+        Wire format:
+          [RTP header][video_prefix bytes plaintext][1B v|keyId]
+          [4B counter_be][ciphertext][16B tag]
+        Matches sylk-mobile's MediaEncryptorJni.cpp byte-for-byte.
+
+        send_key / recv_key: 16 bytes (AES-128).
+        send_salt / recv_salt: 8 bytes (prepended to counter to form 12-byte GCM IV).
+        key_id: 0..15 (low 4 bits of header byte; peer must agree).
+        video_prefix: codec-metadata bytes left UNENCRYPTED at start of payload.
+                      Audio = 0. Video: VP8/VP9 = 3, H264 = 2, AV1 = 1.
+                      Must match what the peer's decryptor uses for the same
+                      negotiated codec, or every frame fails the tag check
+                      and falls through to permissive passthrough.
+        """
+        cdef int status
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjmedia_transport *tp
+        cdef unsigned char *p_send_key
+        cdef unsigned char *p_send_salt
+        cdef unsigned char *p_recv_key
+        cdef unsigned char *p_recv_salt
+
+        if len(send_key) != 16 or len(recv_key) != 16:
+            raise ValueError("send_key and recv_key must each be 16 bytes")
+        if len(send_salt) != 8 or len(recv_salt) != 8:
+            raise ValueError("send_salt and recv_salt must each be 8 bytes")
+        if key_id < 0 or key_id > 15:
+            raise ValueError("key_id must be in [0, 15]")
+        if video_prefix < 0 or video_prefix > 32:
+            raise ValueError("video_prefix must be in [0, 32]")
+
+        _get_ua()
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            tp = self._obj
+            if tp == NULL:
+                raise SIPCoreError("RTPTransport has no underlying media transport")
+            p_send_key  = <unsigned char *> send_key
+            p_send_salt = <unsigned char *> send_salt
+            p_recv_key  = <unsigned char *> recv_key
+            p_recv_salt = <unsigned char *> recv_salt
+            with nogil:
+                status = sylk_aead_transport_set_keys(tp, p_send_key, p_send_salt,
+                                                         p_recv_key, p_recv_salt,
+                                                         <unsigned char> key_id,
+                                                         <unsigned char> video_prefix)
+            if status != 0:
+                raise PJSIPError("Could not install Sylk AEAD keys", status)
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
+    def get_aead_stats(self):
+        """Return (encrypted_frames, decrypted_frames, passthrough_frames).
+
+        - encrypted_frames   : RTP packets WE encrypted on the outbound path.
+        - decrypted_frames   : inbound RTP packets whose AES-GCM tag verified
+                               (peer is actually emitting our ciphertext).
+        - passthrough_frames : inbound packets the permissive decryptor
+                               bypassed (peer not encrypting, header
+                               mismatch, or tag failure).
+
+        Returns (0, 0, 0) if the adapter isn't installed (transport already
+        torn down, or non-SDES encryption).
+        """
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjmedia_transport *tp
+        cdef unsigned long long enc = 0
+        cdef unsigned long long dec = 0
+        cdef unsigned long long passthrough = 0
+
+        _get_ua()
+        with nogil:
+            pj_mutex_lock(lock)
+        try:
+            tp = self._obj
+            if tp != NULL:
+                with nogil:
+                    sylk_aead_transport_get_stats(tp, &enc, &dec, &passthrough)
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+        return int(enc), int(dec), int(passthrough)
 
     def set_INIT(self):
         global _ice_cb
@@ -501,6 +786,7 @@ cdef class RTPTransport:
         cdef pjmedia_srtp_setting srtp_setting
         cdef pjmedia_transport **transport_address
         cdef pjmedia_transport *wrapped_transport
+        cdef pjmedia_transport *srtp_transport
         cdef pjsip_endpoint *sip_endpoint
         cdef bytes zid_file
         cdef char *c_zid_file
@@ -522,6 +808,17 @@ cdef class RTPTransport:
             if self.state == "INIT":
                 return
             if self.state in ["LOCAL", "ESTABLISHED"]:
+                # CRITICAL ORDERING: raise the "streams are dangling"
+                # flag BEFORE calling pjmedia_transport_media_stop().
+                # The stop call frees the SRTP wrapper's streams[] but
+                # leaves the table pointer non-NULL inside pjmedia, so
+                # any subsequent transport_get_info() — most notably
+                # the one in AudioTransport.__init__ on a fresh
+                # re-INVITE — would walk freed memory and crash inside
+                # srtp_get_stream_roc. _get_info() checks this flag
+                # under the lock and bails out. Cleared on the next
+                # successful media_start in set_ESTABLISHED.
+                self._srtp_streams_dangling = 1
                 with nogil:
                     status = pjmedia_transport_media_stop(transport_address[0])
                 if status != 0:
@@ -574,6 +871,15 @@ cdef class RTPTransport:
                             pjmedia_srtp_setting_default(&srtp_setting)
                         if self._encryption == 'sdes_mandatory':
                             srtp_setting.use = PJMEDIA_SRTP_MANDATORY
+                        # Offer only AES_CM_128_HMAC_SHA1_80. This is the
+                        # SDES baseline (RFC 4568) and works around peers
+                        # that mishandle multi-crypto offers (e.g. Janus's
+                        # sofia-sip-based SIP plugin before PR-2727).
+                        srtp_setting.crypto_count = 1
+                        _str_to_pj_str(b"AES_CM_128_HMAC_SHA1_80", &srtp_setting.crypto[0].name)
+                        srtp_setting.crypto[0].key.ptr = NULL
+                        srtp_setting.crypto[0].key.slen = 0
+                        srtp_setting.crypto[0].flags = 0
                         with nogil:
                             status = pjmedia_transport_srtp_create(media_endpoint, wrapped_transport, &srtp_setting, transport_address)
                         if status != 0:
@@ -581,6 +887,25 @@ cdef class RTPTransport:
                                 pjmedia_transport_close(wrapped_transport)
                             self._wrapped_transport = NULL
                             raise PJSIPError("Could not create SRTP media transport", status)
+                        # Always wrap the SRTP transport with our Sylk AEAD
+                        # adapter. Starts in passthrough mode — RTP packets
+                        # go through unchanged until set_aead_keys() is
+                        # called (typically after the in-dialog ZRTP
+                        # handshake completes). Once active, the adapter
+                        # adds AES-128-GCM on the RTP payload BEFORE handing
+                        # to SRTP. Final wire stack: payload → AES-GCM
+                        # adapter → SRTP → UDP. Mirrors what react-native-
+                        # webrtc does on Sylk Mobile with its FrameEncryptor
+                        # between codec and SRTP.
+                        srtp_transport = self._obj
+                        self._obj = NULL
+                        with nogil:
+                            status = sylk_aead_transport_create(media_endpoint, NULL, srtp_transport, 1, transport_address)
+                        if status != 0:
+                            with nogil:
+                                pjmedia_transport_close(srtp_transport)
+                            self._wrapped_transport = NULL
+                            raise PJSIPError("Could not create Sylk AEAD adapter", status)
                     elif self._encryption == 'zrtp':
                         with nogil:
                             status = pjmedia_transport_zrtp_create(media_endpoint, pjsip_endpt_get_timer_heap(sip_endpoint), wrapped_transport, transport_address, 1)
@@ -595,6 +920,106 @@ cdef class RTPTransport:
                                 pjmedia_transport_close(wrapped_transport)
                             self._wrapped_transport = NULL
                             raise PJSIPError("Could not create ZRTP media transport", status)
+                    elif self._encryption == 'opportunistic':
+                        # Build a stacked transport chain so the offer
+                        # advertises BOTH SDES (a=crypto) and ZRTP
+                        # (a=zrtp-hash), and the SDK can fall back between
+                        # them based on the remote's answer.
+                        #
+                        # Stack (outside-in):
+                        #     SRTP(OPTIONAL)  <- self._obj after this block
+                        #         ZRTP        <- self._zrtp_transport
+                        #             UDP/ICE <- wrapped_transport
+                        #
+                        # Behaviour:
+                        #  - SRTP in OPTIONAL mode keeps the offer at
+                        #    RTP/AVP and only activates when the answer
+                        #    contains a=crypto.
+                        #  - If SDES does NOT activate, packets pass
+                        #    through the SRTP layer to ZRTP underneath.
+                        #    ZRTP is initialised with autoEnable=0; the
+                        #    Python layer calls set_zrtp_enabled(True)
+                        #    once it has confirmed that SDES did not win.
+                        #  - pjmedia_transport_encode_sdp recurses through
+                        #    the chain, so the resulting offer carries
+                        #    both a=crypto and a=zrtp-hash lines.
+                        with nogil:
+                            status = pjmedia_transport_zrtp_create(media_endpoint, pjsip_endpt_get_timer_heap(sip_endpoint), wrapped_transport, &self._zrtp_transport, 1)
+                        if status != 0:
+                            with nogil:
+                                pjmedia_transport_close(wrapped_transport)
+                            self._wrapped_transport = NULL
+                            raise PJSIPError("Could not create ZRTP media transport for opportunistic encryption", status)
+                        zid_file = ua.zrtp_cache.encode(sys.getfilesystemencoding())
+                        c_zid_file = zid_file
+                        with nogil:
+                            # autoEnable=0: ZRTP only starts when the Python
+                            # layer explicitly calls set_zrtp_enabled(True)
+                            # after observing that SDES did not negotiate.
+                            status = pjmedia_transport_zrtp_initialize(self._zrtp_transport, c_zid_file, 0, &_zrtp_cb)
+                        if status != 0:
+                            with nogil:
+                                pjmedia_transport_close(self._zrtp_transport)
+                            self._zrtp_transport = NULL
+                            self._wrapped_transport = NULL
+                            raise PJSIPError("Could not initialize ZRTP for opportunistic encryption", status)
+                        # Now wrap the ZRTP transport with SRTP in OPTIONAL
+                        # mode so a=crypto is added to the offer too. The
+                        # default `use` value populated by
+                        # pjmedia_srtp_setting_default is OPTIONAL; we set
+                        # it explicitly below for clarity. close_member_tp
+                        # defaults to PJ_TRUE, which is what we want.
+                        with nogil:
+                            pjmedia_srtp_setting_default(&srtp_setting)
+                        srtp_setting.use = PJMEDIA_SRTP_OPTIONAL
+                        # Offer only AES_CM_128_HMAC_SHA1_80 (matches the
+                        # plain 'sdes' arm above and works around peers
+                        # that mishandle multi-crypto offers).
+                        srtp_setting.crypto_count = 1
+                        _str_to_pj_str(b"AES_CM_128_HMAC_SHA1_80", &srtp_setting.crypto[0].name)
+                        srtp_setting.crypto[0].key.ptr = NULL
+                        srtp_setting.crypto[0].key.slen = 0
+                        srtp_setting.crypto[0].flags = 0
+                        # ZRTP callbacks (secure_on, show_sas, ...) receive
+                        # the ZRTP transport pointer; _extract_rtp_transport
+                        # reads tp->user_data to find the Python wrapper, so
+                        # we set it on the ZRTP transport too. The outermost
+                        # transport's user_data is set below (line ~681).
+                        self._zrtp_transport.user_data = <void *> self.weakref
+                        with nogil:
+                            status = pjmedia_transport_srtp_create(media_endpoint, self._zrtp_transport, &srtp_setting, transport_address)
+                        if status != 0:
+                            with nogil:
+                                # Closing ZRTP also closes its slave UDP
+                                # because close_slave=1 was passed to
+                                # pjmedia_transport_zrtp_create above.
+                                pjmedia_transport_close(self._zrtp_transport)
+                            self._zrtp_transport = NULL
+                            self._wrapped_transport = NULL
+                            raise PJSIPError("Could not create SRTP media transport for opportunistic encryption", status)
+                        # Wrap the outermost transport (the SRTP_OPTIONAL
+                        # layer) with our Sylk AEAD adapter so the same
+                        # set_aead_keys path that works for plain 'sdes'
+                        # also works in 'opportunistic' mode. Final stack
+                        # then becomes:
+                        #     Sylk AEAD adapter (passthrough until keys)
+                        #         SRTP(OPTIONAL)
+                        #             ZRTP
+                        #                 UDP / ICE
+                        # The adapter starts in passthrough so if SDES wins
+                        # the answer, nothing changes on the wire until
+                        # Python flips it to active via set_aead_keys
+                        # (post Sylk-ZRTP-over-SIP-MESSAGE handshake).
+                        srtp_transport = self._obj
+                        self._obj = NULL
+                        with nogil:
+                            status = sylk_aead_transport_create(media_endpoint, NULL, srtp_transport, 1, transport_address)
+                        if status != 0:
+                            with nogil:
+                                pjmedia_transport_close(srtp_transport)
+                            self._zrtp_transport = NULL
+                            self._wrapped_transport = NULL
+                            raise PJSIPError("Could not create Sylk AEAD adapter (opportunistic)", status)
                     else:
                         raise RuntimeError('invalid SRTP key negotiation specified: %s' % self._encryption)
                     self._obj.user_data = <void *> self.weakref
@@ -623,6 +1048,7 @@ cdef class RTPTransport:
         cdef pj_mutex_t *lock = self._lock
         cdef pjmedia_zrtp_info *zrtp_info
         cdef pjmedia_transport_info info
+        cdef pjmedia_transport *zrtp_tp
         cdef PJSIPUA ua
 
         ua = self._check_ua()
@@ -641,8 +1067,12 @@ cdef class RTPTransport:
             if zrtp_info == NULL or not bool(zrtp_info.active):
                 return False
             c_verified = int(verified)
+            # When the chain is stacked (opportunistic encryption), the ZRTP
+            # transport sits underneath self._obj (the outer SRTP wrapper).
+            # ZRTP control calls must target the ZRTP transport directly.
+            zrtp_tp = self._zrtp_transport if self._zrtp_transport != NULL else self._obj
             with nogil:
-                pjmedia_transport_zrtp_setSASVerified(self._obj, c_verified)
+                pjmedia_transport_zrtp_setSASVerified(zrtp_tp, c_verified)
             return True
         finally:
             with nogil:
@@ -654,6 +1084,8 @@ cdef class RTPTransport:
         cdef pj_mutex_t *lock = self._lock
         cdef pjmedia_zrtp_info *zrtp_info
         cdef pjmedia_transport_info info
+        cdef pjmedia_transport *zrtp_tp
+        cdef pjmedia_transport *master_zrtp_tp
         cdef PJSIPUA ua
         cdef bytes multistream_params
         cdef char *c_multistream_params
@@ -675,6 +1107,9 @@ cdef class RTPTransport:
             zrtp_info = <pjmedia_zrtp_info *> pjmedia_transport_info_get_spc_info(&info, PJMEDIA_TRANSPORT_TYPE_ZRTP)
             if zrtp_info == NULL:
                 return
+            # When the chain is stacked (opportunistic encryption), the ZRTP
+            # transport sits underneath self._obj. Route control calls there.
+            zrtp_tp = self._zrtp_transport if self._zrtp_transport != NULL else self._obj
             if master_stream is not None:
                 master_transport = master_stream._rtp_transport
                 assert master_transport is not None
@@ -684,11 +1119,12 @@ cdef class RTPTransport:
                     # set multistream mode in ourselves
                     c_multistream_params = multistream_params
                     length = len(multistream_params)
+                    master_zrtp_tp = master_transport._zrtp_transport if master_transport._zrtp_transport != NULL else master_transport._obj
                     with nogil:
-                        pjmedia_transport_zrtp_setMultiStreamParameters(self._obj, c_multistream_params, length, master_transport._obj)
+                        pjmedia_transport_zrtp_setMultiStreamParameters(zrtp_tp, c_multistream_params, length, master_zrtp_tp)
             c_enabled = int(enabled)
             with nogil:
-                pjmedia_transport_zrtp_setEnableZrtp(self._obj, c_enabled)
+                pjmedia_transport_zrtp_setEnableZrtp(zrtp_tp, c_enabled)
         finally:
             with nogil:
                 pj_mutex_unlock(lock)
@@ -701,6 +1137,7 @@ cdef class RTPTransport:
             cdef pj_mutex_t *lock = self._lock
             cdef pjmedia_zrtp_info *zrtp_info
             cdef pjmedia_transport_info info
+            cdef pjmedia_transport *zrtp_tp
             cdef PJSIPUA ua
             cdef char *multistr_params
             cdef int length
@@ -720,8 +1157,10 @@ cdef class RTPTransport:
                 zrtp_info = <pjmedia_zrtp_info *> pjmedia_transport_info_get_spc_info(&info, PJMEDIA_TRANSPORT_TYPE_ZRTP)
                 if zrtp_info == NULL or not bool(zrtp_info.active):
                     return None
+                # Route through the inner ZRTP transport when stacked.
+                zrtp_tp = self._zrtp_transport if self._zrtp_transport != NULL else self._obj
                 with nogil:
-                    multistr_params = pjmedia_transport_zrtp_getMultiStreamParameters(self._obj, &length)
+                    multistr_params = pjmedia_transport_zrtp_getMultiStreamParameters(zrtp_tp, &length)
                 if length > 0:
                     ret = _pj_buf_len_to_str(multistr_params, length)
                     free(multistr_params)
@@ -770,6 +1209,7 @@ cdef class RTPTransport:
             cdef pj_mutex_t *lock = self._lock
             cdef pjmedia_zrtp_info *zrtp_info
             cdef pjmedia_transport_info info
+            cdef pjmedia_transport *zrtp_tp
             cdef PJSIPUA ua
 
             ua = self._check_ua()
@@ -787,8 +1227,10 @@ cdef class RTPTransport:
                 zrtp_info = <pjmedia_zrtp_info *> pjmedia_transport_info_get_spc_info(&info, PJMEDIA_TRANSPORT_TYPE_ZRTP)
                 if zrtp_info == NULL or not bool(zrtp_info.active):
                     return ''
+                # Route through the inner ZRTP transport when stacked.
+                zrtp_tp = self._zrtp_transport if self._zrtp_transport != NULL else self._obj
                 with nogil:
-                    c_name = pjmedia_transport_zrtp_getPeerName(self._obj)
+                    c_name = pjmedia_transport_zrtp_getPeerName(zrtp_tp)
                 if c_name == NULL:
                     return ''
                 else:
@@ -805,6 +1247,7 @@ cdef class RTPTransport:
             cdef pj_mutex_t *lock = self._lock
             cdef pjmedia_zrtp_info *zrtp_info
             cdef pjmedia_transport_info info
+            cdef pjmedia_transport *zrtp_tp
             cdef PJSIPUA ua
 
             ua = self._check_ua()
@@ -823,8 +1266,10 @@ cdef class RTPTransport:
                 if zrtp_info == NULL or not bool(zrtp_info.active):
                     return
                 c_name = name
+                # Route through the inner ZRTP transport when stacked.
+                zrtp_tp = self._zrtp_transport if self._zrtp_transport != NULL else self._obj
                 with nogil:
-                    pjmedia_transport_zrtp_putPeerName(self._obj, c_name)
+                    pjmedia_transport_zrtp_putPeerName(zrtp_tp, c_name)
             finally:
                 with nogil:
                     pj_mutex_unlock(lock)
@@ -837,6 +1282,7 @@ cdef class RTPTransport:
             cdef pj_mutex_t *lock = self._lock
             cdef pjmedia_zrtp_info *zrtp_info
             cdef pjmedia_transport_info info
+            cdef pjmedia_transport *zrtp_tp
             cdef PJSIPUA ua
 
             ua = self._check_ua()
@@ -854,8 +1300,10 @@ cdef class RTPTransport:
                 zrtp_info = <pjmedia_zrtp_info *> pjmedia_transport_info_get_spc_info(&info, PJMEDIA_TRANSPORT_TYPE_ZRTP)
                 if zrtp_info == NULL or not bool(zrtp_info.active):
                     return None
+                # Route through the inner ZRTP transport when stacked.
+                zrtp_tp = self._zrtp_transport if self._zrtp_transport != NULL else self._obj
                 with nogil:
-                    status = pjmedia_transport_zrtp_getPeerZid(self._obj, name)
+                    status = pjmedia_transport_zrtp_getPeerZid(zrtp_tp, name)
                 if status <= 0:
                     return None
                 else:
@@ -1276,6 +1724,12 @@ cdef class AudioTransport:
                 raise SIPCoreError("Could not parse SDP for audio session")
             self._stream_info.param.setting.vad = self._vad
             self._stream_info.use_ka = 1
+            # pjsip 2.12 added pjmedia_stream_info::ka_cfg. pjmedia_stream_info_from_sdp()
+            # zeroes the whole struct, which leaves ka_interval=0 -- and stream.c then
+            # treats that as "fire a 12-byte RTP keep-alive before every audio frame",
+            # flooding the wire and breaking interop. Restore the documented pjmedia
+            # defaults (PJMEDIA_STREAM_KA_INTERVAL=5s, START_KA_CNT=2, START_INTERVAL=1000ms).
+            pjmedia_stream_ka_config_default(&self._stream_info.ka_cfg)
             with nogil:
                 status = pjmedia_stream_create(media_endpoint, pool, stream_info_address,
                                                transport, NULL, stream_address)
@@ -1738,6 +2192,9 @@ cdef class VideoTransport:
             if self._stream_info.codec_param == NULL:
                 raise SIPCoreError("Could not parse SDP for video session")
             self._stream_info.use_ka = 1
+            # See audio path above: pjsip 2.12 needs ka_cfg initialised explicitly,
+            # otherwise stream.c fires a keep-alive before every frame.
+            pjmedia_stream_ka_config_default(&self._stream_info.ka_cfg)
             with nogil:
                 status = pjmedia_vid_stream_create(media_endpoint, pool, stream_info, transport, NULL, &stream)
             if status != 0:
@@ -2186,7 +2643,7 @@ cdef object _extract_rtp_transport(pjmedia_transport *tp):
 
 # callback functions
 
-cdef void _RTPTransport_cb_ice_complete(pjmedia_transport *tp, pj_ice_strans_op op, int status) with gil:
+cdef void _RTPTransport_cb_ice_complete_impl(pjmedia_transport *tp, pj_ice_strans_op op, int status) with gil:
     # Despite the name this callback is not only called when ICE negotiation ends, it depends on the
     # op parameter
     cdef int lock_status
@@ -2253,7 +2710,11 @@ cdef void _RTPTransport_cb_ice_complete(pjmedia_transport *tp, pj_ice_strans_op 
             pj_mutex_unlock(lock)
 
 
-cdef void _RTPTransport_cb_ice_state(pjmedia_transport *tp, pj_ice_strans_state prev, pj_ice_strans_state curr) with gil:
+cdef void _RTPTransport_cb_ice_complete(pjmedia_transport *tp, pj_ice_strans_op op, int status) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_ice_complete_impl(tp, op, status)
+
+cdef void _RTPTransport_cb_ice_state_impl(pjmedia_transport *tp, pj_ice_strans_state prev, pj_ice_strans_state curr) with gil:
     cdef int status
     cdef pj_mutex_t *lock
     cdef RTPTransport rtp_transport
@@ -2282,7 +2743,11 @@ cdef void _RTPTransport_cb_ice_state(pjmedia_transport *tp, pj_ice_strans_state 
             pj_mutex_unlock(lock)
 
 
-cdef void _RTPTransport_cb_ice_stop(pjmedia_transport *tp, char *reason, int err) with gil:
+cdef void _RTPTransport_cb_ice_state(pjmedia_transport *tp, pj_ice_strans_state prev, pj_ice_strans_state curr) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_ice_state_impl(tp, prev, curr)
+
+cdef void _RTPTransport_cb_ice_stop_impl(pjmedia_transport *tp, char *reason, int err) with gil:
     cdef int status
     cdef pj_mutex_t *lock
     cdef RTPTransport rtp_transport
@@ -2312,7 +2777,11 @@ cdef void _RTPTransport_cb_ice_stop(pjmedia_transport *tp, char *reason, int err
             pj_mutex_unlock(lock)
 
 
-cdef void _RTPTransport_cb_zrtp_secure_on(pjmedia_transport *tp, char* cipher) with gil:
+cdef void _RTPTransport_cb_ice_stop(pjmedia_transport *tp, char *reason, int err) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_ice_stop_impl(tp, reason, err)
+
+cdef void _RTPTransport_cb_zrtp_secure_on_impl(pjmedia_transport *tp, char* cipher) with gil:
    cdef RTPTransport rtp_transport
    cdef PJSIPUA ua
    try:
@@ -2327,7 +2796,11 @@ cdef void _RTPTransport_cb_zrtp_secure_on(pjmedia_transport *tp, char* cipher) w
    except:
        ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_secure_off(pjmedia_transport *tp) with gil:
+cdef void _RTPTransport_cb_zrtp_secure_on(pjmedia_transport *tp, char* cipher) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_secure_on_impl(tp, cipher)
+
+cdef void _RTPTransport_cb_zrtp_secure_off_impl(pjmedia_transport *tp) with gil:
    cdef RTPTransport rtp_transport
    cdef PJSIPUA ua
    try:
@@ -2342,7 +2815,11 @@ cdef void _RTPTransport_cb_zrtp_secure_off(pjmedia_transport *tp) with gil:
    except:
        ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_show_sas(pjmedia_transport *tp, char* sas, int verified) with gil:
+cdef void _RTPTransport_cb_zrtp_secure_off(pjmedia_transport *tp) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_secure_off_impl(tp)
+
+cdef void _RTPTransport_cb_zrtp_show_sas_impl(pjmedia_transport *tp, char* sas, int verified) with gil:
    cdef RTPTransport rtp_transport
    cdef PJSIPUA ua
    try:
@@ -2357,7 +2834,11 @@ cdef void _RTPTransport_cb_zrtp_show_sas(pjmedia_transport *tp, char* sas, int v
    except:
        ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_confirm_goclear(pjmedia_transport *tp) with gil:
+cdef void _RTPTransport_cb_zrtp_show_sas(pjmedia_transport *tp, char* sas, int verified) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_show_sas_impl(tp, sas, verified)
+
+cdef void _RTPTransport_cb_zrtp_confirm_goclear_impl(pjmedia_transport *tp) with gil:
    cdef RTPTransport rtp_transport
    cdef PJSIPUA ua
    try:
@@ -2372,7 +2853,11 @@ cdef void _RTPTransport_cb_zrtp_confirm_goclear(pjmedia_transport *tp) with gil:
    except:
        ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_show_message(pjmedia_transport *tp, int severity, int sub_code) with gil:
+cdef void _RTPTransport_cb_zrtp_confirm_goclear(pjmedia_transport *tp) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_confirm_goclear_impl(tp)
+
+cdef void _RTPTransport_cb_zrtp_show_message_impl(pjmedia_transport *tp, int severity, int sub_code) with gil:
     global zrtp_message_levels, zrtp_error_messages
     cdef RTPTransport rtp_transport
     cdef PJSIPUA ua
@@ -2393,7 +2878,11 @@ cdef void _RTPTransport_cb_zrtp_show_message(pjmedia_transport *tp, int severity
     except:
         ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_negotiation_failed(pjmedia_transport *tp, int severity, int sub_code) with gil:
+cdef void _RTPTransport_cb_zrtp_show_message(pjmedia_transport *tp, int severity, int sub_code) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_show_message_impl(tp, severity, sub_code)
+
+cdef void _RTPTransport_cb_zrtp_negotiation_failed_impl(pjmedia_transport *tp, int severity, int sub_code) with gil:
     global zrtp_message_levels, zrtp_error_messages
     cdef RTPTransport rtp_transport
     cdef PJSIPUA ua
@@ -2411,7 +2900,11 @@ cdef void _RTPTransport_cb_zrtp_negotiation_failed(pjmedia_transport *tp, int se
     except:
         ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_not_supported_by_other(pjmedia_transport *tp) with gil:
+cdef void _RTPTransport_cb_zrtp_negotiation_failed(pjmedia_transport *tp, int severity, int sub_code) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_negotiation_failed_impl(tp, severity, sub_code)
+
+cdef void _RTPTransport_cb_zrtp_not_supported_by_other_impl(pjmedia_transport *tp) with gil:
     cdef RTPTransport rtp_transport
     cdef PJSIPUA ua
     try:
@@ -2426,7 +2919,11 @@ cdef void _RTPTransport_cb_zrtp_not_supported_by_other(pjmedia_transport *tp) wi
     except:
         ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_ask_enrollment(pjmedia_transport *tp, int info) with gil:
+cdef void _RTPTransport_cb_zrtp_not_supported_by_other(pjmedia_transport *tp) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_not_supported_by_other_impl(tp)
+
+cdef void _RTPTransport_cb_zrtp_ask_enrollment_impl(pjmedia_transport *tp, int info) with gil:
     cdef RTPTransport rtp_transport
     cdef PJSIPUA ua
     try:
@@ -2441,7 +2938,11 @@ cdef void _RTPTransport_cb_zrtp_ask_enrollment(pjmedia_transport *tp, int info) 
     except:
         ua._handle_exception(1)
 
-cdef void _RTPTransport_cb_zrtp_inform_enrollment(pjmedia_transport *tp, int info) with gil:
+cdef void _RTPTransport_cb_zrtp_ask_enrollment(pjmedia_transport *tp, int info) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_ask_enrollment_impl(tp, info)
+
+cdef void _RTPTransport_cb_zrtp_inform_enrollment_impl(pjmedia_transport *tp, int info) with gil:
     cdef RTPTransport rtp_transport
     cdef PJSIPUA ua
     try:
@@ -2456,7 +2957,11 @@ cdef void _RTPTransport_cb_zrtp_inform_enrollment(pjmedia_transport *tp, int inf
     except:
         ua._handle_exception(1)
 
-cdef void _AudioTransport_cb_dtmf(pjmedia_stream *stream, void *user_data, int digit) with gil:
+cdef void _RTPTransport_cb_zrtp_inform_enrollment(pjmedia_transport *tp, int info) noexcept nogil:
+    with gil:
+        _RTPTransport_cb_zrtp_inform_enrollment_impl(tp, info)
+
+cdef void _AudioTransport_cb_dtmf_impl(pjmedia_stream *stream, void *user_data, int digit) with gil:
     cdef AudioTransport audio_stream = (<object> user_data)()
     cdef PJSIPUA ua
     try:
@@ -2469,6 +2974,10 @@ cdef void _AudioTransport_cb_dtmf(pjmedia_stream *stream, void *user_data, int d
         _add_event("RTPAudioStreamGotDTMF", dict(obj=audio_stream, digit=chr(digit)))
     except:
         ua._handle_exception(1)
+
+cdef void _AudioTransport_cb_dtmf(pjmedia_stream *stream, void *user_data, int digit) noexcept nogil:
+    with gil:
+        _AudioTransport_cb_dtmf_impl(stream, user_data, digit)
 
 # globals
 

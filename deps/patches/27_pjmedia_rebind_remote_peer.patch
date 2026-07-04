@@ -1,0 +1,183 @@
+# 27_pjmedia_rebind_remote_peer.patch
+#
+# Add an in-place "rebind remote peer" helper to pjmedia, used by
+# python-sipsimple's AudioStream.update() to handle a port-change
+# re-INVITE without going through media_stop / media_start.
+#
+# Background
+# ----------
+# Vanilla python-sipsimple's sipsimple/streams/rtp/audio.py:update()
+# implements a remote address/port change as:
+#
+#     self._transport.stop()            # -> RTPTransport.set_INIT()
+#                                       # -> pjmedia_transport_media_stop()
+#     self._transport = AudioTransport(...)   # FAILS HERE in practice
+#     self._transport.start(...)
+#
+# The new AudioTransport constructor calls RTPTransport._get_info()
+# to read the local sock_info needed to assemble the answer SDP.
+# After pjmedia_transport_media_stop() the SRTP wrapper's
+# transport_get_info() returns a zeroed sock_info (the underlying
+# UDP rtp_addr_name doesn't propagate cleanly once the SRTP layer
+# has been torn down). pjmedia_endpt_create_base_sdp then returns
+# PJ_EAFNOTSUP because addr->sa_family == 0, and the stream is
+# delivered to the application as MediaStreamDidFail with reason
+#
+#     "Could not generate base SDP: Unsupported address family
+#      (PJ_EAFNOTSUP)"
+#
+# This breaks every interop scenario with a WebRTC peer that
+# renumbers media in a re-INVITE (Sylk-Mobile, anything WebRTC-based)
+# and has been reproduced cleanly against unmodified Blink 9.3.0
+# using sip-audio-session3-change-port.
+#
+# Fix shape
+# ---------
+# Don't tear the transport down at all on a port change. pjmedia's
+# transport_udp::transport_attach() already overwrites rem_rtp_addr
+# / rem_rtcp_addr in place on each call, and transport_srtp's
+# transport_attach2() explicitly skips callback rebinding when no
+# callbacks are passed in ("Do not update rtp_cb if not set, as
+# attach() is called by keying method.") and just propagates the
+# new addresses down. So a second pjmedia_transport_attach2() with
+# NULL callbacks and new addresses is exactly what we want -- SRTP
+# keys, ROC counters, ssrc state and any AEAD wrapper state survive.
+#
+# This patch:
+#
+#   1. Adds an inline helper pjmedia_transport_rebind_remote_peer()
+#      in pjmedia/include/pjmedia/transport.h that builds the right
+#      attach_param and calls pjmedia_transport_attach2.
+#
+#   2. Relaxes the Sylk AEAD adapter
+#      (sylk_aead_transport.c::transport_attach2) so it tolerates a
+#      second attach2 instead of asserting stream_user_data == NULL.
+#      A second attach2 with NULL callbacks is treated as
+#      address-rebind-only and leaves the captured stream callbacks
+#      alone; the new addresses still propagate down to slave_tp.
+#      A second attach2 with real callbacks (a deliberate stream
+#      rebind) still works.
+#
+# python-sipsimple then exposes pjmedia_transport_rebind_remote_peer
+# via RTPTransport.rebind_remote_peer() in
+# sipsimple/core/_core.mediatransport.pxi, and AudioStream.update()
+# in sipsimple/streams/rtp/audio.py calls it instead of the
+# stop+reconstruct dance. Those python-side changes are NOT in this
+# patch (they live in-tree under sipsimple/core/ and sipsimple/streams/
+# per the project's convention that pjsip patches live in
+# deps/patches/ and core changes are made in place).
+#
+# Rebuild after applying:
+#
+#     cd python3-sipsimple/mac && ./04-install_sipsimple.sh
+#
+--- pjsip_orig/pjmedia/include/pjmedia/transport.h
++++ pjsip/pjmedia/include/pjmedia/transport.h
+@@ -736,18 +736,48 @@
+     if (tp->op->attach2) {
+ 	return (*tp->op->attach2)(tp, att_param);
+     } else {
+-	return (*tp->op->attach)(tp, att_param->user_data, 
+-				 (pj_sockaddr_t*)&att_param->rem_addr, 
+-				 (pj_sockaddr_t*)&att_param->rem_rtcp, 
+-				 att_param->addr_len, att_param->rtp_cb, 
++	return (*tp->op->attach)(tp, att_param->user_data,
++				 (pj_sockaddr_t*)&att_param->rem_addr,
++				 (pj_sockaddr_t*)&att_param->rem_rtcp,
++				 att_param->addr_len, att_param->rtp_cb,
+ 				 att_param->rtcp_cb);
+     }
+ }
+ 
+ 
+ /**
++ * Rebind the remote RTP/RTCP peer addresses of an already-attached
++ * transport, in place, without going through media_stop/media_start.
++ * Used by python-sipsimple's AudioStream.update() for port-change
++ * re-INVITEs — SRTP keys, ROC counters and any AEAD wrapper state
++ * survive the address swap. See 27_pjmedia_rebind_remote_peer.patch.
++ */
++PJ_INLINE(pj_status_t) pjmedia_transport_rebind_remote_peer(
++                                  pjmedia_transport *tp,
++                                  const pj_sockaddr_t *rem_addr,
++                                  const pj_sockaddr_t *rem_rtcp,
++                                  unsigned addr_len)
++{
++    pjmedia_transport_attach_param param;
++    pj_bzero(&param, sizeof(param));
++    pj_sockaddr_cp(&param.rem_addr, rem_addr);
++    if (rem_rtcp && pj_sockaddr_has_addr((pj_sockaddr*)rem_rtcp)) {
++        pj_sockaddr_cp(&param.rem_rtcp, rem_rtcp);
++    } else {
++        pj_sockaddr_cp(&param.rem_rtcp, rem_addr);
++        pj_sockaddr_set_port(&param.rem_rtcp,
++            (pj_uint16_t)(pj_sockaddr_get_port((pj_sockaddr*)rem_addr) + 1));
++    }
++    param.addr_len = addr_len;
++    /* user_data and all callbacks intentionally NULL so srtp/aead
++     * attach2 propagate addresses only. */
++    return pjmedia_transport_attach2(tp, &param);
++}
++
++
++/**
+  * Attach callbacks to be called on receipt of incoming RTP/RTCP packets.
+- * This is just a simple wrapper which calls <tt>attach()</tt> member of 
++ * This is just a simple wrapper which calls <tt>attach()</tt> member of
+  * the transport.
+  *
+  * @param tp	    The media transport.
+--- pjsip_orig/pjmedia/src/pjmedia/sylk_aead_transport.c
++++ pjsip/pjmedia/src/pjmedia/sylk_aead_transport.c
+@@ -575,28 +575,35 @@
+     struct sylk_aead_adapter *a = (struct sylk_aead_adapter *)tp;
+     pj_status_t status;
+ 
+-    pj_assert(a->stream_user_data == NULL);
+-    a->stream_user_data = att_param->user_data;
+-    if (att_param->rtp_cb2) {
+-        a->stream_rtp_cb2 = att_param->rtp_cb2;
+-    } else {
+-        a->stream_rtp_cb = att_param->rtp_cb;
++    /* Tolerate re-attach (see pjmedia_transport_rebind_remote_peer
++     * in pjmedia/include/pjmedia/transport.h). When no callbacks are
++     * supplied, leave captured stream state alone and just propagate
++     * the new addresses down to the slave. */
++    if (att_param->rtp_cb || att_param->rtp_cb2 || att_param->rtcp_cb) {
++        a->stream_user_data = att_param->user_data;
++        if (att_param->rtp_cb2) {
++            a->stream_rtp_cb2 = att_param->rtp_cb2;
++            a->stream_rtp_cb  = NULL;
++        } else {
++            a->stream_rtp_cb  = att_param->rtp_cb;
++            a->stream_rtp_cb2 = NULL;
++        }
++        a->stream_rtcp_cb = att_param->rtcp_cb;
++        a->stream_ref     = att_param->stream;
+     }
+-    a->stream_rtcp_cb = att_param->rtcp_cb;
+-    a->stream_ref = att_param->stream;
+ 
+-    att_param->rtp_cb2  = &slave_rtp_cb2;
+-    att_param->rtp_cb   = NULL;
+-    att_param->rtcp_cb  = &slave_rtcp_cb;
++    att_param->rtp_cb2   = &slave_rtp_cb2;
++    att_param->rtp_cb    = NULL;
++    att_param->rtcp_cb   = &slave_rtcp_cb;
+     att_param->user_data = a;
+ 
+     status = pjmedia_transport_attach2(a->slave_tp, att_param);
+-    if (status != PJ_SUCCESS) {
++    if (status != PJ_SUCCESS && a->stream_user_data == att_param->user_data) {
+         a->stream_user_data = NULL;
+-        a->stream_rtp_cb   = NULL;
+-        a->stream_rtp_cb2  = NULL;
+-        a->stream_rtcp_cb  = NULL;
+-        a->stream_ref      = NULL;
++        a->stream_rtp_cb    = NULL;
++        a->stream_rtp_cb2   = NULL;
++        a->stream_rtcp_cb   = NULL;
++        a->stream_ref       = NULL;
+     }
+     return status;
+ }

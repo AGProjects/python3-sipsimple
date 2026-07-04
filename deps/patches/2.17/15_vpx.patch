@@ -1,0 +1,34 @@
+# 15_vpx.patch   (rebased for pjsip 2.17)
+#
+# Wraps the two vpx_codec_destroy() calls in vpx_codec_close() with
+# guards. Carried over from the 2.12 patch series for behavioural
+# continuity.
+#
+# CAVEAT: the guards as written are `if (&vpx_data->enc)` /
+# `if (&vpx_data->dec)`. These are always-true (address-of a struct
+# member can't be NULL), so the patch as it stands is a no-op against
+# the unguarded form. The intent was almost certainly to skip the
+# vpx_codec_destroy() call when vpx_codec_enc_init() / vpx_codec_dec_init()
+# never ran (e.g. early-error return from vpx_codec_open()), in which
+# case the proper guard would be on `vpx_data->enc.iface != NULL`. We
+# preserve the existing 2.12 behaviour here and leave the real fix for
+# a follow-up.
+#
+# 2.17 vpx_codec_close() is structurally identical to 2.12 — same
+# variable names, same destroy calls in the same order.
+#
+--- pjsip/pjmedia/src/pjmedia-codec/vpx.c
++++ pjsip/pjmedia/src/pjmedia-codec/vpx.c
+@@ -507,8 +507,10 @@
+     PJ_ASSERT_RETURN(codec, PJ_EINVAL);
+
+     vpx_data = (vpx_codec_data*) codec->codec_data;
+-    vpx_codec_destroy(&vpx_data->enc);
+-    vpx_codec_destroy(&vpx_data->dec);
++    if (&vpx_data->enc)
++        vpx_codec_destroy(&vpx_data->enc);
++    if (&vpx_data->dec)
++        vpx_codec_destroy(&vpx_data->dec);
+
+     return PJ_SUCCESS;
+ }

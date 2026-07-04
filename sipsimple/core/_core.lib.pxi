@@ -24,9 +24,53 @@ cdef class PJLIB:
                 pj_shutdown()
 
 
+# Non-throwing OOM callback for the pool factory.
+#
+# PJSIP's stock pj_pool_factory_default_policy installs an OOM callback
+# (default_pool_callback in pool_policy_malloc.c) that calls
+# PJ_THROW(PJ_NO_MEMORY_EXCEPTION), which is implemented as longjmp() to
+# the per-thread exception handler set up by PJ_TRY/PJ_CATCH. The vast
+# majority of PJSIP code paths -- including pj_ssl_sock_create and
+# pj_ssl_sock_param_copy, which are exercised heavily after wake from
+# sleep when many TLS subscriptions reconnect at once -- do NOT have a
+# PJ_TRY frame on the stack. When the throw fires with no handler, the
+# longjmp dereferences a NULL/garbage pj_exception_state_t and the
+# process segfaults inside libsystem_platform.dylib's longjmp+12.
+#
+# Replacing the callback with a non-throwing version turns those crashes
+# into clean NULL returns from pj_pool_alloc, which most callers handle.
+cdef extern from *:
+    """
+    #include <pjlib.h>
+
+    static void _sipsimple_oom_pool_callback(pj_pool_t *pool, pj_size_t size)
+    {
+        PJ_LOG(1, ("sipsimple",
+                   "pool '%s' failed to allocate %lu bytes (suppressed throw)",
+                   pj_pool_getobjname(pool), (unsigned long)size));
+    }
+
+    static pj_pool_factory_policy _sipsimple_pool_factory_policy_storage;
+    static int _sipsimple_pool_factory_policy_inited = 0;
+
+    static pj_pool_factory_policy *_sipsimple_get_pool_factory_policy(void)
+    {
+        if (!_sipsimple_pool_factory_policy_inited) {
+            _sipsimple_pool_factory_policy_storage =
+                pj_pool_factory_default_policy;
+            _sipsimple_pool_factory_policy_storage.callback =
+                &_sipsimple_oom_pool_callback;
+            _sipsimple_pool_factory_policy_inited = 1;
+        }
+        return &_sipsimple_pool_factory_policy_storage;
+    }
+    """
+    pj_pool_factory_policy *_sipsimple_get_pool_factory_policy() nogil
+
+
 cdef class PJCachingPool:
     def __cinit__(self):
-        pj_caching_pool_init(&self._obj, &pj_pool_factory_default_policy, 0)
+        pj_caching_pool_init(&self._obj, _sipsimple_get_pool_factory_policy(), 0)
         self._init_done = 1
 
     def __dealloc__(self):
@@ -265,6 +309,12 @@ cdef class PJMEDIAEndpoint:
         status = pjmedia_vid_codec_mgr_create(self._pool, NULL)
         if status != 0:
             raise PJSIPError("Could not initialize video codec manager", status)
+        # Initialize the FFmpeg-backed video codecs (H.263, H.264, MPEG-4).
+        # The previous workaround that bypassed this call dates from the
+        # period when pjsip 2.12's ffmpeg_vid_codecs.c was broken against
+        # FFmpeg >= 5; that's no longer the case once patch 17 lands and
+        # the host has FFmpeg headers/libs (linux/02-install-c-deps.sh
+        # and mac/02-install-c-deps.sh install them).
         status = pjmedia_codec_ffmpeg_vid_init(NULL, &caching_pool._obj.factory)
         if status != 0:
             raise PJSIPError("Could not initialize ffmpeg video codecs", status)
@@ -513,12 +563,58 @@ cdef class PJMEDIAEndpoint:
                 raise PJSIPError("Could not set video options", status)
 
 
-cdef void _transport_state_cb(pjsip_transport *tp, pjsip_transport_state state, pjsip_transport_state_info_ptr_const info) with gil:
+cdef dict _pj_ssl_cert_info_to_dict(pj_ssl_cert_info *cert):
+    cdef _sipsimple_cert_name_entry *entries
+    cdef unsigned int i
+    cdef list alt_names = []
+    from datetime import datetime, timezone
+    entries = <_sipsimple_cert_name_entry *> cert.subj_alt_name_entry
+    if entries != NULL:
+        for i in range(cert.subj_alt_name_cnt):
+            alt_names.append(_pj_str_to_str(entries[i].name))
+    serial = bytes((<unsigned char *> cert.serial_no)[:20]).lstrip(b'\x00').hex() or '00'
+    return dict(subject=_pj_str_to_str(cert.subject_cn),
+                subject_info=_pj_str_to_str(cert.subject_info),
+                issuer=_pj_str_to_str(cert.issuer_cn),
+                issuer_info=_pj_str_to_str(cert.issuer_info),
+                version=cert.version,
+                serial=serial,
+                not_before=datetime.fromtimestamp(cert.validity_start.sec, timezone.utc).strftime('%Y-%m-%d %H:%M:%S GMT'),
+                not_after=datetime.fromtimestamp(cert.validity_end.sec, timezone.utc).strftime('%Y-%m-%d %H:%M:%S GMT'),
+                alternative_names=alt_names,
+                pem=_pj_str_to_str(cert.raw) or None)
+
+
+cdef dict _pj_ssl_info_to_dict(pjsip_transport *tp, pj_ssl_sock_info *ssl_info):
+    cdef char buf[PJ_INET6_ADDRSTRLEN]
+    cdef pj_ssl_cert_info *cert_info
+    cdef dict ssl_dict = {}
+    ssl_dict['remote_hostname'] = _pj_str_to_str(tp.remote_name.host)
+    if pj_sockaddr_has_addr(&ssl_info.remote_addr):
+        pj_sockaddr_print(&ssl_info.remote_addr, buf, 512, 0)
+        ssl_dict['remote_ip'] = '%s:%d' % (_buf_to_str(buf), pj_sockaddr_get_port(&ssl_info.remote_addr))
+    else:
+        ssl_dict['remote_ip'] = None
+    ssl_dict['tls_cipher'] = _buf_to_str(pj_ssl_cipher_name(ssl_info.cipher)) or None
+    ssl_dict['verify_status'] = ssl_info.verify_status
+    cert_info = ssl_info.remote_cert_info
+    ssl_dict['certificate'] = _pj_ssl_cert_info_to_dict(cert_info) if cert_info != NULL else None
+    return ssl_dict
+
+
+cdef void _transport_state_cb_impl(pjsip_transport *tp, pjsip_transport_state state, pjsip_transport_state_info_ptr_const info) with gil:
     cdef PJSIPUA ua
     cdef str local_address
     cdef str remote_address
     cdef char buf[PJ_INET6_ADDRSTRLEN]
     cdef dict event_dict
+    cdef pjsip_tls_state_info *tls_info
+    cdef pj_ssl_sock_info *ssl_info
+    cdef char_ptr_const verify_strings[16]
+    cdef unsigned int verify_count
+    cdef unsigned int i
+    cdef list certificate_errors
+    cdef pj_ssl_cert_info *cert_info
     try:
         ua = _get_ua()
     except:
@@ -535,12 +631,38 @@ cdef void _transport_state_cb(pjsip_transport *tp, pjsip_transport_state state, 
     event_dict = dict(transport=transport, local_address=local_address, remote_address=remote_address)
     
     if state == PJSIP_TP_STATE_CONNECTED:
+        if transport == 'tls' and info.ext_info != NULL:
+            tls_info = <pjsip_tls_state_info *> info.ext_info
+            ssl_info = tls_info.ssl_sock_info
+            if ssl_info != NULL:
+                verify_dict = dict(event_dict)
+                verify_dict.update(_pj_ssl_info_to_dict(tp, ssl_info))
+                verify_dict['verified'] = ssl_info.verify_status == 0
+                _add_event("SIPEngineTransportDidVerifyCertificate", verify_dict)
         _add_event("SIPEngineTransportDidConnect", event_dict)
     else:
         reason = _pj_status_to_str(info.status)
+        if transport == 'tls' and info.ext_info != NULL:
+            tls_info = <pjsip_tls_state_info *> info.ext_info
+            ssl_info = tls_info.ssl_sock_info
+            if ssl_info != NULL and ssl_info.verify_status != 0:
+                certificate_errors = []
+                verify_count = 16
+                if pj_ssl_cert_get_verify_status_strings(ssl_info.verify_status, verify_strings, &verify_count) == 0:
+                    certificate_errors = [_buf_to_str(verify_strings[i]) for i in range(verify_count)]
+                reason = '%s: %s' % (reason, ', '.join(certificate_errors) or 'unknown verification error')
+                verify_dict = dict(event_dict)
+                verify_dict.update(_pj_ssl_info_to_dict(tp, ssl_info))
+                verify_dict['reason'] = ', '.join(certificate_errors) or reason
+                verify_dict['certificate_errors'] = certificate_errors
+                _add_event("SIPEngineTransportGotCertificateError", verify_dict)
         event_dict['reason'] = reason
         _add_event("SIPEngineTransportDidDisconnect", event_dict)
 
+
+cdef void _transport_state_cb(pjsip_transport *tp, pjsip_transport_state state, pjsip_transport_state_info_ptr_const info) noexcept nogil:
+    with gil:
+        _transport_state_cb_impl(tp, state, info)
 
 # globals
 cdef PJSTR h264_profile_level_id = PJSTR(b"profile-level-id")

@@ -24,3 +24,6 @@ include debian/source/format
 
 recursive-include docs *
 recursive-include deps *
+recursive-include sipsimple *.pxi
+recursive-include sipsimple *.pxd
+

@@ -166,13 +166,27 @@ cdef object _pj_str_to_bytes(pj_str_t pj_str):
     return PyBytes_FromStringAndSize(pj_str.ptr, pj_str.slen)
 
 cdef object _pj_str_to_str(pj_str_t pj_str):
-    return PyBytes_FromStringAndSize(pj_str.ptr, pj_str.slen).decode()
+    cdef bytes raw = PyBytes_FromStringAndSize(pj_str.ptr, pj_str.slen)
+    try:
+        return raw.decode('utf-8')
+    except UnicodeDecodeError:
+        # Remote SIP peers sometimes emit ISO-8859-1 in reason phrases,
+        # display names and other free-form fields. Fall back to latin-1
+        # (never raises) instead of crashing the engine thread.
+        return raw.decode('latin-1')
 
-cdef object _pj_buf_len_to_str(object buf, int buf_len):
+cdef object _pj_buf_len_to_str(char *buf, int buf_len):
     return PyBytes_FromStringAndSize(buf, buf_len)
 
-cdef object _buf_to_str(object buf):
-    return PyBytes_FromString(buf).decode()
+cdef object _buf_to_str(const char *buf):
+    cdef bytes raw
+    if buf == NULL:
+        return u''
+    raw = PyBytes_FromString(buf)
+    try:
+        return raw.decode('utf-8')
+    except UnicodeDecodeError:
+        return raw.decode('latin-1')
 
 cdef object _str_as_str(object string):
     if type(string) != bytes:
@@ -231,6 +245,12 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
     cdef int buf_len, status
     headers = {}
     header = <pjsip_hdr *> (<pj_list *> &msg.hdr).next
+
+    try:
+        skip_replaces = info_dict['skip_replaces']
+    except KeyError:
+        skip_replaces = False
+
     while header != &msg.hdr:
         header_name = _pj_str_to_str(header.name)
         header_data = None
@@ -288,12 +308,11 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
             header_data = FrozenReferToHeader_create(<pjsip_generic_string_hdr *> header)
         elif header_name == "Subject":
             header_data = FrozenSubjectHeader_create(<pjsip_generic_string_hdr *> header)
-        elif header_name == "Replaces":
+        elif header_name == "Replaces" and not skip_replaces:
             header_data = FrozenReplacesHeader_create(<pjsip_replaces_hdr *> header)
         # skip the following headers:
         elif header_name not in ("Authorization", "Proxy-Authenticate", "Proxy-Authorization", "WWW-Authenticate"):
-            hvalue = (<pjsip_generic_string_hdr *> header).hvalue
-            header_value = _pj_str_to_str(hvalue)
+            header_value = _pj_str_to_str((<pjsip_generic_string_hdr *> header).hvalue)
             header_data = FrozenHeader(header_name, header_value)
 
         if header_data is not None:

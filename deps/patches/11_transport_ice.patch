@@ -1,0 +1,121 @@
+diff -ruN pjproject-2.10/pjmedia/include/pjmedia/transport_ice.h pjsip/pjmedia/include/pjmedia/transport_ice.h
+--- pjproject-2.10/pjmedia/include/pjmedia/transport_ice.h	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/include/pjmedia/transport_ice.h	2021-02-06 17:09:28.151078775 +0100
+@@ -74,6 +74,28 @@
+ 			        pj_status_t status,
+ 				void *user_data);
+ 
++    /**
++     * This callback will be called when ICE state changes.
++     *
++     * @param tp       PJMEDIA ICE transport.
++     * @param prev     Previous state.
++     * @param curr     Current state.
++     */
++    void    (*on_ice_state)(pjmedia_transport *tp,
++                           pj_ice_strans_state prev,
++                           pj_ice_strans_state curr);
++
++    /**
++     * This callback will be called when ICE is stopped.
++     *
++     * @param tp       PJMEDIA ICE transport.
++     * @param reason   Reason for stopping ICE.
++     * @param err      Error code
++     */
++    void    (*on_ice_stop)(pjmedia_transport *tp,
++                          char *reason,
++                          pj_status_t err);
++
+ } pjmedia_ice_cb;
+ 
+ 
+@@ -237,6 +259,17 @@
+ 					 pjmedia_transport **p_tp);
+ 
+ /**
++ * Return the ICE stream transport associated with this PJMEDIA transport
++ *
++ * @param tp           Media transport instance.
++ *
++ * @return             Pointer to the pj_ice_strans instance associated with this
++ *                      media transport.
++ */
++PJ_DECL(pj_ice_strans*) pjmedia_ice_get_strans(pjmedia_transport *tp);
++
++
++/**
+  * Get the group lock for the ICE media transport.
+  *
+  * @param tp	        The ICE media transport.
+diff -ruN pjproject-2.10/pjmedia/src/pjmedia/transport_ice.c pjsip/pjmedia/src/pjmedia/transport_ice.c
+--- pjproject-2.10/pjmedia/src/pjmedia/transport_ice.c	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/pjmedia/src/pjmedia/transport_ice.c	2021-02-06 21:40:50.021656143 +0100
+@@ -163,6 +163,10 @@
+ 				pj_ice_strans_op op,
+ 			        pj_status_t status);
+ 
++static void ice_on_ice_state(pj_ice_strans *ice_st,
++                            pj_ice_strans_state prev,
++                            pj_ice_strans_state curr);
++
+ /*
+  * Clean up ICE resources.
+  */
+@@ -280,6 +284,7 @@
+     /* Configure ICE callbacks */
+     pj_bzero(&ice_st_cb, sizeof(ice_st_cb));
+     ice_st_cb.on_ice_complete = &ice_on_ice_complete;
++    ice_st_cb.on_ice_state = &ice_on_ice_state;
+     ice_st_cb.on_rx_data = &ice_on_rx_data;
+ 
+     /* Configure RTP socket buffer settings, if not set */
+@@ -314,6 +319,17 @@
+     return PJ_SUCCESS;
+ }
+ 
++/*
++ * Get the ICE stream transport associated with this media transport.
++ */
++PJ_DEF(pj_ice_strans*) pjmedia_ice_get_strans(pjmedia_transport *tp)
++{
++    struct transport_ice *tp_ice;
++
++    tp_ice = (struct transport_ice*) tp;
++    return tp_ice->ice_st;
++}
++
+ PJ_DEF(pj_grp_lock_t *) pjmedia_ice_get_grp_lock(pjmedia_transport *tp)
+ {
+     PJ_ASSERT_RETURN(tp, NULL);
+@@ -403,6 +419,10 @@
+ 		  "Stopping ICE, reason=%s", reason));
+     }
+ 
++    /* Notify application about ICE stop */
++    if (tp_ice->cb.on_ice_stop)
++        (*tp_ice->cb.on_ice_stop)(&tp_ice->base, (char *)reason, err);
++
+     if (tp_ice->ice_st) {
+ 	pj_ice_strans_stop_ice(tp_ice->ice_st);
+     }
+@@ -2115,6 +2135,19 @@
+     }
+ }
+ 
++static void ice_on_ice_state(pj_ice_strans *ice_st,
++                            pj_ice_strans_state prev,
++                            pj_ice_strans_state curr)
++{
++    struct transport_ice *tp_ice;
++
++    tp_ice = (struct transport_ice*) pj_ice_strans_get_user_data(ice_st);
++
++    /* Notify application */
++    if (tp_ice->cb.on_ice_state)
++       (*tp_ice->cb.on_ice_state)(&tp_ice->base, prev, curr);
++}
++
+ 
+ /* Simulate lost */
+ static pj_status_t transport_simulate_lost(pjmedia_transport *tp,

@@ -5,7 +5,7 @@ from application.notification import NotificationData
 from zope.interface import implementer
 
 from sipsimple.configuration.settings import SIPSimpleSettings
-from sipsimple.core import VideoTransport
+from sipsimple.core import SIPCoreError, VideoTransport
 from sipsimple.streams import InvalidStreamError
 from sipsimple.streams.rtp import RTPStream
 from sipsimple.threading import call_in_thread, run_in_twisted_thread
@@ -57,6 +57,10 @@ class VideoStream(RTPStream):
             else:
                 self._send_keyframes()
                 self.state = 'ESTABLISHED'
+                # For an opportunistic transport chain, decide which keying
+                # actually won (SDES vs ZRTP) BEFORE other observers run, so
+                # Session._NH_MediaStreamDidStart sees the resolved type.
+                self.encryption._resolve_opportunistic_type()
                 self.notification_center.post_notification('MediaStreamDidStart', sender=self)
 
     def validate_update(self, remote_sdp, stream_index):
@@ -72,12 +76,46 @@ class VideoStream(RTPStream):
 
     def update(self, local_sdp, remote_sdp, stream_index):
         with self._lock:
+            connection = remote_sdp.media[stream_index].connection or remote_sdp.connection
+            port_or_addr_changed = (
+                not self._rtp_transport.ice_active and
+                (connection.address != self._remote_rtp_address_sdp or
+                 self._remote_rtp_port_sdp != remote_sdp.media[stream_index].port)
+            )
+            old_remote = (self._remote_rtp_address_sdp, self._remote_rtp_port_sdp)
+            if port_or_addr_changed:
+                # Same in-place rebind as AudioStream.update() — see
+                # sipsimple/streams/rtp/audio.py and
+                # deps/patches/27_pjmedia_rebind_remote_peer.patch.
+                # Without this, a re-INVITE that renumbers the peer's
+                # video port silently keeps RTP flowing to the old
+                # destination because pjmedia's UDP transport stores
+                # the remote address from the initial attach.
+                try:
+                    self._rtp_transport.rebind_remote_peer(remote_sdp, stream_index)
+                except SIPCoreError as e:
+                    self._failure_reason = e.args[0] if e.args else str(e)
+                    self.state = "ENDED"
+                    self.notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context='update', reason=self._failure_reason))
+                    return
             new_direction = local_sdp.media[stream_index].direction
             self._check_hold(new_direction.decode(), False)
             self._transport.update_direction(new_direction)
             self._save_remote_sdp_rtp_info(remote_sdp, stream_index)
             self._transport.update_sdp(local_sdp, remote_sdp, stream_index)
             self._hold_request = None
+            if port_or_addr_changed:
+                # Surface the rebind in any RTP log (Blink's RTP Log
+                # window listens for RTPStreamDidChangeRTPParameters).
+                new_remote = (connection.address, remote_sdp.media[stream_index].port)
+                self.notification_center.post_notification(
+                    'RTPStreamDidChangeRTPParameters', sender=self,
+                    data=NotificationData(
+                        change='remote_peer_rebind',
+                        old_remote_address=old_remote[0],
+                        old_remote_port=old_remote[1],
+                        new_remote_address=new_remote[0],
+                        new_remote_port=new_remote[1]))
 
     def deactivate(self):
         with self._lock:
@@ -146,11 +184,27 @@ class VideoStream(RTPStream):
 
     def _NH_ExponentialTimerDidTimeout(self, notification):
         if self._transport is not None:
+            # Emit a keyframe from our encoder (so the peer can decode us) and
+            # also ask the peer for one via RTCP PLI (so we can decode them).
+            # The request half matters most for the call *offerer*: by the time
+            # our decoder is created (after the 200 OK is processed) the
+            # answerer has usually already finished its own start-time keyframe
+            # burst, so without a proactive PLI we would sit on undecodable
+            # P-frames and never display the remote video.  send_keyframe alone
+            # only helped the peer see us, which is why outgoing calls showed no
+            # incoming video while incoming calls worked.
             self._transport.send_keyframe()
+            self._transport.request_keyframe()
 
     def _create_transport(self, rtp_transport, remote_sdp=None, stream_index=None):
         settings = SIPSimpleSettings()
         available_codecs = list(self.session.account.rtp.video_codec_list or settings.rtp.video_codec_list)
+        if remote_sdp is not None:
+            # enforce self.session.account.rtp.video_codec_list preference order
+            remote_codecs = list(remote_sdp.media[stream_index or 0].codec_list)
+            preferred_codec = next((codec for codec in available_codecs if codec in remote_codecs), None)
+            if preferred_codec is not None:
+                available_codecs = [preferred_codec] + [codec for codec in available_codecs if codec not in remote_codecs]
         codecs = list(c.encode() for c in available_codecs)
         return VideoTransport(rtp_transport, remote_sdp=remote_sdp, sdp_index=stream_index or 0, codecs=codecs)
 

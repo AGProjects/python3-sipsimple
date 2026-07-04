@@ -1,0 +1,31 @@
+# 02_zsrtp_link.patch
+#
+# Wire libzsrtp / libzrtpcpp into the pjsip build so the
+# transport_zrtp.o we add via patch 08/12 can link against the
+# actual ZRTP engine. Ported from 2.12's 01_build_system.patch.
+#
+# Two pieces of integration:
+#   1. third_party/build/os-auto.mak.in -> DIRS += zsrtp
+#      (pjsip 2.17 sets OS_NAME := auto so common.mak picks up
+#       os-auto.mak; os-darwinos.mak / os-linux.mak are unused.)
+#   2. build.mak.in -> APP_THIRD_PARTY_LIBS += -lzsrtp...
+#      so the final _core.so link pulls in the ZRTP engine plus
+#      its libstdc++ / libsqlite3 deps.
+--- pjsip_orig/third_party/build/os-auto.mak.in
++++ pjsip/third_party/build/os-auto.mak.in
+@@ -152,3 +152,4 @@
+ endif
+ endif
+ endif
++DIRS += zsrtp
+--- pjsip_orig/build.mak.in
++++ pjsip/build.mak.in
+@@ -172,6 +172,8 @@
+
+ # Additional flags
+ @ac_build_mak_vars@
++APP_THIRD_PARTY_LIB_FILES += $(PJ_DIR)/third_party/lib/libzsrtp-$(LIB_SUFFIX)
++APP_THIRD_PARTY_LIBS += -lzsrtp-$(TARGET_NAME) -lsqlite3 -lstdc++
+
+ #
+ # Video

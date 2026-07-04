@@ -1,0 +1,69 @@
+# 40_videodev_extra_objs.patch
+#
+# Patch 06 (video_device) introduces avf_dev.m (Mac camera capture),
+# fb_dev.c (framebuffer renderer), null_dev.c (null device) and
+# dshow_filter.cpp (Windows DShow filter), but does NOT extend
+# pjmedia/build/Makefile's PJMEDIA_VIDEODEV_OBJS to actually build
+# them.
+#
+# Symptom on Darwin (3 June 2026):
+#   ImportError: dlopen(... sipsimple/core/_core.cpython-311-darwin.so):
+#     symbol not found in flat namespace '_pjmedia_avf_factory'
+#
+# Root cause: setup_pjsip.py defines PJMEDIA_VIDEO_DEV_HAS_AVF=1 on
+# Darwin, so videodev.c emits the extern decl + factory registration
+# referencing pjmedia_avf_factory. But avf_dev.m is never compiled
+# into libpjmedia-videodev.a, so the symbol is unresolved at link
+# time.
+#
+# Symptom on Linux Trixie / aarch64 (4 June 2026):
+#   gcc: fatal error: cannot execute 'cc1obj':
+#                     posix_spawnp: No such file or directory
+#   make[3]: *** [.../rules.mak:158: output/.../avf_dev.o] Error 1
+#
+# Root cause: a previous iteration of this patch added avf_dev.o
+# unconditionally to PJMEDIA_VIDEODEV_OBJS.  avf_dev.m is Objective-C;
+# the .m -> .o rule invokes the Objective-C compiler frontend
+# (`cc1obj`), which isn't installed on stock Linux GCC.  fb_dev.c and
+# null_dev.c are plain C and harmless to compile on any platform
+# (their bodies are #if-guarded), but the Objective-C and Windows
+# DShow files MUST be platform-gated at the Makefile level - the
+# inner #if guard doesn't help when the compiler frontend itself
+# isn't available.
+#
+# Fix
+# ---
+#  * Add fb_dev.o and null_dev.o unconditionally - both are .c files,
+#    #if-guarded inside, empty .o on disabled platforms.  Fixes the
+#    Darwin link error for pjmedia_avf_factory (avf_dev.m needs
+#    fb_dev.h for its declarations) and exposes the framebuffer
+#    renderer on every platform.
+#  * Add avf_dev.o only when TARGET_NAME contains "darwin" (the
+#    autotool target triple, e.g. aarch64-apple-darwin25.4.0).  This
+#    is the Objective-C piece that needs cc1obj.  We can't key off
+#    OS_NAME because pjsip's build.mak leaves OS_NAME=auto and the
+#    real platform info lives in TARGET_NAME.
+#  * Add dshow_filter.o only when TARGET_NAME contains "mingw".
+#    DShow has no Linux/Mac equivalent and the build needs MS headers.
+#
+# This belongs conceptually in patch 01 (build_system) which hasn't
+# been rebased for 2.17. Slot 40 because new 2.17-only patches use
+# NN >= 40 per the README convention.
+#
+--- pjsip_orig/pjmedia/build/Makefile
++++ pjsip/pjmedia/build/Makefile
+@@ -106,6 +106,13 @@
+ #
+ export PJMEDIA_VIDEODEV_SRCDIR = ../src/pjmedia-videodev
+ export PJMEDIA_VIDEODEV_OBJS += videodev.o errno.o avi_dev.o ffmpeg_dev.o \
+-				colorbar_dev.o v4l2_dev.o opengl_dev.o \
++				colorbar_dev.o v4l2_dev.o opengl_dev.o \
++				fb_dev.o null_dev.o \
+ 				util.o
++ifneq ($(findstring darwin,$(TARGET_NAME)),)
++export PJMEDIA_VIDEODEV_OBJS += avf_dev.o
++endif
++ifneq ($(findstring mingw,$(TARGET_NAME)),)
++export PJMEDIA_VIDEODEV_OBJS += dshow_filter.o
++endif
+ export PJMEDIA_VIDEODEV_CFLAGS += $(_CFLAGS)

@@ -20,7 +20,12 @@ class AudioStream(RTPStream):
         super(AudioStream, self).__init__()
 
         from sipsimple.application import SIPApplication
-        self.mixer = SIPApplication.voice_audio_mixer
+        from sipsimple.streams.rtp import stream_creation_context
+        # Born on the mixer chosen by the application's factory (set per-thread
+        # in Session.init_incoming), or the default voice mixer. Building the
+        # bridge on the right mixer here avoids moving it later.
+        mixer = getattr(stream_creation_context, 'mixer', None)
+        self.mixer = mixer if mixer is not None else SIPApplication.voice_audio_mixer
         self.bridge = AudioBridge(self.mixer)
         self.device = AudioDevice(self.mixer)
         self._audio_rec = None
@@ -55,6 +60,21 @@ class AudioStream(RTPStream):
     def recorder(self):
         return self._audio_rec
 
+    @property
+    def signal_level(self):
+        """Return (tx_level, rx_level) for this stream as a tuple of ints in
+        the range 0..255, or (0, 0) if the stream is not currently attached
+        to a conference bridge slot. rx_level is how loud audio is arriving
+        from the remote peer; tx_level is how loud audio is being sent to it.
+        """
+        transport = self._transport
+        if transport is None or transport.slot is None:
+            return (0, 0)
+        try:
+            return self.mixer.get_signal_level(transport.slot)
+        except Exception:
+            return (0, 0)
+
     def start(self, local_sdp, remote_sdp, stream_index):
         with self._lock:
             if self.state != "INITIALIZED":
@@ -67,6 +87,10 @@ class AudioStream(RTPStream):
                 self.state = 'WAIT_ICE'
             else:
                 self.state = 'ESTABLISHED'
+                # For an opportunistic transport chain, decide which keying
+                # actually won (SDES vs ZRTP) BEFORE other observers run, so
+                # Session._NH_MediaStreamDidStart sees the resolved type.
+                self.encryption._resolve_opportunistic_type()
                 self.notification_center.post_notification('MediaStreamDidStart', sender=self)
 
     def validate_update(self, remote_sdp, stream_index):
@@ -78,31 +102,52 @@ class AudioStream(RTPStream):
         with self._lock:
             connection = remote_sdp.media[stream_index].connection or remote_sdp.connection
             if not self._rtp_transport.ice_active and (connection.address != self._remote_rtp_address_sdp or self._remote_rtp_port_sdp != remote_sdp.media[stream_index].port):
-                settings = SIPSimpleSettings()
-                if self._audio_rec is not None:
-                    self.bridge.remove(self._audio_rec)
-                old_consumer_slot = self.consumer_slot
-                old_producer_slot = self.producer_slot
-                self.notification_center.remove_observer(self, sender=self._transport)
-                self._transport.stop()
-                available_codecs = self.session.account.rtp.audio_codec_list or settings.rtp.audio_codec_list
-                codecs = list(c.encode() for c in available_codecs)
+                # Port and/or address change re-INVITE.
+                #
+                # The old codepath teared down AudioTransport, then built a
+                # new one against the same RTPTransport. After media_stop()
+                # the SRTP wrapper's transport_get_info() returns a zeroed
+                # sock_info, the new AudioTransport's _get_info reads it,
+                # pjmedia_endpt_create_base_sdp fails with PJ_EAFNOTSUP, and
+                # the application sees "Could not generate base SDP
+                # (PJ_EAFNOTSUP)" with the audio stream dead. Same
+                # behaviour on stock python-sipsimple and on Blink.
+                #
+                # New codepath: rebind the underlying UDP transport's
+                # rem_rtp_addr / rem_rtcp_addr in place via
+                # pjmedia_transport_rebind_remote_peer (exposed as
+                # RTPTransport.rebind_remote_peer). SRTP keys, ROC,
+                # AEAD wrapper state and the AudioTransport itself
+                # all survive. See deps/patches/27_pjmedia_rebind_remote_peer.patch.
+                old_remote = (self._remote_rtp_address_sdp, self._remote_rtp_port_sdp)
+                new_remote = (connection.address, remote_sdp.media[stream_index].port)
                 try:
-                    self._transport = AudioTransport(self.mixer, self._rtp_transport, remote_sdp, stream_index, codecs=codecs)
+                    self._rtp_transport.rebind_remote_peer(remote_sdp, stream_index)
                 except SIPCoreError as e:
+                    self._failure_reason = e.args[0] if e.args else str(e)
                     self.state = "ENDED"
-                    self._failure_reason = e.args[0]
                     self.notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context='update', reason=self._failure_reason))
                     return
-                self.notification_center.add_observer(self, sender=self._transport)
-                self._transport.start(local_sdp, remote_sdp, stream_index, timeout=settings.rtp.timeout)
-                self.notification_center.post_notification('AudioPortDidChangeSlots', sender=self, data=NotificationData(consumer_slot_changed=True, producer_slot_changed=True,
-                                                                                                                         old_consumer_slot=old_consumer_slot, new_consumer_slot=self.consumer_slot,
-                                                                                                                         old_producer_slot=old_producer_slot, new_producer_slot=self.producer_slot))
+                # _save_remote_sdp_rtp_info runs unconditionally below.
+                # If the peer is sending us a hold-encoded c=0.0.0.0 with
+                # sendrecv, treat it as recvonly so we don't blast media
+                # at a black-hole.
                 if connection.address == b'0.0.0.0' and remote_sdp.media[stream_index].direction == b'sendrecv':
                     self._transport.update_direction(b'recvonly')
+                else:
+                    new_direction = local_sdp.media[stream_index].direction
+                    self._transport.update_direction(new_direction)
                 self._check_hold(self._transport.direction.decode(), False)
-                self.notification_center.post_notification('RTPStreamDidChangeRTPParameters', sender=self)
+                # Surface the change in any RTP log (Blink's RTP Log
+                # window listens for RTPStreamDidChangeRTPParameters).
+                self.notification_center.post_notification(
+                    'RTPStreamDidChangeRTPParameters', sender=self,
+                    data=NotificationData(
+                        change='remote_peer_rebind',
+                        old_remote_address=old_remote[0],
+                        old_remote_port=old_remote[1],
+                        new_remote_address=new_remote[0],
+                        new_remote_port=new_remote[1]))
             else:
                 new_direction = local_sdp.media[stream_index].direction
                 self._transport.update_direction(new_direction)
@@ -183,7 +228,13 @@ class AudioStream(RTPStream):
 
     def _create_transport(self, rtp_transport, remote_sdp=None, stream_index=None):
         settings = SIPSimpleSettings()
-        available_codecs = self.session.account.rtp.audio_codec_list or settings.rtp.audio_codec_list
+        available_codecs = list(self.session.account.rtp.audio_codec_list or settings.rtp.audio_codec_list)
+        if remote_sdp is not None:
+            # Enforce audio_codec_list preference order
+            remote_codecs = list(remote_sdp.media[stream_index or 0].codec_list)
+            preferred_codec = next((codec for codec in available_codecs if codec in remote_codecs), None)
+            if preferred_codec is not None:
+                available_codecs = [preferred_codec] + [codec for codec in available_codecs if codec not in remote_codecs]
         codecs = list(c.encode() for c in available_codecs)
         return AudioTransport(self.mixer, rtp_transport, remote_sdp=remote_sdp, sdp_index=stream_index or 0, codecs=codecs)
 
@@ -233,7 +284,13 @@ class AudioStream(RTPStream):
             self._audio_rec = None
 
     def _pause(self):
-        self.bridge.remove(self)
+        try:
+            self.bridge.remove(self)
+        except ValueError:
+            pass
 
     def _resume(self):
-        self.bridge.add(self)
+        try:
+            self.bridge.add(self)
+        except ValueError:
+            pass

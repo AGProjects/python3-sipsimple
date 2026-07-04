@@ -17,15 +17,27 @@ include "_core.referral.pxi"
 include "_core.sdp.pxi"
 include "_core.mediatransport.pxi"
 
+import cython
+
 # constants
 
 PJ_VERSION = pj_get_version()
 PJ_SVN_REVISION = int(PJ_SVN_REV)
-CORE_REVISION = 210
+# Track the underlying pjsip build (212 or 217) so the runtime banner
+# ("core version 217.N") matches what _core.so actually links against.
+# The compatibility gate in sipsimple/core/__init__.py accepts both.
+CORE_REVISION = PJ_SVN_REVISION
+
+# Local build counter. Bump CORE_BUILD each time you cut a new _core.so
+# so the runtime banner ("core version <rev>.N") proves the new code is
+# loaded.
+CORE_BUILD = 15
+
+CYTHON_VERSION = cython.__version__
 
 # exports
 
-__all__ = ["PJ_VERSION", "PJ_SVN_REVISION", "CORE_REVISION",
+__all__ = ["PJ_VERSION", "PJ_SVN_REVISION", "CORE_REVISION", "CORE_BUILD", "CYTHON_VERSION",
            "SIPCoreError", "PJSIPError", "PJSIPTLSError", "SIPCoreInvalidStateError",
            "AudioMixer", "ToneGenerator", "RecordingWaveFile", "WaveFile", "MixerPort",
            "VideoCamera", "FrameBufferVideoRenderer",

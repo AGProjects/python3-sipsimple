@@ -10,7 +10,14 @@ import os
 import random
 import socket
 import weakref
-import gevent
+
+try:
+    import gevent
+except ImportError:
+    from xcaplib.green import XCAPClient
+    from sipsimple.threading.green import Worker
+else:
+    from xcaplib.client import XCAPClient
 
 from io import StringIO
 from collections import OrderedDict
@@ -24,7 +31,6 @@ from application.python import Null
 from eventlib import api, coros, proc
 from eventlib.green.httplib import BadStatusLine
 from twisted.internet.error import ConnectionLost
-from xcaplib.client import XCAPClient
 from xcaplib.error import HTTPError
 from zope.interface import implementer
 
@@ -1844,8 +1850,18 @@ class XCAPManager(object):
         NotificationCenter().post_notification('XCAPManagerDidReloadData', sender=self, data=data)
 
     def _fetch_documents(self, documents):
-        jobs = [gevent.spawn(document.fetch) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
-        gevent.joinall(jobs, timeout=15)
+        try:
+            jobs = [gevent.spawn(document.fetch) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
+            gevent.joinall(jobs, timeout=15)
+        except NameError:
+            workers = [Worker.spawn(document.fetch) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
+            try:
+                while workers:
+                    worker = workers.pop()
+                    worker.wait()
+            finally:
+                for worker in workers:
+                    worker.wait_ex()
 
     def _save_journal(self):
         try:

@@ -1,0 +1,138 @@
+diff -ruN pjproject-2.10/base_rev pjsip/base_rev
+--- pjproject-2.10/base_rev	1970-01-01 01:00:00.000000000 +0100
++++ pjsip/base_rev	2021-02-07 00:21:58.163902742 +0100
+@@ -0,0 +1 @@
++212
+--- pjproject-2.10/pjmedia/include/pjmedia/config_auto.h.in	2021-02-05 09:00:45.241108718 +0100
++++ pjsip/pjmedia/include/pjmedia/config_auto.h.in	2021-02-22 21:46:52.232215546 +0100
+@@ -36,6 +36,22 @@
+ #undef PJMEDIA_HAS_G711_CODEC
+ #endif
+ 
++#define PJMEDIA_HAS_VIDEO		1
++#define PJMEDIA_HAS_OPUS_CODEC		1
++#define PJMEDIA_HAS_VPX_CODEC_VP9	1
++#define PJMEDIA_HAS_FFMPEG_VID_CODEC	1
++#define PJMEDIA_HAS_LIBWEBRTC		1
++#define PJMEDIA_HAS_WEBRTC_AEC		1
++
++#if defined(PJMEDIA_VIDEO_DEV_HAS_DARWIN) && (PJMEDIA_VIDEO_DEV_HAS_DARWIN != 0)
++#define PJMEDIA_VIDEO_DEV_HAS_AVF	1
++#define PJMEDIA_VIDEO_HAS_VTOOLBOX	1
++#define PJMEDIA_HAS_VID_TOOLBOX_CODEC	1
++#endif
++
++#ifdef PJMEDIA_USE_OLD_FFMPEG
++#undef PJMEDIA_USE_OLD_FFMPEG
++#endif
+ 
+ #endif	/* __PJMEDIA_CONFIG_AUTO_H_ */
+
+diff -ruN pjproject-2.10/pjmedia/build/Makefile pjproject-2.10/pjmedia/build/Makefile
+--- pjproject-2.10/pjmedia/build/Makefile	2021-02-05 09:00:45.241108718 +0100
++++ pjsip/pjmedia/build/Makefile	2021-02-22 21:46:52.232215546 +0100
+@@ -72,8 +72,8 @@
+ 			sound_legacy.o sound_port.o stereo_port.o stream_common.o \
+ 			stream.o stream_info.o tonegen.o transport_adapter_sample.o \
+ 			transport_ice.o transport_loop.o transport_srtp.o transport_udp.o \
+-			types.o vid_codec.o vid_codec_util.o \
+-			vid_port.o vid_stream.o vid_stream_info.o vid_conf.o \
++			transport_zrtp.o types.o vid_codec.o vid_codec_util.o mixer_port.o \
++			vid_port.o vid_stream.o vid_tee.o vid_stream_info.o vid_conf.o \
+ 			wav_player.o wav_playlist.o wav_writer.o wave.o \
+ 			wsola.o audiodev.o videodev.o
+ 
+@@ -106,7 +106,7 @@
+ export PJMEDIA_VIDEODEV_SRCDIR = ../src/pjmedia-videodev
+ export PJMEDIA_VIDEODEV_OBJS += videodev.o errno.o avi_dev.o ffmpeg_dev.o \
+ 				colorbar_dev.o v4l2_dev.o opengl_dev.o \
+-				util.o
++				util.o fb_dev.o null_dev.o
+ export PJMEDIA_VIDEODEV_CFLAGS += $(_CFLAGS)
+ export PJMEDIA_VIDEODEV_CXXFLAGS += $(_CXXFLAGS)
+ export PJMEDIA_VIDEODEV_LDFLAGS += $(PJMEDIA_LDLIB) \
+diff -ruN pjproject-2.10/third_party/build/os-auto.mak.in pjsip/third_party/build/os-auto.mak.in
+--- pjproject-2.10/third_party/build/os-auto.mak.in	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/third_party/build/os-auto.mak.in	2021-02-06 16:09:49.029693848 +0100
+@@ -73,6 +73,8 @@
+ endif
+ endif
+
++DIRS += zsrtp
++
+ ifneq (@ac_no_webrtc@,1)
+ ifeq (@ac_external_webrtc@,1)
+ # External webrtc
+diff -ruN pjproject-2.10/build.mak.in pjsip/build.mak.in
+--- pjproject-2.10/build.mak.in	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/build.mak.in	2021-02-06 16:09:49.029693848 +0100
+@@ -148,6 +148,19 @@
+ endif
+ endif
+
++#ifneq (@ac_no_zsrtp@,1)
++ifeq (@ac_external_zsrtp@,1)
++APP_THIRD_PARTY_EXT += -lzsrtp
++else
++APP_THIRD_PARTY_LIB_FILES += $(PJ_DIR)/third_party/lib/libzsrtp-$(LIB_SUFFIX)
++ifeq ($(PJ_SHARED_LIBRARIES),)
++APP_THIRD_PARTY_LIBS += -lzsrtp-$(TARGET_NAME) -lsqlite3 -lstdc++
++else
++APP_THIRD_PARTY_LIBS += -lzsrtp
++APP_THIRD_PARTY_LIB_FILES += $(PJ_DIR)/third_party/lib/libzsrtp.$(SHLIB_SUFFIX).$(PJ_VERSION_MAJOR) $(PJ_DIR)/third_party/lib/libzsrtp.$(SHLIB_SUFFIX)
++endif
++endif
++#endif
+
+ # Additional flags
+ @ac_build_mak_vars@
+diff -ruN pjproject-2.10/third_party/build/os-darwinos.mak pjsip/third_party/build/os-darwinos.mak
+--- pjproject-2.10/third_party/build/os-darwinos.mak	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/third_party/build/os-darwinos.mak	2021-02-06 16:00:34.131596843 +0100
+@@ -5,5 +5,6 @@
+ DIRS += g7221
+ DIRS += srtp
+ DIRS += resample
++DIRS += zsrtp 
+ 
+ 
+diff -ruN pjproject-2.10/third_party/build/os-linux.mak pjsip/third_party/build/os-linux.mak
+--- pjproject-2.10/third_party/build/os-linux.mak	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/third_party/build/os-linux.mak	2021-02-06 15:59:58.326708529 +0100
+@@ -5,5 +5,6 @@
+ DIRS += g7221
+ DIRS += srtp
+ DIRS += resample
++DIRS += zsrtp
+ 
+ 
+diff -ruN pjproject-2.10/third_party/build/os-win32.mak pjsip/third_party/build/os-win32.mak
+--- pjproject-2.10/third_party/build/os-win32.mak	2020-02-14 10:48:27.000000000 +0100
++++ pjsip/third_party/build/os-win32.mak	2021-02-06 16:00:20.023246385 +0100
+@@ -5,5 +5,6 @@
+ DIRS += g7221
+ DIRS += srtp
+ DIRS += resample
++DIRS += zsrtp 
+ 
+ 
+--- pjsip/pjmedia/build/os-darwinos.mak	2021-03-22 07:33:02.058097009 +0100
++++ pjsip/pjmedia/build/os-darwinos.mak	2021-03-22 07:48:59.147298176 +0100
+@@ -139,4 +139,5 @@
+ export CFLAGS += -DPJMEDIA_SOUND_IMPLEMENTATION=PJMEDIA_SOUND_NULL_SOUND
+ endif
+ 
++export PJMEDIA_VIDEODEV_OBJS += avf_dev.o
+
+--- pjsip/pjmedia/build/os-auto.mak.in	2021-03-26 22:08:01.739146366 +0100
++++ pjsip/pjmedia/build/os-auto.mak.in	2021-03-26 22:07:16.701862482 +0100
+@@ -302,7 +302,8 @@
+ #
+ ifneq (,$(filter $(AC_PJMEDIA_VIDEO),darwin_os))
+ # Mac and iPhone OS specific, use obj-c
+-export PJMEDIA_VIDEODEV_OBJS += sdl_dev_m.o
++export PJMEDIA_VIDEODEV_OBJS += sdl_dev_m.o avf_dev.o
++export CFLAGS += -DPJMEDIA_VIDEO_DEV_HAS_AVF=1 -DPJMEDIA_VIDEO_HAS_VTOOLBOX=1 -DPJMEDIA_HAS_VID_TOOLBOX_CODEC=1 -DPJMEDIA_USE_OLD_FFMPEG=0
+ else
+ # Other platforms, compile .c
+ export PJMEDIA_VIDEODEV_OBJS += sdl_dev.o

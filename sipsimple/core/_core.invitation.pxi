@@ -49,6 +49,11 @@ cdef class TransferRequestCallbackTimer(Timer):
         self.rdata = rdata
 
 
+cdef class MessageCallbackTimer(Timer):
+    def __init__(self, rdata_dict):
+        self.rdata_dict = rdata_dict
+
+
 class DialogID(tuple):
     call_id = property(itemgetter(0))
     local_tag = property(itemgetter(1))
@@ -319,6 +324,124 @@ cdef class Invitation:
         if status != 0:
             raise PJSIPError(error_message, status)
 
+    cdef int process_incoming_message(self, PJSIPUA ua, pjsip_rx_data *rdata) except -1:
+        # Handle an in-dialog MESSAGE request. PJSIP's invite session module
+        # does not claim MESSAGE in its on_rx_request, so the dialog dispatch
+        # loop would auto-respond 500 ("Unhandled by dialog usages") unless we
+        # send a final response synchronously here, before _Invitation_cb_tsx
+        # _state_changed returns. After acking 200 OK, we hand the parsed
+        # request up to Python via a SIPInvitationGotMessage notification,
+        # which the Session forwards as SIPSessionGotMessage.
+        cdef pjsip_tx_data *tdata
+        cdef pjsip_transaction *initial_tsx
+        cdef int status
+        cdef char *error_message
+        cdef dict rdata_dict = dict(obj=self)
+        cdef MessageCallbackTimer timer
+
+        # Snapshot the message into a Python dict BEFORE we send the response,
+        # while rdata is guaranteed to still be valid. _pjsip_msg_to_dict
+        # fills headers (incl. Content-Type as FrozenContentTypeHeader) and
+        # body (raw bytes).
+        _pjsip_msg_to_dict(rdata.msg_info.msg, rdata_dict)
+
+        initial_tsx = pjsip_rdata_get_tsx(rdata)
+        with nogil:
+            status = pjsip_dlg_create_response(self._dialog, rdata, 200, NULL, &tdata)
+            if status != 0:
+                pjsip_tsx_terminate(initial_tsx, 500)
+                error_message = "Could not create response for incoming MESSAGE"
+            else:
+                status = pjsip_dlg_send_response(self._dialog, initial_tsx, tdata)
+                if status != 0:
+                    error_message = "Could not send response"
+        if status != 0:
+            raise PJSIPError(error_message, status)
+
+        # Deliver the notification out of the PJSIP thread.
+        timer = MessageCallbackTimer(rdata_dict)
+        timer.schedule(0, <timer_callback>self._cb_message, self)
+        return 0
+
+    def send_message(self, str content_type not None, content not None, list extra_headers not None=list()):
+        """Send a SIP MESSAGE *inside* this established dialog.
+
+        PJSIP's pjsip_dlg_create_request fills in everything dialog-bound
+        from the dialog's recorded state, so we don't have to:
+          * Request-URI = dlg->target  (= the peer's most recent Contact,
+            captured from the dialog-establishing INVITE/2xx)
+          * Route set   = dlg->route_set (Record-Route reversed)
+          * From / To   = local URI + local tag, remote URI + remote tag
+          * Call-ID     = the dialog's Call-ID
+          * CSeq        = next of dlg->local.cseq
+
+        Use this from a Session-level wrapper after the call is connected.
+        The peer receives this as an in-dialog MESSAGE on the same Call-ID
+        and (on python3-sipsimple) it surfaces through the matching
+        SIPSessionGotMessage notification — symmetric with the inbound
+        path added in process_incoming_message().
+        """
+        cdef int status
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjsip_tx_data *tdata = NULL
+        cdef pjsip_method method
+        cdef pjsip_msg_body *body
+        cdef PJSTR method_name = PJSTR(b"MESSAGE")
+        cdef PJSTR type_pj
+        cdef PJSTR subtype_pj
+        cdef PJSTR body_pj
+        cdef PJSIPUA ua
+
+        ua = self._check_ua()
+        if ua is None:
+            raise SIPCoreError("Invitation has no UA")
+        if self._dialog == NULL:
+            raise SIPCoreError("Invitation has no dialog yet")
+        if self.state not in ("connected", "received_proposal", "sent_proposal", "received_proposal_request", "early"):
+            raise SIPCoreError("Cannot send in-dialog MESSAGE in state %r" % self.state)
+
+        if "/" not in content_type:
+            raise SIPCoreError("content_type must be 'type/subtype'")
+        type_str, _, subtype_str = content_type.partition("/")
+        type_pj = PJSTR(type_str.encode("ascii"))
+        subtype_pj = PJSTR(subtype_str.encode("ascii"))
+        if isinstance(content, str):
+            body_pj = PJSTR(content.encode("utf-8"))
+        elif isinstance(content, (bytes, bytearray)):
+            body_pj = PJSTR(bytes(content))
+        else:
+            raise SIPCoreError("content must be str or bytes")
+
+        pjsip_method_init_np(&method, &method_name.pj_str)
+
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            with nogil:
+                status = pjsip_dlg_create_request(self._dialog, &method, -1, &tdata)
+            if status != 0:
+                raise PJSIPError("Could not create in-dialog MESSAGE", status)
+            body = pjsip_msg_body_create(tdata.pool, &type_pj.pj_str, &subtype_pj.pj_str, &body_pj.pj_str)
+            if body == NULL:
+                with nogil:
+                    pjsip_tx_data_dec_ref(tdata)
+                raise SIPCoreError("Could not create message body")
+            tdata.msg.body = body
+            if extra_headers:
+                _add_headers_to_tdata(tdata, extra_headers)
+            with nogil:
+                status = pjsip_dlg_send_request(self._dialog, tdata, -1, NULL)
+            if status != 0:
+                # pjsip_dlg_send_request frees tdata on failure paths internally;
+                # don't double-free here.
+                raise PJSIPError("Could not send in-dialog MESSAGE", status)
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+        return 0
+
     def send_invite(self, SIPURI request_uri not None, FromHeader from_header not None, ToHeader to_header not None, RouteHeader route_header not None, ContactHeader contact_header not None,
                     SDPSession sdp not None, Credentials credentials=None, list extra_headers not None=list(), timeout=None):
         cdef int status
@@ -362,7 +485,18 @@ cdef class Invitation:
             to_header_parameters.pop("tag", None)
             to_header.parameters = {}
             to_header_str = PJSTR(to_header.body.encode())
-            contact_str = PJSTR(str(self.local_contact_header.body).encode())
+            # Strip the Contact header parameters before serializing the string
+            # handed to pjsip_dlg_create_uac. The parameters are applied to the
+            # dialog's local contact separately below (via _dict_to_pjsip_param),
+            # so leaving them in the parse string is redundant; worse, a header
+            # parameter such as +sip.instance="<urn:uuid:...>" makes
+            # pjsip_dlg_create_uac fail to parse the contact and return
+            # PJSIP_EINVALIDURI. This mirrors the from_header/to_header handling
+            # above. self.local_contact_header (frozen above) keeps the full
+            # contact, including parameters, for reference.
+            contact_header_parameters = contact_header.parameters.copy()
+            contact_header.parameters = {}
+            contact_str = PJSTR(str(contact_header.body).encode())
             self.request_uri = FrozenSIPURI.new(request_uri)
             struri = str(request_uri)
             request_uri_str = PJSTR(struri.encode())
@@ -384,7 +518,7 @@ cdef class Invitation:
                 self._dialog.local.contact.expires = contact_header.expires
             if contact_header.q is not None:
                 self._dialog.local.contact.q1000 = int(contact_header.q*1000)
-            contact_parameters = contact_header.parameters.copy()
+            contact_parameters = contact_header_parameters
             contact_parameters.pop("q", None)
             contact_parameters.pop("expires", None)
             _dict_to_pjsip_param(contact_parameters, &self._dialog.local.contact.other_param, self._dialog.pool)
@@ -824,10 +958,24 @@ cdef class Invitation:
 
     def __dealloc__(self):
         cdef Timer timer
+        cdef PJSIPUA ua
 
         self._do_dealloc()
-        if self._lock != NULL:
+        # The mutex is allocated from the PJSIP endpoint's memory pool. If the
+        # PJSIPUA has already been deallocated (e.g. the engine was stopped
+        # before this Invitation got garbage collected, which happens routinely
+        # during interpreter shutdown), that pool has already been freed and
+        # self._lock is dangling memory. Calling pj_mutex_destroy on it would
+        # invoke pthread_mutex_destroy on a corrupted lock and abort the
+        # process. Only destroy the mutex while the UA (and therefore the pool
+        # that owns it) is still alive.
+        try:
+            ua = _get_ua()
+        except SIPCoreError:
+            ua = None
+        if ua is not None and self._lock != NULL:
             pj_mutex_destroy(self._lock)
+        self._lock = NULL
 
         timer = Timer()
         try:
@@ -1047,6 +1195,18 @@ cdef class Invitation:
             with nogil:
                 pj_mutex_unlock(lock)
 
+        return 0
+
+    cdef int _cb_message(self, MessageCallbackTimer timer) except -1:
+        # Posted from the reactor thread after we have already answered the
+        # in-dialog MESSAGE with 200 OK in process_incoming_message. The
+        # rdata_dict carries headers, body, request_uri, etc. — same shape
+        # as out-of-dialog SIPEngineGotMessage so callers can reuse parsing.
+        cdef PJSIPUA ua
+        ua = self._check_ua()
+        if ua is None:
+            return 0
+        _add_event("SIPInvitationGotMessage", timer.rdata_dict)
         return 0
 
     cdef int _cb_sdp_done(self, SDPCallbackTimer timer) except -1:
@@ -1279,7 +1439,7 @@ cdef class Invitation:
             raise PJSIPError("failed to acquire lock", status)
         try:
             prev_state = self.transfer_state
-            timer_state = timer.state.decode()
+            timer_state = timer.state.decode() if isinstance(timer.state, bytes) else timer.state
 
             self._set_transfer_state(timer_state)
 
@@ -1391,7 +1551,7 @@ cdef class Invitation:
 # Callback functions
 #
 
-cdef void _Invitation_cb_state(pjsip_inv_session *inv, pjsip_event *e) with gil:
+cdef void _Invitation_cb_state_impl(pjsip_inv_session *inv, pjsip_event *e) with gil:
     cdef pjsip_rx_data *rdata = NULL
     cdef pjsip_tx_data *tdata = NULL
     cdef object state
@@ -1453,6 +1613,9 @@ cdef void _Invitation_cb_state(pjsip_inv_session *inv, pjsip_event *e) with gil:
                 originator = "remote"
             if tdata != NULL:
                 tdata_dict = dict()
+                # for whatever reason, we cannot build a proper Replaces header
+                # for outgoing so we will make a generic one
+                tdata_dict['skip_replaces'] = True
                 _pjsip_msg_to_dict(tdata.msg, tdata_dict)
                 originator = "local"
             try:
@@ -1463,7 +1626,11 @@ cdef void _Invitation_cb_state(pjsip_inv_session *inv, pjsip_event *e) with gil:
     except:
         ua._handle_exception(1)
 
-cdef void _Invitation_cb_sdp_done(pjsip_inv_session *inv, int status) with gil:
+cdef void _Invitation_cb_state(pjsip_inv_session *inv, pjsip_event *e) noexcept nogil:
+    with gil:
+        _Invitation_cb_state_impl(inv, e)
+
+cdef void _Invitation_cb_sdp_done_impl(pjsip_inv_session *inv, int status) with gil:
     cdef Invitation invitation
     cdef PJSIPUA ua
     cdef SDPCallbackTimer timer
@@ -1513,7 +1680,11 @@ cdef void _Invitation_cb_sdp_done(pjsip_inv_session *inv, int status) with gil:
     except:
         ua._handle_exception(1)
 
-cdef int _Invitation_cb_rx_reinvite(pjsip_inv_session *inv, pjmedia_sdp_session_ptr_const offer, pjsip_rx_data *rdata) with gil:
+cdef void _Invitation_cb_sdp_done(pjsip_inv_session *inv, int status) noexcept nogil:
+    with gil:
+        _Invitation_cb_sdp_done_impl(inv, status)
+
+cdef int _Invitation_cb_rx_reinvite_impl(pjsip_inv_session *inv, pjmedia_sdp_session_ptr_const offer, pjsip_rx_data *rdata) with gil:
     cdef int status
     cdef pjsip_tx_data *answer_tdata
     cdef object rdata_dict = None
@@ -1557,7 +1728,13 @@ cdef int _Invitation_cb_rx_reinvite(pjsip_inv_session *inv, pjmedia_sdp_session_
         ua._handle_exception(1)
         return 1
 
-cdef void _Invitation_cb_tsx_state_changed(pjsip_inv_session *inv, pjsip_transaction *tsx, pjsip_event *e) with gil:
+cdef int _Invitation_cb_rx_reinvite(pjsip_inv_session *inv, pjmedia_sdp_session_ptr_const offer, pjsip_rx_data *rdata) noexcept nogil:
+    cdef int result
+    with gil:
+        result = _Invitation_cb_rx_reinvite_impl(inv, offer, rdata)
+    return result
+
+cdef void _Invitation_cb_tsx_state_changed_impl(pjsip_inv_session *inv, pjsip_transaction *tsx, pjsip_event *e) with gil:
     cdef pjsip_rx_data *rdata = NULL
     cdef pjsip_tx_data *tdata = NULL
     cdef object rdata_dict = None
@@ -1622,14 +1799,32 @@ cdef void _Invitation_cb_tsx_state_changed(pjsip_inv_session *inv, pjsip_transac
             elif (tsx.role == PJSIP_ROLE_UAS and tsx.state == PJSIP_TSX_STATE_TRYING and
                   rdata != NULL and rdata.msg_info.msg.type == PJSIP_REQUEST_MSG and tsx.method.id == PJSIP_OPTIONS_METHOD):
                 invitation.process_incoming_options(ua, rdata)
+            elif (tsx.role == PJSIP_ROLE_UAS and tsx.state == PJSIP_TSX_STATE_TRYING and
+                  rdata != NULL and rdata.msg_info.msg.type == PJSIP_REQUEST_MSG and
+                  _pj_str_to_str(tsx.method.name) == "MESSAGE"):
+                # In-dialog MESSAGE. PJSIP's invite session module does not
+                # claim it (mod_inv_on_rx_request only returns true for
+                # INVITE/BYE/CANCEL/ACK), so the dialog dispatch would auto-
+                # respond 500/Unhandled by dialog usages unless we send a
+                # final response synchronously here. process_incoming_message
+                # answers 200 OK and dispatches the body to Python.
+                invitation.process_incoming_message(ua, rdata)
     except:
         ua._handle_exception(1)
 
-cdef void _Invitation_cb_new(pjsip_inv_session *inv, pjsip_event *e) with gil:
+cdef void _Invitation_cb_tsx_state_changed(pjsip_inv_session *inv, pjsip_transaction *tsx, pjsip_event *e) noexcept nogil:
+    with gil:
+        _Invitation_cb_tsx_state_changed_impl(inv, tsx, e)
+
+cdef void _Invitation_cb_new_impl(pjsip_inv_session *inv, pjsip_event *e) with gil:
     # As far as I can tell this is never actually called!
     pass
 
-cdef void _Invitation_transfer_cb_state(pjsip_evsub *sub, pjsip_event *event) with gil:
+cdef void _Invitation_cb_new(pjsip_inv_session *inv, pjsip_event *e) noexcept nogil:
+    with gil:
+        _Invitation_cb_new_impl(inv, e)
+
+cdef void _Invitation_transfer_cb_state_impl(pjsip_evsub *sub, pjsip_event *event) with gil:
     cdef void *invitation_void
     cdef Invitation invitation
     cdef object state
@@ -1677,7 +1872,11 @@ cdef void _Invitation_transfer_cb_state(pjsip_evsub *sub, pjsip_event *event) wi
     except:
         ua._handle_exception(1)
 
-cdef void _Invitation_transfer_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) with gil:
+cdef void _Invitation_transfer_cb_state(pjsip_evsub *sub, pjsip_event *event) noexcept nogil:
+    with gil:
+        _Invitation_transfer_cb_state_impl(sub, event)
+
+cdef void _Invitation_transfer_cb_tsx_impl(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) with gil:
     cdef void *invitation_void
     cdef Invitation invitation
     cdef pjsip_rx_data *rdata
@@ -1711,7 +1910,11 @@ cdef void _Invitation_transfer_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, 
     except:
         ua._handle_exception(1)
 
-cdef void _Invitation_transfer_cb_notify(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
+cdef void _Invitation_transfer_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) noexcept nogil:
+    with gil:
+        _Invitation_transfer_cb_tsx_impl(sub, tsx, event)
+
+cdef void _Invitation_transfer_cb_notify_impl(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
                                     pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) with gil:
     cdef void *invitation_void
     cdef Invitation invitation
@@ -1739,11 +1942,20 @@ cdef void _Invitation_transfer_cb_notify(pjsip_evsub *sub, pjsip_rx_data *rdata,
     except:
         ua._handle_exception(1)
 
-cdef void _Invitation_transfer_cb_refresh(pjsip_evsub *sub) with gil:
+cdef void _Invitation_transfer_cb_notify(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
+                                    pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) noexcept nogil:
+    with gil:
+        _Invitation_transfer_cb_notify_impl(sub, rdata, p_st_code, p_st_text, res_hdr, p_body)
+
+cdef void _Invitation_transfer_cb_refresh_impl(pjsip_evsub *sub) with gil:
     # We want to handle the refresh timer oursevles, ignore the PJSIP provided timer
     pass
 
-cdef void _Invitation_transfer_in_cb_rx_refresh(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
+cdef void _Invitation_transfer_cb_refresh(pjsip_evsub *sub) noexcept nogil:
+    with gil:
+        _Invitation_transfer_cb_refresh_impl(sub)
+
+cdef void _Invitation_transfer_in_cb_rx_refresh_impl(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
                                             pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) with gil:
     cdef void *invitation_void
     cdef dict rdata_dict
@@ -1777,7 +1989,12 @@ cdef void _Invitation_transfer_in_cb_rx_refresh(pjsip_evsub *sub, pjsip_rx_data 
     except:
         ua._handle_exception(1)
 
-cdef void _Invitation_transfer_in_cb_server_timeout(pjsip_evsub *sub) with gil:
+cdef void _Invitation_transfer_in_cb_rx_refresh(pjsip_evsub *sub, pjsip_rx_data *rdata, int *p_st_code,
+                                            pj_str_t **p_st_text, pjsip_hdr *res_hdr, pjsip_msg_body **p_body) noexcept nogil:
+    with gil:
+        _Invitation_transfer_in_cb_rx_refresh_impl(sub, rdata, p_st_code, p_st_text, res_hdr, p_body)
+
+cdef void _Invitation_transfer_in_cb_server_timeout_impl(pjsip_evsub *sub) with gil:
     cdef void *invitation_void
     cdef Invitation invitation
     cdef Timer timer
@@ -1801,7 +2018,11 @@ cdef void _Invitation_transfer_in_cb_server_timeout(pjsip_evsub *sub) with gil:
     except:
         ua._handle_exception(1)
 
-cdef void _Invitation_transfer_in_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) with gil:
+cdef void _Invitation_transfer_in_cb_server_timeout(pjsip_evsub *sub) noexcept nogil:
+    with gil:
+        _Invitation_transfer_in_cb_server_timeout_impl(sub)
+
+cdef void _Invitation_transfer_in_cb_tsx_impl(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) with gil:
     cdef void *invitation_void
     cdef Invitation invitation
     cdef PJSIPUA ua
@@ -1836,6 +2057,10 @@ cdef void _Invitation_transfer_in_cb_tsx(pjsip_evsub *sub, pjsip_transaction *ts
     except:
         ua._handle_exception(1)
 
+
+cdef void _Invitation_transfer_in_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event *event) noexcept nogil:
+    with gil:
+        _Invitation_transfer_in_cb_tsx_impl(sub, tsx, event)
 
 # Globals
 #

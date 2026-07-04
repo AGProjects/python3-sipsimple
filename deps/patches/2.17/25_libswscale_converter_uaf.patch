@@ -1,0 +1,49 @@
+# 25_libswscale_converter_uaf.patch   (rebased for pjsip 2.17)
+#
+# Defensive NULL-check on fcv->sws_ctx inside libswscale_conv_convert
+# and libswscale_conv_convert2 to close the destroy-while-render race
+# window. See deps/patches/25_libswscale_converter_uaf.patch for the
+# full crash-report context.
+#
+# Rebase notes (vs the 2.12 version):
+#   * 2.17 converter_libswscale.c is unchanged in this area —
+#     libswscale_conv_destroy() still NULLs fcv->sws_ctx before
+#     sws_freeContext(), libswscale_conv_convert{,2}() still call
+#     sws_scale(fcv->sws_ctx, ...) without a NULL check. Same UAF
+#     window, same fix.
+#   * The 2.12 patch used mixed tabs and spaces for the inserted
+#     lines. Re-indented to clean 4-space style to match 2.17.
+#   * Line numbers shifted by a few — context anchored on the
+#     local variable block at the top of each function.
+#
+--- pjsip_orig/pjmedia/src/pjmedia/converter_libswscale.c
++++ pjsip/pjmedia/src/pjmedia/converter_libswscale.c
+@@ -147,6 +147,17 @@
+                     *dst = &fcv->dst;
+     int h;
+
++    /* Defensive NULL check. libswscale_conv_destroy() NULLs
++     * fcv->sws_ctx before sws_freeContext(). If destroy ran on
++     * another thread between the dispatch from vid_port's render
++     * callback and this point, fcv->sws_ctx will be NULL here.
++     * Handing NULL to sws_scale faults at offset 0x40 inside FFmpeg
++     * (ctx->func is dereferenced very early). Bail with
++     * PJ_EINVALIDOP — the render callback treats it as a frame
++     * drop. */
++    if (!fcv->sws_ctx)
++        return PJ_EINVALIDOP;
++
+     src->apply_param.buffer = src_frame->buf;
+     (*src->fmt_info->apply_fmt)(src->fmt_info, &src->apply_param);
+
+@@ -187,6 +198,10 @@
+     pjmedia_rect_size orig_src_size;
+     pjmedia_rect_size orig_dst_size;
+
++    /* Same NULL guard as libswscale_conv_convert above. */
++    if (!fcv->sws_ctx)
++        return PJ_EINVALIDOP;
++
+     PJ_UNUSED_ARG(param);
+
+     /* Save original conversion sizes */

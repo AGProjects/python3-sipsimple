@@ -1,0 +1,10 @@
+--- pjsip/third_party/zsrtp/zrtp/zrtp/EmojiBase32.cpp.orig	2026-01-22 15:52:01.376662475 +0100
++++ pjsip/third_party/zsrtp/zrtp/zrtp/EmojiBase32.cpp	2026-01-22 15:52:26.075802041 +0100
+@@ -2,6 +2,7 @@
+ // Created by werner on 26.12.15.
+ //
+ #include <iostream>
++#include <cstdint>
+ // stdlib.h required for Android NDK builds, not included within the above includes
+ #include <cstdlib>
+ 

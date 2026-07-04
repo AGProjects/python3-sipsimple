@@ -1004,7 +1004,7 @@ cdef class VideoFrame:
             return (self.width, self.height)
 
 
-cdef void FrameBufferVideoRenderer_frame_handler(pjmedia_frame_ptr_const frame, pjmedia_rect_size size, void *user_data) with gil:
+cdef void FrameBufferVideoRenderer_frame_handler_impl(pjmedia_frame_ptr_const frame, pjmedia_rect_size size, void *user_data) with gil:
     cdef PJSIPUA ua
     cdef FrameBufferVideoRenderer rend
     try:
@@ -1021,7 +1021,11 @@ cdef void FrameBufferVideoRenderer_frame_handler(pjmedia_frame_ptr_const frame, 
         rend._frame_handler(VideoFrame(data, size.w, size.h))
 
 
-cdef int RemoteVideoStream_on_event(pjmedia_event *event, void *user_data) with gil:
+cdef void FrameBufferVideoRenderer_frame_handler(pjmedia_frame_ptr_const frame, pjmedia_rect_size size, void *user_data) noexcept nogil:
+    with gil:
+        FrameBufferVideoRenderer_frame_handler_impl(frame, size, user_data)
+
+cdef int RemoteVideoStream_on_event_impl(pjmedia_event *event, void *user_data) with gil:
     cdef PJSIPUA ua
     cdef RemoteVideoStream stream
     cdef pjmedia_format fmt
@@ -1049,4 +1053,10 @@ cdef int RemoteVideoStream_on_event(pjmedia_event *event, void *user_data) with 
             # Pacify compiler
             pass
     return 0
+
+cdef int RemoteVideoStream_on_event(pjmedia_event *event, void *user_data) noexcept nogil:
+    cdef int result
+    with gil:
+        result = RemoteVideoStream_on_event_impl(event, user_data)
+    return result
 

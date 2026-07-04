@@ -1,0 +1,107 @@
+# 24_video_sdp_rtcp_fb.patch   (rebased for pjsip 2.17)
+#
+# Advertise rtcp-fb (NACK / PLI / FIR / goog-REMB) on every video
+# codec in the offered SDP so libwebrtc-based peers (Chromium /
+# react-native-webrtc / sylk-mobile) enable their NACK retransmission
+# AND bandwidth-estimation feedback machinery for the stream.
+#
+# Rebase notes (vs the 2.12 version):
+#   * pjsip 2.13 reflowed the file from tabs to spaces — every
+#     leading \t became 4 spaces. Patch body re-indented accordingly.
+#   * pjmedia_endpt_create_video_sdp() body shape is otherwise
+#     identical: the fmtp block still ends with
+#         "attr->name = pj_str(\"fmtp\");
+#          attr->value = pj_strdup3(pool, buf);
+#          m->attr[m->attr_count++] = attr;
+#          }"
+#     and is followed by the "/* Find maximum bitrate in this media */"
+#     comment. Insertion point unchanged in spirit.
+#   * Upstream cleaned up the trailing-whitespace line at the
+#     insertion point (was "    " in 2.12, now just blank in 2.17).
+#     Patch's "    " -> "" hunk is therefore dropped.
+#
+# Background, behaviour, and field reproducer notes are unchanged
+# from the 2.12 patch header. See deps/patches/24_video_sdp_rtcp_fb.patch
+# for the full background section.
+#
+--- pjsip_orig/pjmedia/src/pjmedia/endpoint.c
++++ pjsip/pjmedia/src/pjmedia/endpoint.c
+@@ -882,6 +882,78 @@
+             attr->value = pj_strdup3(pool, buf);
+             m->attr[m->attr_count++] = attr;
+         }
++
++        /*
++         * libwebrtc-interop: advertise rtcp-fb feedback messages so
++         * Chromium / react-native-webrtc / sylk-mobile peers enable
++         * their NACK retransmission and PLI/FIR keyframe-request
++         * machinery for this stream.
++         *
++         * Without these attributes the peer's WebRTC stack treats us
++         * as "no feedback supported", disables NACK on the receive
++         * path, and every individual RTP packet drop or reorder
++         * permanently corrupts the surrounding frame — visible in the
++         * peer's getStats() as packetsLost growing by tens per second
++         * with framesReceived stuck near zero and only the rare
++         * keyframe rendering cleanly.
++         *
++         * The three attributes we emit per codec:
++         *   a=rtcp-fb:<pt> nack         — NACK feedback for selective
++         *                                  RTP packet retransmission
++         *                                  (RFC 4585).
++         *   a=rtcp-fb:<pt> nack pli     — Picture Loss Indication
++         *                                  (RFC 4585).
++         *   a=rtcp-fb:<pt> ccm fir      — Full Intra Request
++         *                                  (RFC 5104).
++         *
++         * pjmedia already supports SENDING and RECEIVING these on the
++         * RTCP path (see pjmedia_rtcp_fb_*); the missing piece was
++         * the SDP advertisement. RFC 5124 strictly says rtcp-fb
++         * belongs to the RTP/AVPF profile, but every libwebrtc-based
++         * stack accepts them on RTP/AVP for backward compatibility,
++         * and existing pjsip<->pjsip interop is unaffected (pjsip's
++         * own SDP parser treats unrecognised rtcp-fb attributes as
++         * informational).
++         */
++        {
++            static const struct {
++                const char *fb;
++            } VIDEO_RTCP_FB[] = {
++                { "nack" },
++                { "nack pli" },
++                { "ccm fir" },
++                /*
++                 * goog-remb: Google's Receiver Estimated Maximum Bitrate
++                 * (draft-alvestrand-rmcat-remb / RTCP-PSFB AFB type 15).
++                 * libwebrtc's congestion controller reads this off the
++                 * SDP and sends periodic REMB feedback telling us how
++                 * fast we can transmit. pjmedia parses incoming REMB
++                 * via pjmedia_rtcp_fb_decode_remb; advertising it here
++                 * means the peer will actually send it. On a lossy
++                 * downlink this lets pjsip's encoder back off from its
++                 * configured cap (e.g. 800 kbps) toward the rate the
++                 * receiver can actually sustain, instead of saturating
++                 * the queue and forcing NACK-driven recovery for every
++                 * second packet.
++                 */
++                { "goog-remb" },
++            };
++            unsigned k;
++            for (k = 0; k < PJ_ARRAY_SIZE(VIDEO_RTCP_FB); ++k) {
++                char fb_buf[64];
++                int n = pj_ansi_snprintf(fb_buf, sizeof(fb_buf),
++                                         "%d %s",
++                                         codec_info[i].pt,
++                                         VIDEO_RTCP_FB[k].fb);
++                if (n <= 0 || (unsigned)n >= sizeof(fb_buf))
++                    continue;
++                attr = PJ_POOL_ZALLOC_T(pool, pjmedia_sdp_attr);
++                attr->name  = pj_str("rtcp-fb");
++                attr->value = pj_strdup3(pool, fb_buf);
++                if (m->attr_count < PJMEDIA_MAX_SDP_ATTR)
++                    m->attr[m->attr_count++] = attr;
++            }
++        }
+
+         /* Find maximum bitrate in this media */
+         vfd = pjmedia_format_get_video_format_detail(&codec_param.enc_fmt,

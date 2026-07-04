@@ -1,3 +1,116 @@
+python3-sipsimple (5.5.0) unstable; urgency=medium
+
+  * Added EndpointExtension to conference info payload
+  * Added signal level retriever from audio mixer slots
+  * Added build number to the core
+  * Added video bandwidth negotiation in real-time
+  * Added support for re-negotating new RTP ports mid-call
+  * Implement sylk-zrtp protocol from
+    https://github.com/AGProjects/sylk-mobile/blob/master/docs/encryption/zrtp/Readme.md
+  * Fix crash parsing cause_text in core
+  * Use device_id for zRTP negotiation
+  * Fix crashes in zRTP stream
+  * Fix crash when handling non utf8 payloads in core
+  * Allow start without audio card
+  * Use local sipclients3 folder for mac install
+  * Fix race condition of zRTP media and signaling out of order
+  * Allow sessions to start as long as at least one stream initialized
+  * Enhance logging MSRP init failures 
+  * Fix handling changing previously agreed media ports in re-Invite
+  * Fixed video crashes
+  * Fix some GIL issues inside core
+  * Make VPx video compatible with webrtc end-points
+  * Fix crash in pj transport
+  * Release GIL after PJSIP blocking operations
+  * Fix internal compiler error
+  * Allow custom parameters to Contact header for outgoing INVITE
+  * Request video key frame on start
+
+ -- AG Projects <support@ag-projects.com>  Sat, 30 May 2026 09:00:00 +0200
+
+python3-sipsimple (5.4.0) unstable; urgency=medium
+
+  * Added G.729 audio codec
+  * Added handling for in-dialog SIP Messages for zRTP key exchange with Sylk WebRTC
+  * Added signal level retriever from audio mixer slots
+  * Added video bandwidth negotiation in real-time
+  * Added zRTP over insertable-streams/frame encryption over WebRTC-SFU
+  * Added EndpointExtension to conference info payload
+  * Make VP8 and VP9 video compatible with webrtc end-points
+  * Allow sessions to start as long as at least one stream initialized
+  * Offer only AES_CM_128_HMAC_SHA1_80 SDES negotiation for Janus interoperability
+  * Survive re-negotating new RTP ports
+  * Improve zRTP oportunistic encryption to fall back to SDES, if available
+  * Fix PJSIP crash on Mac when wake up from sleep
+  * Fix GIL locking issues inside core
+  * Fix core msg parsing crashes
+  * Fix crashes in pj transport
+  * Use pjsip 2.12
+
+ -- Tijmen de Mes <support@ag-projects.com>  Sun, 17 May 2026 09:14:13 +0200
+
+python3-sipsimple (5.3.4) unstable; urgency=medium
+
+  * Fixed changelog
+  * Fix ZRTP EmojiBase32 compilation error due to undefined uint8_t
+  * Fix ALSA audio backend compilation on PJSIP 2.11
+  * Drop patches already applied in PJSIP 2.11/2.12
+  * Improved get_dependencies.sh script
+  * Skip testing in debian builds
+  * Fixed syntax warnings
+  * Updated patch for PJSIP 2.11, fixes video support
+  * Use thread to read from compilation process so output is printed line by line
+  * Use python logging module in build process
+  * Initial port to Cython 3 with backwards compatibilty
+  * Fix handling content of non-CPIM messages
+  * Added cros compilation notes
+  * Added patch for 2.10 webrtc arm arch
+  * Updated mac requirements
+  * Skip some patches for M processor
+  * Use pjsip 2.10 by default
+  * Updated docs
+
+ -- Tijmen de Mes <tijmen@ag-projects.com>  Mon, 26 Jan 2026 13:24:20 +0100
+
+python3-sipsimple (5.3.3) unstable; urgency=medium
+
+  * Use pjsip 2.12 branch by default
+  * Added patches for pjsip 2.12
+  * Fix automatic detection of audio devices changes
+  * Set default sample rate to 32000
+  * Fix regular expressions
+  * Added back missing 2.10 patches
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Fri, 07 Mar 2025 17:16:17 +0000
+
+python3-sipsimple (5.3.2) unstable; urgency=medium
+
+  * Critical fix for call transfers
+  * Capture exception in audio bridge
+  * Disable unused dialog subscriber for account
+  * Post headers received in incoming transfer request
+
+ -- Adrian Georgescu <support@ag-projects.com>  Mon, 27 Jan 2025 15:38:50 +0100
+
+python3-sipsimple (5.3.0) unstable; urgency=medium
+
+  * Added support for http filetransfer (RCS RCC.07) documents
+  * Added extra headers to session transfer
+  * Increased DNS lookup timeout
+  * Fixed account delete
+  * Support ffmpeg 5.1
+  * Fixed filetransfer abort
+  * Updated installation instructions
+  * Fixed fatal compile error on macos
+
+ -- Tijmen de Mes <tijmen@ag-projects.com>  Wed, 05 Jul 2023 09:04:09 +0200
+
+python3-sipsimple (5.2.7) unstable; urgency=medium
+
+  * Rebuild for unstable with python 3.10 support and libvpx7
+
+ -- Tijmen de Mes <tijmen@ag-projects.com>  Fri, 29 Jul 2022 13:50:59 +0200
+
 python3-sipsimple (5.2.6) unstable; urgency=medium
 
   * Fixed usage of Incoming Request class
@@ -143,7 +256,7 @@ python3-sipsimple (4.0.0) unstable; urgency=medium
   * Fallback to tls general options if account tls settings are missing
   * Patch dns.query for versions that support setting the backend
 
- -- Adrian Georgescu <ag@ag-projects.com>  Wed Mar  3 15:29:13 -03 2021
+ -- Adrian Georgescu <ag@ag-projects.com>  Wed, 03 Mar 2021 15:29:13 -0300
 
 python-sipsimple (3.5.1) unstable; urgency=medium
 

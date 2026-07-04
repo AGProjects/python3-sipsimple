@@ -11,8 +11,16 @@ import weakref
 from abc import ABCMeta, abstractmethod
 from application.notification import IObserver, NotificationCenter, NotificationData, ObserverWeakrefProxy
 from application.python import Null
-from threading import RLock
+from threading import RLock, local as _thread_local
 from zope.interface import implementer
+
+
+# Per-thread hint used to choose the audio mixer an AudioStream is *born* on,
+# so the stream's bridge is built on the right mixer from the start (no later,
+# race-prone bridge replacement). Session.init_incoming sets `mixer` here from
+# RTPStream.mixer_factory(request_uri) around stream construction; AudioStream
+# reads it in __init__. Defaults to None (the application's voice mixer).
+stream_creation_context = _thread_local()
 
 from sipsimple.account import BonjourAccount
 from sipsimple.configuration.settings import SIPSimpleSettings
@@ -211,6 +219,17 @@ class RTPStreamEncryption(object):
             elif encryption == 'zrtp':
                 self.__dict__['type'] = 'ZRTP'
                 self.__dict__['zrtp'] = ZRTPStreamOptions(stream)
+            elif encryption == 'opportunistic':
+                # The underlying RTPTransport is the stacked chain
+                # UDP -> ZRTP -> SRTP(OPTIONAL). We don't know yet
+                # which keying will be selected -- that is decided
+                # by the remote answer. Type is resolved later in
+                # _resolve_opportunistic_type(), called just before
+                # MediaStreamDidStart fires. ZRTP options are
+                # pre-allocated so the ZRTP leg has its plumbing
+                # ready if it ends up winning.
+                self.__dict__['type'] = None
+                self.__dict__['zrtp'] = ZRTPStreamOptions(stream)
 
     def _NH_MediaStreamDidNotInitialize(self, notification):
         if notification.sender is self._stream_ref():
@@ -219,7 +238,54 @@ class RTPStreamEncryption(object):
             self._stream_ref = None
             self._stream = None
 
+    def _resolve_opportunistic_type(self):
+        # Called by the stream just before MediaStreamDidStart is posted
+        # (from AudioStream.start() / VideoStream.start() and from the ICE
+        # negotiation handlers in RTPStream). After this returns, self.type
+        # will be 'SRTP/SDES', 'ZRTP', or None (neither leg available).
+        # Calling it more than once is safe; only the first call has effect.
+        if self.__dict__['type'] is not None:
+            return
+        rtp_transport = self._rtp_transport
+        if rtp_transport is None:
+            return
+        # PJSIP populates srtp_info after pjmedia_transport_media_start
+        # has consumed the remote SDP. For the stacked transport, that
+        # happens inside AudioTransport.start() (or VideoTransport.start()),
+        # which the stream calls before posting MediaStreamDidStart.
+        if rtp_transport.srtp_active:
+            # The remote answered with a=crypto. SDES won; the ZRTP layer
+            # below stays dormant because we never call set_zrtp_enabled.
+            self.__dict__['type'] = 'SRTP/SDES'
+            self.__dict__['zrtp'] = None
+        elif self.__dict__['zrtp'] is not None:
+            # Opportunistic encryption was requested AND ZRTP options got
+            # allocated in _NH_MediaStreamDidInitialize.  SDES didn't win;
+            # fall back to ZRTP - the session-level
+            # _NH_MediaStreamDidStart handler will call
+            # stream.encryption.zrtp._enable() and the ZRTP transport will
+            # take it from there (success fires RTPTransportZRTPSecureOn,
+            # failure fires RTPTransportZRTPNotSupportedByRemote, both of
+            # which the existing observer methods already handle).
+            self.__dict__['type'] = 'ZRTP'
+        # else: no encryption was requested in the first place
+        # (account.rtp.encryption.enabled was False, so the stream's
+        # _srtp_encryption was None and MediaStreamDidInitialize took
+        # none of the type-setting branches).  Leave self.type at None -
+        # claiming "ZRTP" here would lie to the session handler, which
+        # would then call .zrtp._enable() on a None zrtp object and raise
+        # RuntimeError('ZRTP options have not been initialized'), aborting
+        # the rest of MediaStreamDidStart and leaving the renderer pipeline
+        # un-wired (= black video window for the user).
+
     def _NH_MediaStreamDidStart(self, notification):
+        # Defensive: if the stream forgot to resolve the type for the
+        # opportunistic chain, resolve it now so that downstream observers
+        # (notably Session._NH_MediaStreamDidStart, which checks
+        # encryption.type to decide whether to enable ZRTP) see a final
+        # value.
+        if self.type is None:
+            self._resolve_opportunistic_type()
         if self.type == 'SRTP/SDES':
             stream = notification.sender
             if self.active:
@@ -294,6 +360,11 @@ class RTPStream(object, metaclass=RTPStreamType):
 
     hold_supported = True
 
+    # Optional callable(request_uri) -> AudioMixer or None, set by the
+    # application (SylkServer) to spread audio across a pool of mixers/cores.
+    # Consulted in Session.init_incoming when streams are created.
+    mixer_factory = None
+
     def __init__(self):
         self.notification_center = NotificationCenter()
         self.on_hold_by_local = False
@@ -365,6 +436,37 @@ class RTPStream(object, metaclass=RTPStreamType):
     @property
     def on_hold(self):
         return self.on_hold_by_local or self.on_hold_by_remote
+
+    # ---- Sylk AEAD (AES-128-GCM on RTP payload, above SRTP) -----------
+    #
+    # The underlying RTPTransport always wraps its SRTP transport with the
+    # Sylk AEAD adapter at create time. The adapter sits passthrough until
+    # set_aead_keys is called with the HKDF-derived per-direction keys.
+    # After that call, outgoing RTP is AES-128-GCM-encrypted on the payload
+    # before SRTP wraps it, and incoming RTP is decrypted after SRTP unwraps.
+    # See sipsimple/core/_core.mediatransport.pxi:RTPTransport.set_aead_keys.
+
+    def set_aead_keys(self, send_key, send_salt, recv_key, recv_salt,
+                      key_id=1, video_prefix=0):
+        """Install per-direction AES-128-GCM keys on this stream's adapter.
+
+        video_prefix is the number of codec-metadata bytes left plaintext
+        at the start of each RTP payload (audio = 0, VP8/VP9 = 3, H264 = 2,
+        AV1 = 1). Must match what the peer's decryptor uses or every frame
+        fails its GCM tag and falls through to permissive passthrough.
+        """
+        rtp_transport = self._rtp_transport
+        if rtp_transport is None:
+            raise RuntimeError('cannot set AEAD keys: stream has no RTP transport yet')
+        rtp_transport.set_aead_keys(send_key, send_salt, recv_key, recv_salt,
+                                    key_id, video_prefix)
+
+    def get_aead_stats(self):
+        """(encrypted_frames, decrypted_frames, passthrough_frames) — see RTPTransport."""
+        rtp_transport = self._rtp_transport
+        if rtp_transport is None:
+            return (0, 0, 0)
+        return rtp_transport.get_aead_stats()
 
     @abstractmethod
     def start(self, local_sdp, remote_sdp, stream_index):
@@ -449,12 +551,20 @@ class RTPStream(object, metaclass=RTPStreamType):
                 else:
                     incoming_stream_encryption = None
                 if incoming_stream_encryption is not None and local_encryption_policy == 'opportunistic':
+                    # We already know what the remote offered; pick that
+                    # specific keying so the transport is built as a single
+                    # SRTP or ZRTP wrapper (cheaper than the stacked chain).
                     self._srtp_encryption = incoming_stream_encryption
                 else:
-                    self._srtp_encryption = 'zrtp' if local_encryption_policy == 'opportunistic' else local_encryption_policy
+                    # No incoming SDP yet. Pass 'opportunistic' through so the
+                    # RTPTransport builds a stacked chain (UDP -> ZRTP -> SRTP
+                    # in OPTIONAL mode) and offers both a=zrtp-hash and
+                    # a=crypto in the INVITE.
+                    self._srtp_encryption = local_encryption_policy
             else:
                 self._try_ice = self.session.account.nat_traversal.use_ice
-                self._srtp_encryption = 'zrtp' if local_encryption_policy == 'opportunistic' else local_encryption_policy
+                # Outgoing call without an incoming SDP. Same reasoning as above.
+                self._srtp_encryption = local_encryption_policy
 
             if self._try_ice:
                 if self.session.account.nat_traversal.stun_server_list:
@@ -553,6 +663,9 @@ class RTPStream(object, metaclass=RTPStreamType):
             self._ice_state = "IN_USE"
             self.state = 'ESTABLISHED'
         self.notification_center.post_notification('RTPStreamICENegotiationDidSucceed', sender=self, data=notification.data)
+        # Make sure encryption.type is resolved before MediaStreamDidStart
+        # so other observers (e.g. Session) see the final value.
+        self.encryption._resolve_opportunistic_type()
         self.notification_center.post_notification('MediaStreamDidStart', sender=self)
 
     def _NH_RTPTransportICENegotiationDidFail(self, notification):
@@ -562,6 +675,9 @@ class RTPStream(object, metaclass=RTPStreamType):
             self._ice_state = "FAILED"
             self.state = 'ESTABLISHED'
         self.notification_center.post_notification('RTPStreamICENegotiationDidFail', sender=self, data=notification.data)
+        # Make sure encryption.type is resolved before MediaStreamDidStart
+        # so other observers (e.g. Session) see the final value.
+        self.encryption._resolve_opportunistic_type()
         self.notification_center.post_notification('MediaStreamDidStart', sender=self)
 
     # Private methods
