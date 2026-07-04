@@ -17,6 +17,16 @@
 # hosts and needs the right certificate negotiated even when the SIP
 # routing destination doesn't match the cert's CN/SAN.
 #
+# The tls_name value is also used as the remote name for the server
+# identity check (SAN/CN matching in on_connect_complete). Without
+# this, sipsimple's pre-resolved routes make dest_info.name a numeric
+# IP address, so with verify_server enabled the identity check always
+# fails with PJ_SSL_CERT_EIDENTITY_NOT_MATCH even when the server
+# presents a perfectly valid certificate for the SIP domain. Matching
+# against the tls_name (which sipsimple's lookup defaults to the SIP
+# domain) is also what RFC 5922 prescribes: the identity to verify is
+# the SIP domain, not the resolved SRV/A target or its address.
+#
 # In 2.12 this lived as a set of hunks inside patch 03 (signaling),
 # threading a tls_name parameter through tls_create() and a struct
 # member on tls_transport. 2.17's sip_transport_tls.c was refactored
@@ -47,7 +57,7 @@
      pj_status_t status;
  
      /* Sanity checks */
-@@ -1349,10 +1353,32 @@
+@@ -1349,12 +1353,42 @@
                                     POOL_TP_INIT, POOL_TP_INC);
      PJ_ASSERT_RETURN(pool != NULL, PJ_ENOMEM);
  
@@ -80,7 +90,17 @@
      } else {
          pj_bzero(&remote_name, sizeof(remote_name));
          pj_bzero(&server_addr, sizeof(server_addr));
-@@ -1369,7 +1395,10 @@
+     }
++
++    /* When a tls_name Route parameter was given, use it also as the remote
++     * name for the server identity check, instead of the (possibly numeric)
++     * destination address that came out of DNS resolution.
++     */
++    if (tls_name.slen)
++        remote_name = tls_name;
++
+     /* Build SSL socket param */
+@@ -1369,7 +1403,10 @@
      ssock_param.async_cnt = 1;
      ssock_param.ioqueue = pjsip_endpt_get_ioqueue(listener->endpt);
      ssock_param.timer_heap = pjsip_endpt_get_timer_heap(listener->endpt);
