@@ -467,17 +467,17 @@ class SIPApplication(object, metaclass=Singleton):
                 if 'rtp.port_range' in notification.data.modified:
                     self.engine.rtp_port_range = (settings.rtp.port_range.start, settings.rtp.port_range.end)
                 if 'rtp.audio_codec_list' in notification.data.modified:
-                    print(settings.rtp.audio_codec_list)
+                    log.debug('Audio codec list changed to %s' % list(settings.rtp.audio_codec_list))
                     self.engine.codecs = list(codec.encode() for codec in settings.rtp.audio_codec_list)
                 if 'rtp.video_codec_list' in notification.data.modified:
-                    print(settings.rtp.video_codec_list)
+                    log.debug('Video codec list changed to %s' % list(settings.rtp.video_codec_list))
                     self.engine.video_codecs = list(codec.encode() for codec in settings.rtp.video_codec_list)
                 if 'logs.trace_sip' in notification.data.modified:
                     self.engine.trace_sip = settings.logs.trace_sip
                 if {'logs.trace_pjsip', 'logs.pjsip_level'}.intersection(notification.data.modified):
                     self.engine.log_level = settings.logs.pjsip_level if settings.logs.trace_pjsip else 0
         except (SIPCoreError, PJSIPError) as e:
-            print('Error setting core option: %s' % str(e))
+            log.error('Error setting core option: %s' % str(e))
 
 
     @run_in_thread('device-io')
