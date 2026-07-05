@@ -279,12 +279,18 @@ class Account(SettingsObject):
 
         if tls_certificate is not None:
             try:
-                certificate_data = open(tls_certificate.normalized).read()
-                certificate = X509Certificate(certificate_data)
+                # use an explicit encoding: when running inside an application
+                # bundle without locale environment variables Python falls back
+                # to ASCII, which fails on PEM files with non-ASCII comments
+                certificate_data = open(tls_certificate.normalized, encoding='utf-8', errors='replace').read()
+                # load all certificates in the file (leaf first, followed by any
+                # intermediate CA certificates), so that the full chain is
+                # presented to the peer during the TLS handshake
+                certificate = X509Certificate.list_from_pem(certificate_data) or None
                 private_key = X509PrivateKey(certificate_data)
             except (FileNotFoundError, GNUTLSError, UnicodeDecodeError):
                 pass
-                
+
         trusted_cas = []
         ca_list  = settings.tls.ca_list
 
@@ -295,7 +301,13 @@ class Account(SettingsObject):
                 crt = None
                 start = False
                 try:
-                    ca_text = open(ca_list.normalized).read()
+                    # use an explicit encoding: when running inside an application
+                    # bundle without locale environment variables Python falls back
+                    # to ASCII, which fails on CA bundles with non-ASCII comments
+                    # (e.g. the Mozilla bundle) and silently resulted in an empty
+                    # trust list, making all peer verifications fail with
+                    # 'peer certificate signer not found'
+                    ca_text = open(ca_list.normalized, encoding='utf-8', errors='replace').read()
                 except (FileNotFoundError, GNUTLSError, UnicodeDecodeError):
                     ca_text = ''
             
@@ -687,8 +699,8 @@ class BonjourAccount(SettingsObject):
         settings = SIPSimpleSettings()
         tls_certificate  = settings.tls.certificate
         if tls_certificate is not None:
-            certificate_data = open(tls_certificate.normalized).read()
-            certificate = X509Certificate(certificate_data)
+            certificate_data = open(tls_certificate.normalized, encoding='utf-8', errors='replace').read()
+            certificate = X509Certificate.list_from_pem(certificate_data) or None
             private_key = X509PrivateKey(certificate_data)
         else:
             certificate = None
