@@ -286,12 +286,17 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
             self.msrp_connector = None
         except (CertificateAuthorityError, CertificateError, CertificateRevokedError) as e:
             peer = '%s:%s' % (full_remote_path[0].host, full_remote_path[0].port)
-            self._failure_reason = "%s - %s" % (peer, e.error)
-            notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context=context, reason=self._failure_reason, transport=self.transport, credentials=self.session.account.tls_credentials))
+            tls_info = self._tls_diagnostics()
+            try:
+                peer_cert_info = ' for CN %s issued by %s' % (e.certificate.subject.CN, e.certificate.issuer.CN)
+            except Exception:
+                peer_cert_info = ''
+            self._failure_reason = "%s - %s%s [%s]" % (peer, e.error, peer_cert_info, tls_info)
+            notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context=context, reason=self._failure_reason, transport=self.transport, credentials=self.session.account.tls_credentials, tls_info=tls_info))
         except Exception as e:
             #traceback.print_exc()
             self._failure_reason = str(e)
-            notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context=context, reason=self._failure_reason, transport=self.transport, credentials=self.session.account.tls_credentials))
+            notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context=context, reason=self._failure_reason, transport=self.transport, credentials=self.session.account.tls_credentials, tls_info=self._tls_diagnostics()))
         else:
             notification_center.post_notification('MediaStreamDidStart', sender=self)
         finally:
@@ -372,7 +377,7 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
             if self.shutting_down and isinstance(error.value, ConnectionDone):
                 return
             self._failure_reason = error.getErrorMessage()
-            notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context='reading', reason=self._failure_reason, transport=self.transport, credentials=self.session.account.tls_credentials))
+            notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context='reading', reason=self._failure_reason, transport=self.transport, credentials=self.session.account.tls_credentials, tls_info=self._tls_diagnostics()))
         elif chunk is not None:
             method_handler = getattr(self, '_handle_%s' % chunk.method, None)
             if method_handler is not None:
