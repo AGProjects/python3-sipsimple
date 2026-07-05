@@ -25,8 +25,16 @@ python3-sipsimple (5.5.0) unstable; urgency=medium
   * Fix internal compiler error
   * Allow custom parameters to Contact header for outgoing INVITE
   * Request video key frame on start
+  * Make H.264 primary video codec
+  * Post TLS diagnostics for failed MSRP connections
+  * Load all certificates from the TLS certificate file
+  * Fix AccountManager.load.lock
+  * Fix checking tls_name
+  * Add TLS verify failure/success notification
+  * Use preferred codec list order on answer audio/video calls
 
- -- AG Projects <support@ag-projects.com>  Sat, 30 May 2026 09:00:00 +0200
+
+ -- AG Projects <support@ag-projects.com>  Sun Jul  5 14:29:55 CEST 2026
 
 python3-sipsimple (5.4.0) unstable; urgency=medium
 
