@@ -300,6 +300,11 @@ class PJSIP_build_ext(build_ext):
 
         cmd.extend(["--disable-openh264", "--disable-l16-codec", "--disable-g7221-codec", "--disable-sdl"])
         cmd.extend(["--disable-ilbc-codec", "--disable-speex-codec", "--disable-gsm-codec", "--disable-speex-aec"])
+        # pjsua2 is a C++ wrapper library sipsimple never links; excluding it
+        # cuts a large chunk of build time. The switch exists since pjsip
+        # 2.15; pjsip 2.12's configure just warns about the unknown option
+        # and carries on, so it is safe to pass unconditionally.
+        cmd.append("--disable-pjsua2")
 
         # FFmpeg gate. PJSIP 2.12's ffmpeg wrapper originally used
         # avcodec_encode_video2 / avcodec_decode_video2, which FFmpeg 5
@@ -358,7 +363,8 @@ class PJSIP_build_ext(build_ext):
         # that sipsimple's _core.so links against. Skips pjsip-test,
         # pjmedia-test, pjlib-test, pjsua, etc. We don't ship pjsip CLI
         # apps and we don't run pjsip's internal test suite.
-        self.distutils_exec_process([self.get_make_cmd(), "lib"], silent=not self.verbose, cwd=self.build_dir)
+        jobs = os.environ.get("SIPSIMPLE_BUILD_JOBS", str(os.cpu_count() or 1))
+        self.distutils_exec_process([self.get_make_cmd(), "-j", jobs, "lib"], silent=not self.verbose, cwd=self.build_dir)
 
     def clean_pjsip(self):
         log.info("Cleaning PJSIP")
