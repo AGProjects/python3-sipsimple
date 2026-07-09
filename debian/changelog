@@ -2,38 +2,29 @@ python3-sipsimple (5.5.0) unstable; urgency=medium
 
   * Added EndpointExtension to conference info payload
   * Added signal level retriever from audio mixer slots
-  * Added build number to the core
   * Added video bandwidth negotiation in real-time
-  * Added support for re-negotating new RTP ports mid-call
+  * Added support for re-negotiating RTP ports mid-call
+  * Allow custom parameters to Contact header for outgoing INVITE
+  * Make VPx video compatible with webrtc end-points
+  * Make H.264 primary video codec
+  * Add TLS verify failure/success notifications for SIP and MSRP
+  * Enhance logging of MSRP init failures 
+  * Use preferred codec list order on answer audio/video calls
+  * Allow sessions to start as long as at least one stream is initialized
   * Implement sylk-zrtp protocol from
     https://github.com/AGProjects/sylk-mobile/blob/master/docs/encryption/zrtp/Readme.md
+  * Added device_id for zRTP negotiation
+  * Linux audio improvements
   * Fix crash parsing cause_text in core
-  * Use device_id for zRTP negotiation
   * Fix crashes in zRTP stream
   * Fix crash when handling non utf8 payloads in core
-  * Allow start without audio card
-  * Use local sipclients3 folder for mac install
-  * Fix race condition of zRTP media and signaling out of order
-  * Allow sessions to start as long as at least one stream initialized
-  * Enhance logging MSRP init failures 
   * Fix handling changing previously agreed media ports in re-Invite
-  * Fixed video crashes
+  * Fixes several video crashes
   * Fix some GIL issues inside core
-  * Make VPx video compatible with webrtc end-points
   * Fix crash in pj transport
-  * Release GIL after PJSIP blocking operations
-  * Fix internal compiler error
-  * Allow custom parameters to Contact header for outgoing INVITE
-  * Request video key frame on start
-  * Make H.264 primary video codec
-  * Post TLS diagnostics for failed MSRP connections
-  * Load all certificates from the TLS certificate file
-  * Fix AccountManager.load.lock
-  * Fix checking tls_name
-  * Add TLS verify failure/success notification
-  * Use preferred codec list order on answer audio/video calls
+  * Fix release GIL after PJSIP blocking operations
 
- -- AG Projects <support@ag-projects.com>  Sun, 05 Jul 2026 14:29:55 +0200
+ -- AG Projects <support@ag-projects.com>  Thu, 09 Jul 2026 16:24:55 +0200
 
 python3-sipsimple (5.4.0) unstable; urgency=medium
 
