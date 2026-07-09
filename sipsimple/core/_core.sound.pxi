@@ -423,7 +423,11 @@ cdef class AudioMixer:
 
     # private methods
 
-    cdef void _start_sound_device(self, PJSIPUA ua, unicode input_device, unicode output_device, int ec_tail_length):
+    # Declared `except -1` (not void): a void cdef function cannot propagate
+    # exceptions, so a PJSIPError raised here (e.g. the ALSA device refusing
+    # our parameters) was printed as "Exception ignored" while
+    # set_sound_devices() appeared to succeed with stale device attributes.
+    cdef int _start_sound_device(self, PJSIPUA ua, unicode input_device, unicode output_device, int ec_tail_length) except -1:
         cdef int idx
         cdef int input_device_i = -99
         cdef int output_device_i = -99
@@ -515,12 +519,10 @@ cdef class AudioMixer:
                     status = pjmedia_snd_port_create2(snd_pool, &port_param, snd_port_address)
                 if status == PJMEDIA_ENOSNDPLAY:
                     ua.reset_memory_pool(snd_pool)
-                    self._start_sound_device(ua, input_device, None, ec_tail_length)
-                    return
+                    return self._start_sound_device(ua, input_device, None, ec_tail_length)
                 elif status == PJMEDIA_ENOSNDREC:
                     ua.reset_memory_pool(snd_pool)
-                    self._start_sound_device(ua, None, output_device, ec_tail_length)
-                    return
+                    return self._start_sound_device(ua, None, output_device, ec_tail_length)
                 elif status != 0:
                     raise PJSIPError("Could not create sound device", status)
                 with nogil:
@@ -553,6 +555,7 @@ cdef class AudioMixer:
             self.input_device = input_device
             self.output_device = output_device
             self.ec_tail_length = ec_tail_length
+            return 0
         finally:
             with nogil:
                 pj_rwmutex_unlock_read(ua.audio_change_rwlock)
