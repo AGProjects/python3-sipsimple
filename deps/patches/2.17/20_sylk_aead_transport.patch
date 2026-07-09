@@ -150,7 +150,7 @@
 +#endif /* __PJMEDIA_SYLK_AEAD_TRANSPORT_H__ */
 --- pjsip_orig/pjmedia/src/pjmedia/sylk_aead_transport.c
 +++ pjsip/pjmedia/src/pjmedia/sylk_aead_transport.c
-@@ -0,0 +1,702 @@
+@@ -0,0 +1,709 @@
 +/*
 + * Sylk AEAD transport adapter — AES-128-GCM on RTP payload, on top of
 + * an existing SRTP/SDES transport.
@@ -425,7 +425,14 @@
 +    pool = pjmedia_endpt_create_pool(endpt, name, 2048, 2048);
 +    if (!pool) return PJ_ENOMEM;
 +
-+    a = PJ_POOL_ZALLOC_T(pool, struct sylk_aead_adapter);
++    /* The pj_uint64_t stats counters are updated with __atomic_fetch_add,
++     * which on 32-bit ARM emits ldrexd/strexd — these SIGBUS unless the
++     * address is 8-byte aligned. Pool memory is only PJ_POOL_ALIGNMENT (4)
++     * aligned, so allocate the adapter with explicit 8-byte alignment. */
++    a = (struct sylk_aead_adapter *)
++        pj_pool_aligned_alloc(pool, 8, sizeof(struct sylk_aead_adapter));
++    if (!a) return PJ_ENOMEM;
++    pj_bzero(a, sizeof(*a));
 +    a->pool = pool;
 +    a->magic = SYLK_AEAD_MAGIC;
 +    pj_ansi_strncpy(a->base.name, pool->obj_name, sizeof(a->base.name));
@@ -437,7 +444,7 @@
 +    status = pj_mutex_create_simple(pool, "sylk_aead", &a->key_lock);
 +    if (status != PJ_SUCCESS) return status;
 +
-+    /* PJ_POOL_ZALLOC_T already zeroed all fields; counters and the
++    /* pj_bzero above zeroed all fields; counters and the
 +     * active flag start at 0. The flip to active=1 happens in
 +     * sylk_aead_transport_set_keys via __atomic_store_n with RELEASE.
 +     */
