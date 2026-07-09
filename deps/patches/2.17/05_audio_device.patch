@@ -476,7 +476,7 @@ diff -ruN pjproject-2.17/pjmedia/src/pjmedia-audiodev/alsa_dev.c pjsip/pjmedia/s
  
      return PJ_SUCCESS;
  }
-@@ -422,17 +478,33 @@
+@@ -422,17 +478,48 @@
          n = hints;
          while (*n != NULL) {
              char *name = snd_device_name_get_hint(*n, "NAME");
@@ -495,6 +495,21 @@ diff -ruN pjproject-2.17/pjmedia/src/pjmedia-audiodev/alsa_dev.c pjsip/pjmedia/s
 +                 strncmp("plughw", name, 6) == 0 ||
 +                 strncmp("center_lfe", name, 10) == 0 ||
 +                 strncmp("surround", name, 8) == 0 ||
++                 /* Skip alsa-lib plugin PCMs: rate converters
++                  * (samplerate/speexrate/lavrate), channel remixers
++                  * (upmix/vdownmix), the speex DSP wrapper and usbstream.
++                  * They are processing wrappers around the default device,
++                  * not real capture/playback endpoints, and only clutter
++                  * the device list. The bare 'iec958' alias duplicates the
++                  * per-card iec958:CARD=... entries, which are kept. */
++                 strncmp("samplerate", name, 10) == 0 ||
++                 strncmp("speexrate", name, 9) == 0 ||
++                 strncmp("lavrate", name, 7) == 0 ||
++                 strncmp("upmix", name, 5) == 0 ||
++                 strncmp("vdownmix", name, 8) == 0 ||
++                 strncmp("speex", name, 5) == 0 ||
++                 strncmp("usbstream", name, 9) == 0 ||
++                 strcmp("iec958", name) == 0 ||
 +                 (strncmp("default", name, 7) == 0 && strstr(name, ":CARD=") != NULL)) {
 +                 /* skip these devices, 'sysdefault' always contains the relevant information */
 +                 ;
