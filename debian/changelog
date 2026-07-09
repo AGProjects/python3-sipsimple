@@ -33,8 +33,7 @@ python3-sipsimple (5.5.0) unstable; urgency=medium
   * Add TLS verify failure/success notification
   * Use preferred codec list order on answer audio/video calls
 
-
- -- AG Projects <support@ag-projects.com>  Sun Jul  5 14:29:55 CEST 2026
+ -- AG Projects <support@ag-projects.com>  Sun, 05 Jul 2026 14:29:55 +0200
 
 python3-sipsimple (5.4.0) unstable; urgency=medium
 
