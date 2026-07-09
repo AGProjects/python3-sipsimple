@@ -178,12 +178,23 @@ diff -ruN pjproject-2.10/pjmedia/src/pjmedia-audiodev/alsa_dev.c pjsip/pjmedia/s
      snd_pcm_t* pcm;
      int pb_result, ca_result;
  
-@@ -258,23 +274,63 @@
+@@ -258,23 +274,74 @@
      pj_bzero(adi, sizeof(*adi));
  
      /* Set device name */
 -    strncpy(adi->name, dev_name, sizeof(adi->name));
-+    strncpy(adi->alsa_name, dev_name, sizeof(adi->alsa_name));
++    /* S/PDIF PCMs (iec958:CARD=...) only accept their native hardware
++     * parameters (2 channels, 44.1/48 kHz) while pjsip opens devices mono
++     * at the conference bridge rate, so a raw open fails with EAUD_SYSERR.
++     * Route them through alsa-lib's 'plug' layer, which converts
++     * channels/rate/format transparently. */
++    if (strncmp("iec958:", dev_name, 7) == 0)
++        /* The slave name must be quoted, otherwise plug's argument
++         * parser trips over the ':' and '=' in it. */
++        pj_ansi_snprintf(adi->alsa_name, sizeof(adi->alsa_name),
++                         "plug:\"%s\"", dev_name);
++    else
++        strncpy(adi->alsa_name, dev_name, sizeof(adi->alsa_name));
 +
 +    /* Set comprehensive device name */
 +    int name_size = sizeof(adi->info.name);
