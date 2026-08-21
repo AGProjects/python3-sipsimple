@@ -20,15 +20,15 @@ Usage: ${script_name} [--version VERSION] [--help]
 Download pjsip + ZRTPCPP, extract, and apply the patch series.
 
 Options:
-    --version VERSION   pjsip version to build (default: 2.12).
+    --version VERSION   pjsip version to build (default: 2.17).
                         Supported: 2.17, 2.12. Also accepted as
                         --version=VERSION.
     -h, --help          Show this help and exit.
 
 Version can also be set via:
-    PJSIP_VERSION=2.17 ${script_name}
-    ${script_name} 2.17               # legacy positional form
-    ${script_name} --version=2.17     # opt into the in-progress port
+    PJSIP_VERSION=2.12 ${script_name}
+    ${script_name} 2.12               # legacy positional form
+    ${script_name} --version=2.12     # fall back to the legacy series
 
 Precedence: --version flag > PJSIP_VERSION env var > positional arg > default.
 EOF
@@ -90,17 +90,17 @@ cd deps
 #   1. --version flag (arg_version)
 #   2. PJSIP_VERSION env var
 #   3. positional argument (legacy)
-#   4. default = 2.12 (stable; 2.17 is opt-in while the rebase is in flight)
-# Allowed: 2.12 (default, patches/) and 2.17 (patches/2.17/).
-PJSIP_VERSION="${arg_version:-${PJSIP_VERSION:-${positional:-2.12}}}"
+#   4. default = 2.17 (the migration target; 2.12 is the legacy fallback)
+# Allowed: 2.17 (default, patches/2.17/) and 2.12 (legacy, patches/).
+PJSIP_VERSION="${arg_version:-${PJSIP_VERSION:-${positional:-2.17}}}"
 
 case "${PJSIP_VERSION}" in
     2.12)
-        # Stable patch series (DEFAULT); lives at deps/patches/[0-9][0-9]_*.patch.
+        # Legacy patch series; lives at deps/patches/[0-9][0-9]_*.patch.
         patches_dir="patches"
         ;;
     2.17)
-        # In-progress rebase lives at deps/patches/2.17/.
+        # Default series, lives at deps/patches/2.17/.
         # See PJSIP_217_MIGRATION.md at the repo root for the rebase plan.
         patches_dir="patches/2.17"
         if [ ! -d "${patches_dir}" ]; then
@@ -112,7 +112,7 @@ case "${PJSIP_VERSION}" in
         ;;
     *)
         echo "Error: unsupported PJSIP_VERSION='${PJSIP_VERSION}'."        >&2
-        echo "       Supported values: 2.12 (default), 2.17 (opt-in)."     >&2
+        echo "       Supported values: 2.17 (default), 2.12 (legacy)."     >&2
         exit 1
         ;;
 esac
@@ -178,12 +178,12 @@ cp ZRTPCPP/COPYING ./pjsip/third_party/zsrtp/zrtp/
 cp ZRTPCPP/README.md ./pjsip/third_party/zsrtp/zrtp/
 
 # Patch series for the selected pjsip version.
-# 2.12 (default) -> deps/patches/[0-9][0-9]_*.patch
+# 2.17 (default) -> deps/patches/2.17/[0-9][0-9]_*.patch
+#   Rebased subset; see PJSIP_217_MIGRATION.md.
+# 2.12 (legacy)  -> deps/patches/[0-9][0-9]_*.patch
 #   01..12 are the pjsip 2.12 functional patches (split out from the
 #   old monolith). 13..30 are the auxiliary fixes (zsrtp, tls log, vpx,
 #   mac audio, ffmpeg, srtp UAF, AEAD transport, etc).
-# 2.17 (opt-in) -> deps/patches/2.17/[0-9][0-9]_*.patch
-#   Rebased subset; see PJSIP_217_MIGRATION.md.
 patches=( "${patches_dir}"/[0-9][0-9]_*.patch )
 
 # Skip the FFmpeg-build patch on Apple Silicon — it doesn't apply cleanly there
@@ -205,14 +205,34 @@ fi
 # BSD patch silently rejects some valid unified-diff hunks that GNU
 # patch applies fine (see e.g. 02_zsrtp_link.patch's build.mak.in hunk
 # during the 2.17 rebase work).
-if command -v gpatch >/dev/null 2>&1; then
-	PATCH_CMD="gpatch"
-elif command -v /opt/homebrew/bin/gpatch >/dev/null 2>&1; then
-	PATCH_CMD="/opt/homebrew/bin/gpatch"
-elif command -v /opt/local/bin/gpatch >/dev/null 2>&1; then
-	PATCH_CMD="/opt/local/bin/gpatch"
-else
-	PATCH_CMD="patch"
+#
+# Falling back to BSD patch is NOT safe: it produces rejects on hunks that
+# are perfectly valid (e.g. 31_stream_transport_grp_lock_uaf.patch), which
+# looks exactly like a stale patch series and sends you hunting for a
+# non-existent rebase problem. Fail loudly instead.
+PATCH_CMD=""
+for _gp in gpatch /opt/homebrew/bin/gpatch /opt/local/bin/gpatch; do
+	if command -v "${_gp}" >/dev/null 2>&1; then
+		PATCH_CMD="${_gp}"
+		break
+	fi
+done
+unset _gp
+
+if [ -z "${PATCH_CMD}" ]; then
+	# No gpatch: accept plain 'patch' only when it really is GNU patch
+	# (normal on Linux, never on macOS where /usr/bin/patch is BSD).
+	if patch --version 2>/dev/null | head -1 | grep -qi "GNU patch"; then
+		PATCH_CMD="patch"
+	else
+		echo "Error: GNU patch not found."                                  >&2
+		echo "       /usr/bin/patch on macOS is BSD patch, which rejects"   >&2
+		echo "       hunks in this series that GNU patch applies cleanly."  >&2
+		echo "       Install it, then re-run:"                              >&2
+		echo "           brew install gpatch"                               >&2
+		echo "       or  sudo port install gpatch"                          >&2
+		exit 1
+	fi
 fi
 echo "Using ${PATCH_CMD} to apply patches."
 

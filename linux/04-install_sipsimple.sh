@@ -7,6 +7,84 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# ---------------------------------------------------------------------------
+# PJSIP version selection. Never interactive: the version comes from the
+# command line, then the environment, then the default.
+#
+#   ./04-install_sipsimple.sh                    -> 2.17 (default)
+#   ./04-install_sipsimple.sh 2.12               -> legacy series
+#   ./04-install_sipsimple.sh --version 2.12
+#   ./04-install_sipsimple.sh --version=2.12
+#   PJSIP_VERSION=2.12 ./04-install_sipsimple.sh
+#
+# See PJSIP_217_MIGRATION.md for the difference between the two patch sets
+# (deps/patches/ for 2.12, deps/patches/2.17/ for 2.17).
+# ---------------------------------------------------------------------------
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [--version VERSION] [--help]
+
+Build and install python3-sipsimple against a given PJSIP version.
+
+Options:
+  --version VERSION   PJSIP version to build against: 2.17 (default) or 2.12.
+                      Also accepted as --version=VERSION, -v VERSION, or as a
+                      bare positional argument.
+  -h, --help          Show this help and exit.
+
+PJSIP_VERSION in the environment is used when no argument is given.
+EOF
+}
+
+arg_version=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --version|-v)
+            if [ -z "${2:-}" ]; then
+                echo "Error: $1 requires a value (2.17 or 2.12)." >&2
+                exit 2
+            fi
+            arg_version="$2"
+            shift 2
+            ;;
+        --version=*)
+            arg_version="${1#--version=}"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Error: unknown option '$1'. Run with --help." >&2
+            exit 2
+            ;;
+        *)
+            if [ -n "$arg_version" ]; then
+                echo "Error: unexpected extra argument '$1'." >&2
+                exit 2
+            fi
+            arg_version="$1"
+            shift
+            ;;
+    esac
+done
+
+PJSIP_VERSION="${arg_version:-${PJSIP_VERSION:-2.17}}"
+
+case "$PJSIP_VERSION" in
+    2.17|2.12) ;;
+    *)
+        echo "Error: unsupported PJSIP version '$PJSIP_VERSION'." >&2
+        echo "       Supported values: 2.17 (default), 2.12 (legacy)." >&2
+        exit 2
+        ;;
+esac
+
 if [ ! -f "$SRC_DIR/setup.py" ] || [ ! -f "$SRC_DIR/setup_pjsip.py" ]; then
     echo
     echo "Expected setup.py and setup_pjsip.py in $SRC_DIR."
@@ -21,10 +99,6 @@ cd "$SRC_DIR"
 
 echo "Installing SIP SIMPLE SDK from $SRC_DIR ..."
 
-# PJSIP version selection. Default is 2.17 (the in-progress migration
-# target). Override with PJSIP_VERSION=2.12 to fall back to the legacy
-# fully-patched series at deps/patches/. See PJSIP_217_MIGRATION.md.
-PJSIP_VERSION="${PJSIP_VERSION:-2.17}"
 echo "Building against PJSIP $PJSIP_VERSION."
 
 # Re-running needs a clean deps tree; get_dependencies.sh fails otherwise.
