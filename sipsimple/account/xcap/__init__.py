@@ -1519,6 +1519,45 @@ class XCAPManager(object):
     def _OH_AddContactOperation(self, operation):
         sipsimple_addressbook = self.resource_lists.content['sipsimple_addressbook']
         contact = operation.contact
+
+        # An "add" for a contact the document already holds is a merge, not a
+        # replacement. Building a fresh element and add()-ing it swaps out the
+        # existing one entirely, discarding every child the new element does
+        # not carry -- including attributes in namespaces this client does not
+        # know about, written by other clients sharing the addressbook.
+        #
+        # That is not hypothetical. A client starting with an empty local
+        # addressbook sees every contact arriving from XCAP as new, and
+        # _internal_save issues add_contact for each one to every OTHER xcap
+        # account. With two accounts whose addressbooks share contacts, one
+        # sign-in silently rewrote contacts in the second account's document
+        # and destroyed the PGP key escrow another device had stored there.
+        try:
+            existing = sipsimple_addressbook[addressbook.Contact, contact.id]
+        except KeyError:
+            existing = None
+
+        if existing is not None:
+            self._OH_UpdateContactOperation(UpdateContactOperation(contact=contact, attributes=dict(
+                list(contact.attributes.items()) + [
+                    ('name', contact.name),
+                    ('presence.policy', contact.presence.policy),
+                    ('presence.subscribe', contact.presence.subscribe),
+                    ('dialog.policy', contact.dialog.policy),
+                    ('dialog.subscribe', contact.dialog.subscribe)])))
+            # URIs are merged by id: the ones already there keep their own
+            # attributes, and only genuinely new ones are added.
+            for uri in contact.uris:
+                try:
+                    existing.uris[uri.id]
+                except KeyError:
+                    contact_uri = addressbook.ContactURI(uri.id, uri.uri, uri.type)
+                    contact_uri.attributes = addressbook.ContactURI.attributes.type(uri.attributes)
+                    existing.uris.add(contact_uri)
+            if contact.uris.default is not None:
+                existing.uris.default = contact.uris.default
+            return
+
         presence_handling = addressbook.PresenceHandling(contact.presence.policy, contact.presence.subscribe)
         dialog_handling = addressbook.DialogHandling(contact.dialog.policy, contact.dialog.subscribe)
         xml_contact = addressbook.Contact(contact.id, contact.name, presence_handling=presence_handling, dialog_handling=dialog_handling)
