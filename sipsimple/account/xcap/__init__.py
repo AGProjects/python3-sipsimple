@@ -1888,12 +1888,28 @@ class XCAPManager(object):
         data=NotificationData(addressbook=addressbook, presence_rules=presence_rules, dialog_rules=dialog_rules, status_icon=status_icon, offline_status=offline_status)
         NotificationCenter().post_notification('XCAPManagerDidReloadData', sender=self, data=data)
 
+    def _fetch_one_document(self, document):
+        """Fetch one document, turning an expected failure into a log line.
+
+        These are spawned as greenlets whose result nobody inspects -- the
+        caller reads each document's own state afterwards. An XCAPError
+        escaping here therefore achieves nothing except to be reported by
+        gevent as an unhandled greenlet failure: a sixty-line traceback per
+        document, every time a network blip interrupts a fetch. Losing a
+        connection mid-fetch is ordinary, the failure is already carried by
+        the XCAPTrace notification, and the retry happens regardless.
+        """
+        try:
+            document.fetch()
+        except XCAPError as e:
+            log.warning('failed to fetch %s document: %s' % (document.name, e))
+
     def _fetch_documents(self, documents):
         try:
-            jobs = [gevent.spawn(document.fetch) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
+            jobs = [gevent.spawn(self._fetch_one_document, document) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
             gevent.joinall(jobs, timeout=15)
         except NameError:
-            workers = [Worker.spawn(document.fetch) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
+            workers = [Worker.spawn(self._fetch_one_document, document) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
             try:
                 while workers:
                     worker = workers.pop()
