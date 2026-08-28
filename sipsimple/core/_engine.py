@@ -28,7 +28,11 @@ class Engine(Thread, metaclass=Singleton):
                              "tls_cert_file": None,
                              "tls_privkey_file": None,
                              "tls_timeout": 3000,
-                             "user_agent":  "sipsimple-%s-pjsip-%s-r%s" % (__version__, PJ_VERSION, PJ_SVN_REVISION),
+                             # Just the SDK version. The pjsip version used to be appended
+                             # too, along with PJ_SVN_REVISION -- which is not an SVN revision
+                             # in this tree but the pjsip series (217 for 2.17), so it only
+                             # repeated it: "pjsip-2.17-r217". Neither belongs on the wire.
+                             "user_agent":  "sipsimple-%s" % __version__,
                              "log_level": 0,
                              "trace_sip": False,
                              "detect_sip_loops": True,

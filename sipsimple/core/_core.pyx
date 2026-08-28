@@ -21,6 +21,12 @@ import cython
 
 # constants
 
+# pj_get_version() returns a char*, so this is bytes. It stays bytes: it is
+# exported, and the sipclients3 scripts already call PJ_VERSION.decode() on it.
+# Changing the type here breaks them at import-time-plus-one-line, which is a
+# worse trade than leaving each consumer to decode. Anything putting it into a
+# string that goes on the wire must decode it -- b'2.17' in a User-Agent header
+# is what prompted this note.
 PJ_VERSION = pj_get_version()
 PJ_SVN_REVISION = int(PJ_SVN_REV)
 # Track the underlying pjsip build (212 or 217) so the runtime banner

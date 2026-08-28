@@ -630,7 +630,7 @@ cdef class PJSIPUA:
 
         def __set__(self, value):
             self._check_self()
-            self._user_agent = PJSTR(b"value")
+            self._user_agent = PJSTR(value.encode() if isinstance(value, str) else value)
 
     property log_level:
 
