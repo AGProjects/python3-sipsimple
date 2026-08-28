@@ -1089,6 +1089,8 @@ cdef int _cb_opus_fix_tx_impl(pjsip_tx_data *tdata) with gil:
     cdef pjmedia_sdp_media *media
     cdef pjmedia_sdp_attr *attr
     cdef pj_str_t new_value
+    cdef char *body_ptr
+    cdef int pos
     try:
         ua = _get_ua()
     except:
@@ -1097,6 +1099,21 @@ cdef int _cb_opus_fix_tx_impl(pjsip_tx_data *tdata) with gil:
         if tdata != NULL and tdata.msg != NULL:
             body = tdata.msg.body
             if body != NULL and _pj_str_to_str(body.content_type.type).lower() == "application" and _pj_str_to_str(body.content_type.subtype).lower() == "sdp":
+                if body.print_body == pjsip_print_text_body:
+                    # A raw text SDP body (see _set_raw_sdp_body, used by
+                    # back-to-back user agents to relay an SDP unmodified):
+                    # body.data is a char buffer, NOT a pjmedia_sdp_session, so
+                    # the pjmedia path below would walk garbage and crash.
+                    # Apply the same fix textually and in place -- the
+                    # replacement is the same length, so body.len and the
+                    # Content-Length stay valid.
+                    body_ptr = <char *> body.data
+                    body_str = _pj_buf_len_to_str(body_ptr, body.len).decode('latin-1').lower()
+                    pos = body_str.find("opus/48000/1")
+                    while pos != -1:
+                        memcpy(body_ptr + pos + 11, b'2', 1)
+                        pos = body_str.find("opus/48000/1", pos + 1)
+                    return 0
                 new_body = pjsip_msg_body_clone(tdata.pool, body)
                 sdp = <pjmedia_sdp_session *> new_body.data
                 for i in range(sdp.media_count):

@@ -155,12 +155,32 @@ cdef class frozendict:
 
 # functions
 
+# A pj_str_t does not own its bytes, it points at them. When a str is handed to
+# _str_to_pj_str() it has to be encoded first, and the resulting bytes object
+# must outlive the pj_str_t -- otherwise the temporary is freed the moment the
+# expression ends and pjsip copies whatever now sits at that address. That is
+# how a 200 OK ended up on the wire as "SIP/2.0 200 <garbage>", which the peer's
+# parser rejects, so the response is retransmitted forever and the call never
+# completes.
+#
+# Every consumer in pjsip copies the string (pj_strdup) while still inside the
+# call it was passed to, so keeping a bounded ring of the recent conversions
+# alive is enough, and it fixes every call site at once rather than one at a
+# time.
+cdef list _pj_str_keepalive = []
+
 cdef int _str_to_pj_str(object string, pj_str_t *pj_str) except -1:
-    if type(string) != bytes:
-        pj_str.ptr = PyBytes_AsString(string.encode())
+    cdef bytes buf
+    if type(string) is bytes:
+        buf = string
     else:
-        pj_str.ptr = PyBytes_AsString(string)
-    pj_str.slen = len(string)
+        buf = string.encode()
+        _pj_str_keepalive.append(buf)
+        if len(_pj_str_keepalive) > 256:
+            del _pj_str_keepalive[:128]
+    pj_str.ptr = PyBytes_AsString(buf)
+    # the byte length, not the character count: they differ for any non-ASCII str
+    pj_str.slen = len(buf)
 
 cdef object _pj_str_to_bytes(pj_str_t pj_str):
     return PyBytes_FromStringAndSize(pj_str.ptr, pj_str.slen)
@@ -188,17 +208,15 @@ cdef object _buf_to_str(const char *buf):
     except UnicodeDecodeError:
         return raw.decode('latin-1')
 
+# Return the bytes themselves rather than a char* into a temporary: the caller
+# passes both of these to the same C function, and encoding twice used to give
+# two independent temporaries -- a pointer into one and a length from the other,
+# which disagree the moment the string is not pure ASCII or contains a NUL.
 cdef object _str_as_str(object string):
-    if type(string) != bytes:
-        return PyBytes_AsString(string.encode())
-    else:
-        return PyBytes_AsString(string)
+    return string if type(string) is bytes else string.encode()
 
 cdef object _str_as_size(object string):
-    if type(string) != bytes:
-        return PyBytes_Size(string.encode())
-    else:
-        return PyBytes_Size(string)
+    return len(string if type(string) is bytes else string.encode())
 
 cdef object _pj_status_to_str(int status):
     cdef char buf[PJ_ERR_MSG_SIZE]
@@ -310,8 +328,13 @@ cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1:
             header_data = FrozenSubjectHeader_create(<pjsip_generic_string_hdr *> header)
         elif header_name == "Replaces" and not skip_replaces:
             header_data = FrozenReplacesHeader_create(<pjsip_replaces_hdr *> header)
-        # skip the following headers:
-        elif header_name not in ("Authorization", "Proxy-Authenticate", "Proxy-Authorization", "WWW-Authenticate"):
+        elif header_name in ("Authorization", "Proxy-Authenticate", "Proxy-Authorization", "WWW-Authenticate"):
+            # These are parsed into dedicated pjsip structures, so they cannot be
+            # read as generic string headers. Print them and keep the value, so a
+            # back-to-back user agent can relay a challenge and its answer between
+            # two dialogs. NOTE: the value contains credentials -- do not log it.
+            header_data = _pjsip_hdr_to_frozen_header(header, header_name)
+        else:
             header_value = _pj_str_to_str((<pjsip_generic_string_hdr *> header).hvalue)
             header_data = FrozenHeader(header_name, header_value)
 
@@ -373,6 +396,49 @@ cdef int _add_headers_to_tdata(pjsip_tx_data *tdata, object headers) except -1:
         _str_to_pj_str(bb, &value_pj)
         hdr = <pjsip_hdr *> pjsip_generic_string_hdr_create(tdata.pool, &name_pj, &value_pj)
         pjsip_msg_add_hdr(tdata.msg, hdr)
+
+cdef object _pjsip_hdr_to_frozen_header(pjsip_hdr *header, object header_name):
+    # Render a header that pjsip parses into a dedicated structure (and which
+    # therefore cannot be read through pjsip_generic_string_hdr) back into its
+    # textual value.
+    cdef char buf[2048]
+    cdef int buf_len
+    buf_len = pjsip_hdr_print_on(<void *> header, buf, sizeof(buf))
+    if buf_len < 0:
+        return None
+    printed = _pj_buf_len_to_str(buf, buf_len)
+    separator = printed.find(b":")
+    if separator < 0:
+        return None
+    return FrozenHeader(header_name, printed[separator+1:].strip().decode())
+
+cdef int _set_raw_sdp_body(pjsip_tx_data *tdata, object raw_sdp) except -1:
+    # Replace the SDP body pjsip generated (from the SDP negotiator) with the
+    # exact bytes given in raw_sdp. Used by back-to-back user agents which must
+    # relay an offer/answer between two dialogs without pjmedia rewriting it
+    # (codec intersection, payload type renumbering, attribute pruning).
+    # The negotiator state is left untouched; only the bytes on the wire change.
+    cdef pj_str_t type_pj
+    cdef pj_str_t subtype_pj
+    cdef pj_str_t text_pj
+    cdef pjsip_msg_body *body
+    cdef bytes type_bytes = b"application"
+    cdef bytes subtype_bytes = b"sdp"
+    cdef bytes raw_bytes
+
+    if raw_sdp is None:
+        return 0
+    raw_bytes = raw_sdp if isinstance(raw_sdp, bytes) else raw_sdp.encode()
+    if len(raw_bytes) == 0:
+        return 0
+    _str_to_pj_str(type_bytes, &type_pj)
+    _str_to_pj_str(subtype_bytes, &subtype_pj)
+    _str_to_pj_str(raw_bytes, &text_pj)
+    body = pjsip_msg_body_create(tdata.pool, &type_pj, &subtype_pj, &text_pj)
+    if body == NULL:
+        raise SIPCoreError("Could not create raw SDP message body")
+    tdata.msg.body = body
+    return 0
 
 cdef int _remove_headers_from_tdata(pjsip_tx_data *tdata, object headers) except -1:
     cdef pj_str_t header_name_pj

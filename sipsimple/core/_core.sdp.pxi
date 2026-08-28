@@ -38,11 +38,24 @@ cdef class BaseSDPSession:
                     self.address_type, self.name, self.connection, self.start_time, self.stop_time, self.attributes, self.bandwidth_info, self.media)
 
     def __str__(self):
-        cdef char cbuf[2048]
+        # pjmedia_sdp_print returns -1 when the buffer is too small; grow the
+        # buffer instead of silently returning an empty string (a 2048 byte
+        # fixed buffer truncates any moderately sized SDP).
+        cdef char *cbuf
         cdef int buf_len
-        buf_len = pjmedia_sdp_print(self.get_sdp_session(), cbuf, sizeof(cbuf))
-        if buf_len > -1:
-            return _pj_buf_len_to_str(cbuf, buf_len).decode()
+        cdef int size = 4096
+        while size <= 262144:
+            cbuf = <char *> malloc(size)
+            if cbuf == NULL:
+                raise MemoryError()
+            buf_len = pjmedia_sdp_print(self.get_sdp_session(), cbuf, size)
+            if buf_len > -1:
+                try:
+                    return _pj_buf_len_to_str(cbuf, buf_len).decode()
+                finally:
+                    free(cbuf)
+            free(cbuf)
+            size *= 2
         return ''
 
     def __richcmp__(self, other, op):

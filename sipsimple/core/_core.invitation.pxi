@@ -448,7 +448,7 @@ cdef class Invitation:
         return 0
 
     def send_invite(self, SIPURI request_uri not None, FromHeader from_header not None, ToHeader to_header not None, RouteHeader route_header not None, ContactHeader contact_header not None,
-                    SDPSession sdp not None, Credentials credentials=None, list extra_headers not None=list(), timeout=None):
+                    SDPSession sdp not None, Credentials credentials=None, list extra_headers not None=list(), timeout=None, object raw_sdp=None):
         cdef int status
         cdef pj_mutex_t *lock = self._lock
         cdef pjmedia_sdp_session *local_sdp
@@ -570,6 +570,7 @@ cdef class Invitation:
                 _str_to_pj_str(replaces_header.from_tag, &pj_replaces_hdr.from_tag)
                 _dict_to_pjsip_param(replaces_header.parameters, &pj_replaces_hdr.other_param, self._dialog.pool)
                 pjsip_msg_add_hdr(tdata.msg, <pjsip_hdr *>pj_replaces_hdr)
+            _set_raw_sdp_body(tdata, raw_sdp)
             _add_headers_to_tdata(tdata, extra_headers)
             with nogil:
                 status = pjsip_inv_send_msg(self._invite_session, tdata)
@@ -598,7 +599,7 @@ cdef class Invitation:
             with nogil:
                 pj_mutex_unlock(lock)
 
-    def send_response(self, int code, str reason=None, BaseContactHeader contact_header=None, BaseSDPSession sdp=None, list extra_headers not None=list()):
+    def send_response(self, int code, str reason=None, BaseContactHeader contact_header=None, BaseSDPSession sdp=None, list extra_headers not None=list(), object raw_sdp=None):
         cdef int status
         cdef int clean_tdata = 0
         cdef pj_mutex_t *lock = self._lock
@@ -633,7 +634,10 @@ cdef class Invitation:
                 self._update_contact_header(contact_header)
 
             if 200 <= code < 300 and sdp is None:
-                raise SIPCoreError("Local SDP needs to be set for a positive response")
+                # An offer/answer exchange that already completed (typically in a
+                # reliable 183) must not be repeated in the 2xx: RFC 3262/3264.
+                if invite_session.neg == NULL or pjmedia_sdp_neg_get_state(invite_session.neg) != PJMEDIA_SDP_NEG_STATE_DONE:
+                    raise SIPCoreError("Local SDP needs to be set for a positive response")
             if code >= 300 and sdp is not None:
                 raise SIPCoreError("Local SDP cannot be specified for a negative response")
             self.sdp.proposed_local = FrozenSDPSession.new(sdp) if sdp is not None else None
@@ -651,6 +655,8 @@ cdef class Invitation:
                 status = pjsip_inv_answer(invite_session, code, &reason_str if reason is not None else NULL, local_sdp, &tdata)
             if status != 0:
                 raise PJSIPError("Could not create %d reply to INVITE" % code, status)
+            if code < 300:
+                _set_raw_sdp_body(tdata, raw_sdp)
             _add_headers_to_tdata(tdata, extra_headers)
             with nogil:
                 status = pjsip_inv_send_msg(invite_session, tdata)
@@ -664,7 +670,7 @@ cdef class Invitation:
             with nogil:
                 pj_mutex_unlock(lock)
 
-    def send_reinvite(self, BaseContactHeader contact_header=None, BaseSDPSession sdp=None, list extra_headers not None=list()):
+    def send_reinvite(self, BaseContactHeader contact_header=None, BaseSDPSession sdp=None, list extra_headers not None=list(), object raw_sdp=None):
         cdef int status
         cdef pj_mutex_t *lock = self._lock
         cdef pjmedia_sdp_session *local_sdp
@@ -695,6 +701,7 @@ cdef class Invitation:
                 status = pjsip_inv_reinvite(invite_session, NULL, local_sdp, &tdata)
             if status != 0:
                 raise PJSIPError("Could not create re-INVITE message", status)
+            _set_raw_sdp_body(tdata, raw_sdp)
             _add_headers_to_tdata(tdata, extra_headers)
             with nogil:
                 status = pjsip_inv_send_msg(invite_session, tdata)

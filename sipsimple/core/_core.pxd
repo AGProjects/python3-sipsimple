@@ -1118,6 +1118,7 @@ cdef extern from "pjsip.h":
         pjsip_media_type content_type
         void *data
         unsigned int len
+        int print_body(void *msg_body, char *buf, unsigned int size) nogil
     struct pjsip_request_line:
         pjsip_method method
         pjsip_uri *uri
@@ -1166,6 +1167,7 @@ cdef extern from "pjsip.h":
         pjsip_rx_data_tp_info tp_info
         pjsip_rx_data_msg_info msg_info
     void *pjsip_hdr_clone(pj_pool_t *pool, void *hdr) nogil
+    int pjsip_hdr_print_on(void *hdr, char *buf, unsigned int len) nogil
     void pjsip_msg_add_hdr(pjsip_msg *msg, pjsip_hdr *hdr) nogil
     void *pjsip_msg_find_hdr(pjsip_msg *msg, pjsip_hdr_e type, void *start) nogil
     void *pjsip_msg_find_hdr_by_name(pjsip_msg *msg, pj_str_t *name, void *start) nogil
@@ -1175,6 +1177,7 @@ cdef extern from "pjsip.h":
     pjsip_expires_hdr *pjsip_expires_hdr_create(pj_pool_t *pool, int value) nogil
     pjsip_msg_body *pjsip_msg_body_create(pj_pool_t *pool, pj_str_t *type, pj_str_t *subtype, pj_str_t *text) nogil
     pjsip_msg_body *pjsip_msg_body_clone(pj_pool_t *pool, const pjsip_msg_body *body) nogil
+    int pjsip_print_text_body(void *msg_body, char *buf, unsigned int size) nogil
     pjsip_route_hdr *pjsip_route_hdr_init(pj_pool_t *pool, void *mem) nogil
     void pjsip_sip_uri_init(pjsip_sip_uri *url, int secure) nogil
     int pjsip_tx_data_dec_ref(pjsip_tx_data *tdata) nogil
@@ -1894,9 +1897,11 @@ cdef object _str_as_size(object string)
 cdef dict _pjsip_param_to_dict(pjsip_param *param_list)
 cdef int _dict_to_pjsip_param(object params, pjsip_param *param_list, pj_pool_t *pool)
 cdef int _pjsip_msg_to_dict(pjsip_msg *msg, dict info_dict) except -1
+cdef object _pjsip_hdr_to_frozen_header(pjsip_hdr *header, object header_name)
 cdef int _is_valid_ip(int af, object ip) except -1
 cdef int _get_ip_version(object ip) except -1
 cdef int _add_headers_to_tdata(pjsip_tx_data *tdata, object headers) except -1
+cdef int _set_raw_sdp_body(pjsip_tx_data *tdata, object raw_sdp) except -1
 cdef int _remove_headers_from_tdata(pjsip_tx_data *tdata, object headers) except -1
 cdef int _BaseSIPURI_to_pjsip_sip_uri(BaseSIPURI uri, pjsip_sip_uri *pj_uri, pj_pool_t *pool) except -1
 cdef int _BaseRouteHeader_to_pjsip_route_hdr(BaseIdentityHeader header, pjsip_route_hdr *pj_header, pj_pool_t *pool) except -1
