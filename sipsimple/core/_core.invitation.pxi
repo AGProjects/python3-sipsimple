@@ -448,7 +448,8 @@ cdef class Invitation:
         return 0
 
     def send_invite(self, SIPURI request_uri not None, FromHeader from_header not None, ToHeader to_header not None, RouteHeader route_header not None, ContactHeader contact_header not None,
-                    SDPSession sdp not None, Credentials credentials=None, list extra_headers not None=list(), timeout=None, object raw_sdp=None):
+                    SDPSession sdp not None, Credentials credentials=None, list extra_headers not None=list(), timeout=None, object raw_sdp=None,
+                    object call_id=None):
         cdef int status
         cdef pj_mutex_t *lock = self._lock
         cdef pjmedia_sdp_session *local_sdp
@@ -461,6 +462,7 @@ cdef class Invitation:
         cdef PJSTR from_header_str
         cdef PJSTR to_header_str
         cdef PJSTR request_uri_str
+        cdef bytes call_id_bytes
 
         ua = _get_ua()
 
@@ -531,6 +533,16 @@ cdef class Invitation:
             _dict_to_pjsip_param(to_header_parameters, &self._dialog.remote.info.other_param, self._dialog.pool)
             self.from_header = FrozenFromHeader_create(self._dialog.local.info)
             self.to_header = FrozenToHeader.new(to_header)
+            if call_id is not None:
+                # Replace the Call-ID pjsip generated with the caller's own. This
+                # is safe after registration because a UAC dialog set is keyed on
+                # the local (From) tag, not the Call-ID -- see dlg_set->ht_key in
+                # pjsip_ua_register_dlg(). Every request pjsip builds for this
+                # dialog prints dlg->call_id, so the peer sees this value and
+                # echoes it back. Useful for a back-to-back user agent, which
+                # wants to know the outgoing Call-ID before it places the call.
+                call_id_bytes = call_id if isinstance(call_id, bytes) else call_id.encode()
+                pj_strdup2_with_null(self._dialog.pool, &self._dialog.call_id.id, call_id_bytes)
             self.call_id = _pj_str_to_str(self._dialog.call_id.id)
             local_sdp = self.sdp.proposed_local.get_sdp_session() if sdp is not None else NULL
             with nogil:
