@@ -142,18 +142,60 @@ fi
 echo "Cleaning previous build artifacts ..."
 rm -rf build/ build_inplace/ python3_sipsimple.egg-info/
 # Remove any in-tree compiled extension that would shadow the venv install
-# when Python is invoked from this directory (CWD on sys.path).
+# when Python is invoked from this directory (CWD on sys.path). This is a
+# build artifact of `build_ext --inplace`, not the installed package, so
+# removing it does not touch what is in site-packages.
 find sipsimple -name "_core*.so" -print -delete 2>/dev/null || true
-pip3 uninstall -y python3-sipsimple >/dev/null 2>&1 || true
 
-pip3 install --force-reinstall --no-deps --no-build-isolation .
+# Build BEFORE touching the installed package.
+#
+# This used to `pip3 uninstall` and then `pip3 install .`, so a build that
+# failed -- a Cython error, a compiler error, a missing dependency -- left the
+# venv with no SDK at all, and the only way back was to fix the source and get
+# a build to succeed. Now the wheel is built first and the installed package is
+# only replaced once there is something to replace it with. A failed build
+# leaves the previous install exactly as it was.
+#
+# Note that `set -e` is in effect, so the old `if [ $? -ne 0 ]` check after
+# pip could never have run: pip failing aborted the script before reaching it.
+# The checks below are written as `if ! cmd; then` so they actually execute.
+WHEEL_DIR="$SRC_DIR/dist/wheel-$$"
+rm -rf "$WHEEL_DIR"
+mkdir -p "$WHEEL_DIR"
 
-if [ $? -ne 0 ]; then
+echo "Building the wheel (the installed SDK is left alone until this succeeds) ..."
+if ! pip3 wheel --no-deps --no-build-isolation --wheel-dir "$WHEEL_DIR" .; then
     echo
-    echo "Failed to build SIP SIMPLE SDK"
+    echo "Failed to build SIP SIMPLE SDK."
+    echo "The previously installed SDK has NOT been touched:"
+    python3 -c 'import sipsimple; print("  still installed:", sipsimple.__version__)' 2>/dev/null \
+        || echo "  (no SDK was installed to begin with)"
+    echo
+    rm -rf "$WHEEL_DIR"
+    exit 1
+fi
+
+WHEEL="$(ls -1 "$WHEEL_DIR"/python3_sipsimple-*.whl 2>/dev/null | head -n 1)"
+if [ -z "$WHEEL" ]; then
+    echo
+    echo "The build reported success but produced no wheel in $WHEEL_DIR."
+    echo "The previously installed SDK has NOT been touched."
+    echo
+    rm -rf "$WHEEL_DIR"
+    exit 1
+fi
+
+echo "Installing $(basename "$WHEEL") ..."
+if ! pip3 install --force-reinstall --no-deps "$WHEEL"; then
+    echo
+    echo "Failed to install the freshly built wheel."
+    echo "The wheel is kept at $WHEEL so you can retry the install by hand:"
+    echo "    pip3 install --force-reinstall --no-deps $WHEEL"
     echo
     exit 1
 fi
+
+rm -rf "$WHEEL_DIR"
 
 # Confirm the freshly built extension actually picked up bcg729 (if it was present).
 # IMPORTANT: cd out of $SRC_DIR before importing. Otherwise CWD is on sys.path
