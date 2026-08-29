@@ -1,5 +1,6 @@
 
 import re
+import weakref
 
 
 cdef class Subscription:
@@ -9,9 +10,16 @@ cdef class Subscription:
 
     def __cinit__(self, *args, **kwargs):
         self.state = "NULL"
-        pj_timer_entry_init(&self._timeout_timer, 0, <void *> self, _Subscription_cb_timer)
+        # PJSIP stores a timer entry's user_data as a raw pointer and holds no
+        # reference to it, so the entry cannot keep this object alive. Hand it
+        # a weakref instead, kept alive independently of self, so a callback
+        # that reaches the timer heap after this object has been freed resolves
+        # to None rather than resurrecting freed memory. See _Subscription_cb_timer_impl().
+        self.weakref = weakref.ref(self)
+        Py_INCREF(self.weakref)
+        pj_timer_entry_init(&self._timeout_timer, 0, <void *> self.weakref, _Subscription_cb_timer)
         self._timeout_timer_active = 0
-        pj_timer_entry_init(&self._refresh_timer, 1, <void *> self, _Subscription_cb_timer)
+        pj_timer_entry_init(&self._refresh_timer, 1, <void *> self.weakref, _Subscription_cb_timer)
         self._refresh_timer_active = 0
         self.extra_headers = frozenlist()
         self.peer_address = None
@@ -99,10 +107,48 @@ cdef class Subscription:
                 raise PJSIPError("Could not set credentials for SUBSCRIBE", status)
 
     def __dealloc__(self):
-        cdef PJSIPUA ua = self._get_ua()
+        cdef PJSIPUA ua
+        cdef Timer timer
+
+        # This runs with the object's refcount already at zero. Every operation
+        # below that releases the GIL (and every one that can trigger a garbage
+        # collection) lets the engine thread run a callback which is still able
+        # to reach this object: through the evsub's mod_data pointer, or through
+        # the weakref handed to the timer entries, which Python only invalidates
+        # after __dealloc__ has returned. Such a callback would take a reference
+        # to a dying object and publish it into the event queue via _add_event();
+        # when that reference is dropped later, tp_dealloc runs a second time on
+        # freed memory (typically a SIGSEGV inside PyObject_GC_UnTrack).
+        #
+        # So mark ourselves destroyed before doing anything else -- the callbacks
+        # check this flag and bail out before they can publish a reference -- and
+        # then detach from PJSIP using only calls that keep the GIL, before the
+        # first "with nogil" block below.
+        self._destroyed = 1
+
+        ua = self._get_ua()
+
+        if ua is not None:
+            if self._obj != NULL:
+                pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
+            self._cancel_timers(ua, 1, 1)
+
+        # Drop the reference taken in __cinit__ on the weakref handed to the
+        # timer entries, but only after a delay: pj_timer_heap_poll() dequeues
+        # an entry and releases the heap lock before invoking its callback, so
+        # a callback may already be in flight on the polling thread holding a
+        # pointer to this weakref. Cancelling above cannot stop that one.
+        if self.weakref is not None:
+            timer = Timer()
+            try:
+                timer.schedule(60, deallocate_weakref, self.weakref)
+            except SIPCoreError:
+                pass
+            self.weakref = None
+
         if ua is None:
             return
-        self._cancel_timers(ua, 1, 1)
+
         # This may run on a thread other than the PJSIP polling thread (e.g.
         # when the object is garbage-collected via the Cocoa bridge on the main
         # thread). Hold the dialog lock across teardown so we don't race the
@@ -113,7 +159,6 @@ cdef class Subscription:
             with nogil:
                 pjsip_dlg_inc_lock(self._dlg)
             if self._obj != NULL:
-                pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
                 with nogil:
                     pjsip_evsub_terminate(self._obj, 0)
                 self._obj = NULL
@@ -122,7 +167,6 @@ cdef class Subscription:
                 pjsip_dlg_dec_lock(self._dlg)
             self._dlg = NULL
         elif self._obj != NULL:
-            pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
             with nogil:
                 pjsip_evsub_terminate(self._obj, 0)
             self._obj = NULL
@@ -407,7 +451,13 @@ cdef class IncomingSubscription:
         self.call_id = None
 
     def __dealloc__(self):
-        cdef PJSIPUA ua = self._get_ua(0)
+        cdef PJSIPUA ua
+        # See Subscription.__dealloc__(): mark ourselves destroyed and detach
+        # from the evsub before anything here can release the GIL, so a callback
+        # on the engine thread cannot resurrect an object whose refcount has
+        # already reached zero.
+        self._destroyed = 1
+        ua = self._get_ua(0)
         self._initial_response = NULL
         self._initial_tsx = NULL
         # If the UA is gone, _get_ua(0) has already NULLed self._obj and there is
@@ -415,11 +465,12 @@ cdef class IncomingSubscription:
         # teardown so we don't race the engine thread (see Subscription.__dealloc__).
         if ua is None:
             return
+        if self._obj != NULL:
+            pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
         if self._dlg != NULL:
             with nogil:
                 pjsip_dlg_inc_lock(self._dlg)
             if self._obj != NULL:
-                pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
                 with nogil:
                     pjsip_evsub_terminate(self._obj, 0)
                 self._obj = NULL
@@ -428,7 +479,6 @@ cdef class IncomingSubscription:
                 pjsip_dlg_dec_lock(self._dlg)
             self._dlg = NULL
         elif self._obj != NULL:
-            pjsip_evsub_set_mod_data(self._obj, ua._event_module.id, NULL)
             with nogil:
                 pjsip_evsub_terminate(self._obj, 0)
             self._obj = NULL
@@ -815,6 +865,11 @@ cdef void _Subscription_cb_state_impl(pjsip_evsub *sub, pjsip_event *event) with
         if subscription_void == NULL:
             return
         subscription = <object> subscription_void
+        if subscription._destroyed:
+            # Being deallocated on another thread: its refcount is already
+            # zero, so holding on to this reference would resurrect a dying
+            # object and end in a double free.
+            return
         state = pjsip_evsub_get_state_name(sub).decode()
         if (event != NULL and event.type == PJSIP_EVENT_TSX_STATE and
             (event.body.tsx_state.tsx.state == PJSIP_TSX_STATE_COMPLETED or
@@ -857,6 +912,11 @@ cdef void _Subscription_cb_tsx_impl(pjsip_evsub *sub, pjsip_transaction *tsx, pj
         if subscription_void == NULL:
             return
         subscription = <object> subscription_void
+        if subscription._destroyed:
+            # Being deallocated on another thread: its refcount is already
+            # zero, so holding on to this reference would resurrect a dying
+            # object and end in a double free.
+            return
         if (event != NULL and event.type == PJSIP_EVENT_TSX_STATE and
             event.body.tsx_state.type == PJSIP_EVENT_RX_MSG and
             event.body.tsx_state.tsx.role == PJSIP_ROLE_UAC and
@@ -892,6 +952,11 @@ cdef void _Subscription_cb_notify_impl(pjsip_evsub *sub, pjsip_rx_data *rdata, i
         if subscription_void == NULL:
             return
         subscription = <object> subscription_void
+        if subscription._destroyed:
+            # Being deallocated on another thread: its refcount is already
+            # zero, so holding on to this reference would resurrect a dying
+            # object and end in a double free.
+            return
         if rdata != NULL:
             if subscription.peer_address is None:
                 subscription.peer_address = EndpointAddress(rdata.pkt_info.src_name, rdata.pkt_info.src_port)
@@ -925,14 +990,28 @@ cdef void _Subscription_cb_timer_impl(pj_timer_heap_t *timer_heap, pj_timer_entr
         return
     try:
         if entry.user_data != NULL:
-            subscription = <object> entry.user_data
+            # user_data is a weakref to the Subscription, not the Subscription itself.
+            # pj_timer_heap_poll() removes an entry from the heap and drops the
+            # heap lock before calling this, so a cancel from __dealloc__ on
+            # another thread cannot stop a callback that has already been
+            # dequeued. Resolving the weakref turns that lost race into a None
+            # here instead of a use-after-free on the freed Subscription.
+            subscription = (<object> entry.user_data)()
+            if subscription is None or subscription._destroyed:
+                # None: freed since the entry was queued. _destroyed: being
+                # freed right now -- see Subscription.__dealloc__().
+                return
+            # The entry has already fired, so clear the armed flag before
+            # any early return below can leave it stale.
+            if entry.id == 1:
+                subscription._refresh_timer_active = 0
+            else:
+                subscription._timeout_timer_active = 0
             if subscription._dlg == NULL:
                 return
             if entry.id == 1:
-                subscription._refresh_timer_active = 0
                 subscription._cb_refresh_timer(ua)
             else:
-                subscription._timeout_timer_active = 0
                 subscription._cb_timeout_timer(ua)
     except:
         ua._handle_exception(1)
@@ -957,6 +1036,12 @@ cdef void _IncomingSubscription_cb_rx_refresh_impl(pjsip_evsub *sub, pjsip_rx_da
             p_st_code[0] = 481
             return
         subscription = <object> subscription_void
+        if subscription._destroyed:
+            # Being deallocated on another thread: its refcount is already
+            # zero, so holding on to this reference would resurrect a dying
+            # object and end in a double free.
+            p_st_code[0] = 481
+            return
         if rdata != NULL:
             if subscription.peer_address is None:
                 subscription.peer_address = EndpointAddress(rdata.pkt_info.src_name, rdata.pkt_info.src_port)
@@ -986,6 +1071,11 @@ cdef void _IncomingSubscription_cb_server_timeout_impl(pjsip_evsub *sub) with gi
         if subscription_void == NULL:
             return
         subscription = <object> subscription_void
+        if subscription._destroyed:
+            # Being deallocated on another thread: its refcount is already
+            # zero, so holding on to this reference would resurrect a dying
+            # object and end in a double free.
+            return
         subscription._cb_server_timeout(ua)
     except:
         ua._handle_exception(1)
@@ -1007,6 +1097,11 @@ cdef void _IncomingSubscription_cb_tsx_impl(pjsip_evsub *sub, pjsip_transaction 
         if subscription_void == NULL:
             return
         subscription = <object> subscription_void
+        if subscription._destroyed:
+            # Being deallocated on another thread: its refcount is already
+            # zero, so holding on to this reference would resurrect a dying
+            # object and end in a double free.
+            return
         subscription._cb_tsx(ua, event)
     except:
         ua._handle_exception(1)

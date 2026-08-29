@@ -960,6 +960,31 @@ cdef class Invitation:
         cdef Timer timer
         cdef PJSIPUA ua
 
+        # This runs with the object's refcount already at zero. Every operation
+        # below that releases the GIL (and every one that can trigger a garbage
+        # collection) lets the engine thread run a callback which is still able
+        # to reach this object through the weakref stored in the invite session's
+        # mod_data -- Python only invalidates that weakref after __dealloc__ has
+        # returned, so it still resolves to this dying object. Such a callback
+        # would take a reference to it and publish it into the event queue via
+        # _add_event(); when that reference is dropped later, tp_dealloc runs a
+        # second time on freed memory (typically a SIGSEGV inside
+        # PyObject_GC_UnTrack).
+        #
+        # So mark ourselves destroyed before doing anything else -- the callbacks
+        # check this flag and bail out before they can publish a reference -- and
+        # then detach from the invite session while still holding the GIL, before
+        # _do_dealloc() takes the lock with the GIL released.
+        self._destroyed = 1
+
+        try:
+            ua = _get_ua()
+        except SIPCoreError:
+            ua = None
+
+        if ua is not None and self._invite_session != NULL:
+            self._invite_session.mod_data[ua._module.id] = NULL
+
         self._do_dealloc()
         # The mutex is allocated from the PJSIP endpoint's memory pool. If the
         # PJSIPUA has already been deallocated (e.g. the engine was stopped
@@ -969,19 +994,22 @@ cdef class Invitation:
         # invoke pthread_mutex_destroy on a corrupted lock and abort the
         # process. Only destroy the mutex while the UA (and therefore the pool
         # that owns it) is still alive.
-        try:
-            ua = _get_ua()
-        except SIPCoreError:
-            ua = None
         if ua is not None and self._lock != NULL:
             pj_mutex_destroy(self._lock)
         self._lock = NULL
 
-        timer = Timer()
-        try:
-            timer.schedule(60, deallocate_weakref, self.weakref)
-        except SIPCoreError:
-            pass
+        # Drop the reference taken in __cinit__ on the weakref, but only after a
+        # delay: a callback resolving it may already be in flight on the engine
+        # thread. self.weakref is None when tp_clear() got here first (the object
+        # was part of a collected reference cycle), in which case that reference
+        # has already been dropped.
+        if self.weakref is not None:
+            timer = Timer()
+            try:
+                timer.schedule(60, deallocate_weakref, self.weakref)
+            except SIPCoreError:
+                pass
+            self.weakref = None
 
     cdef int _update_contact_header(self, BaseContactHeader contact_header) except -1:
         # The PJSIP functions called here don't do much, so there is no need to call them
@@ -1571,7 +1599,10 @@ cdef void _Invitation_cb_state_impl(pjsip_inv_session *inv, pjsip_event *e) with
             return
         if inv.mod_data[ua._module.id] != NULL:
             invitation = (<object> inv.mod_data[ua._module.id])()
-            if invitation is None:
+            if invitation is None or invitation._destroyed:
+                # None: already freed. _destroyed: being freed right now, its
+                # refcount is already zero -- holding on to this reference would
+                # resurrect a dying object and end in a double free.
                 return
             state = pjsip_inv_state_name(inv.state).decode().lower()
             sub_state = None
@@ -1642,7 +1673,10 @@ cdef void _Invitation_cb_sdp_done_impl(pjsip_inv_session *inv, int status) with 
     try:
         if inv.mod_data[ua._module.id] != NULL:
             invitation = (<object> inv.mod_data[ua._module.id])()
-            if invitation is None:
+            if invitation is None or invitation._destroyed:
+                # None: already freed. _destroyed: being freed right now, its
+                # refcount is already zero -- holding on to this reference would
+                # resurrect a dying object and end in a double free.
                 return
             if status == 0:
                 if pjmedia_sdp_neg_get_active_local(invitation._invite_session.neg, &sdp) == 0:
@@ -1698,7 +1732,10 @@ cdef int _Invitation_cb_rx_reinvite_impl(pjsip_inv_session *inv, pjmedia_sdp_ses
     try:
         if inv.mod_data[ua._module.id] != NULL:
             invitation = (<object> inv.mod_data[ua._module.id])()
-            if invitation is None:
+            if invitation is None or invitation._destroyed:
+                # None: already freed. _destroyed: being freed right now, its
+                # refcount is already zero -- holding on to this reference would
+                # resurrect a dying object and end in a double free.
                 return 1
             if invitation.peer_address is None:
                 invitation.peer_address = EndpointAddress(rdata.pkt_info.src_name, rdata.pkt_info.src_port)
@@ -1757,7 +1794,10 @@ cdef void _Invitation_cb_tsx_state_changed_impl(pjsip_inv_session *inv, pjsip_tr
             tdata = e.body.tsx_state.src.tdata
         if inv.mod_data[ua._module.id] != NULL:
             invitation = (<object> inv.mod_data[ua._module.id])()
-            if invitation is None:
+            if invitation is None or invitation._destroyed:
+                # None: already freed. _destroyed: being freed right now, its
+                # refcount is already zero -- holding on to this reference would
+                # resurrect a dying object and end in a double free.
                 return
             if rdata != NULL:
                 if invitation.peer_address is None:

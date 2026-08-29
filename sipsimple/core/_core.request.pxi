@@ -1,5 +1,6 @@
 
 from datetime import datetime, timedelta
+import weakref
 
 
 cdef class EndpointAddress:
@@ -62,7 +63,14 @@ cdef class Request:
     def __cinit__(self, *args, **kwargs):
         self.state = "INIT"
         self.peer_address = None
-        pj_timer_entry_init(&self._timer, 0, <void *> self, _Request_cb_timer)
+        # PJSIP stores a timer entry's user_data as a raw pointer and holds no
+        # reference to it, so the entry cannot keep this object alive. Hand it
+        # a weakref instead, kept alive independently of self, so a callback
+        # that reaches the timer heap after this object has been freed resolves
+        # to None rather than resurrecting freed memory. See _Request_cb_timer_impl().
+        self.weakref = weakref.ref(self)
+        Py_INCREF(self.weakref)
+        pj_timer_entry_init(&self._timer, 0, <void *> self.weakref, _Request_cb_timer)
         self._timer_active = 0
 
     def __init__(self, method, SIPURI request_uri not None, FromHeader from_header not None, ToHeader to_header not None,
@@ -196,9 +204,49 @@ cdef class Request:
         self._tsx.mod_data[ua._module.id] = <void *> self
 
     def __dealloc__(self):
-        cdef PJSIPUA ua = self._get_ua()
+        cdef PJSIPUA ua
+        cdef Timer timer
+
+        # This runs with the object's refcount already at zero. Every operation
+        # below that releases the GIL (and every one that can trigger a garbage
+        # collection) lets the engine thread run a callback which is still able
+        # to reach this object: through the transaction's mod_data pointer, or
+        # through the weakref handed to the timer entry, which Python only
+        # invalidates after __dealloc__ has returned. Such a callback would take
+        # a reference to a dying object and publish it into the event queue via
+        # _add_event(); when that reference is dropped later, tp_dealloc runs a
+        # second time on freed memory (typically a SIGSEGV inside
+        # PyObject_GC_UnTrack).
+        #
+        # So mark ourselves destroyed before doing anything else -- the callbacks
+        # check this flag and bail out before they can publish a reference -- and
+        # then detach from PJSIP using only calls that keep the GIL, before the
+        # first "with nogil" block below.
+        self._destroyed = 1
+
+        ua = self._get_ua()
+
+        if ua is not None:
+            if self._tsx != NULL:
+                self._tsx.mod_data[ua._module.id] = NULL
+            if self._timer_active:
+                pjsip_endpt_cancel_timer(ua._pjsip_endpoint._obj, &self._timer)
+                self._timer_active = 0
+
+        # Drop the reference taken in __cinit__ on the weakref handed to the
+        # timer entry, but only after a delay: pj_timer_heap_poll() dequeues an
+        # entry and releases the heap lock before invoking its callback, so a
+        # callback may already be in flight on the polling thread holding a
+        # pointer to this weakref. Cancelling above cannot stop that one.
+        if self.weakref is not None:
+            timer = Timer()
+            try:
+                timer.schedule(60, deallocate_weakref, self.weakref)
+            except SIPCoreError:
+                pass
+            self.weakref = None
+
         if self._tsx != NULL:
-            self._tsx.mod_data[ua._module.id] = NULL
             if self._tsx.state < PJSIP_TSX_STATE_COMPLETED:
                 with nogil:
                     pjsip_tsx_terminate(self._tsx, 500)
@@ -206,9 +254,6 @@ cdef class Request:
         if self._tdata != NULL:
             pjsip_tx_data_dec_ref(self._tdata)
             self._tdata = NULL
-        if self._timer_active:
-            pjsip_endpt_cancel_timer(ua._pjsip_endpoint._obj, &self._timer)
-            self._timer_active = 0
 
     def send(self, timeout=None):
         cdef pj_time_val timeout_pj
@@ -493,6 +538,11 @@ cdef void _Request_cb_tsx_state_impl(pjsip_transaction *tsx, pjsip_event *event)
         req_ptr = tsx.mod_data[ua._module.id]
         if req_ptr != NULL:
             req = <object> req_ptr
+            if req._destroyed:
+                # Being deallocated on another thread: its refcount is already
+                # zero, so holding on to this reference would resurrect a dying
+                # object and end in a double free.
+                return
             if event.type == PJSIP_EVENT_RX_MSG:
                 rdata = event.body.rx_msg.rdata
             elif event.type == PJSIP_EVENT_TSX_STATE and event.body.tsx_state.type == PJSIP_EVENT_RX_MSG:
@@ -514,7 +564,17 @@ cdef void _Request_cb_timer_impl(pj_timer_heap_t *timer_heap, pj_timer_entry *en
         return
     try:
         if entry.user_data != NULL:
-            req = <object> entry.user_data
+            # user_data is a weakref to the Request, not the Request itself.
+            # pj_timer_heap_poll() removes an entry from the heap and drops the
+            # heap lock before calling this, so a cancel from __dealloc__ on
+            # another thread cannot stop a callback that has already been
+            # dequeued. Resolving the weakref turns that lost race into a None
+            # here instead of a use-after-free on the freed Request.
+            req = (<object> entry.user_data)()
+            if req is None or req._destroyed:
+                # None: freed since the entry was queued. _destroyed: being
+                # freed right now -- see Request.__dealloc__().
+                return
             req._timer_active = 0
             req._cb_timer(ua)
     except:

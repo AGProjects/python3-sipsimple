@@ -2175,6 +2175,9 @@ cdef class EndpointAddress(object):
 
 cdef class Request(object):
     # attributes
+    cdef object __weakref__
+    cdef object weakref
+    cdef int _destroyed
     cdef readonly object state
     cdef PJSTR _method
     cdef readonly EndpointAddress peer_address
@@ -2223,6 +2226,9 @@ cdef void _Request_cb_timer(pj_timer_heap_t *timer_heap, pj_timer_entry *entry) 
 
 cdef class Referral(object):
     # attributes
+    cdef object __weakref__
+    cdef object weakref
+    cdef int _destroyed
     cdef pjsip_evsub *_obj
     cdef pjsip_dialog *_dlg
     cdef pjsip_route_hdr _route_header
@@ -2263,6 +2269,7 @@ cdef class Referral(object):
     cdef int _cb_refresh_timer(self, PJSIPUA ua)
 
 cdef class IncomingReferral(object):
+    cdef int _destroyed
     cdef pjsip_evsub *_obj
     cdef pjsip_dialog *_dlg
     cdef pjsip_tx_data *_initial_response
@@ -2297,6 +2304,9 @@ cdef void _IncomingReferral_cb_tsx(pjsip_evsub *sub, pjsip_transaction *tsx, pjs
 
 cdef class Subscription(object):
     # attributes
+    cdef object __weakref__
+    cdef object weakref
+    cdef int _destroyed
     cdef pjsip_evsub *_obj
     cdef pjsip_dialog *_dlg
     cdef pjsip_route_hdr _route_header
@@ -2337,6 +2347,7 @@ cdef class Subscription(object):
 
 cdef class IncomingSubscription(object):
     # attributes
+    cdef int _destroyed
     cdef pjsip_evsub *_obj
     cdef pjsip_dialog *_dlg
     cdef PJSTR _content_type
@@ -2572,6 +2583,7 @@ cdef class Invitation(object):
     # attributes
     cdef object __weakref__
     cdef object weakref
+    cdef int _destroyed
     cdef int _sdp_neg_status
     cdef int _failed_response
     cdef pj_list _route_set
