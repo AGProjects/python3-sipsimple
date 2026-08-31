@@ -1441,7 +1441,9 @@ cdef extern from "pjsip_ua.h":
     enum pjsip_inv_option:
         PJSIP_INV_SUPPORT_100REL
     enum pjsip_inv_state:
+        PJSIP_INV_STATE_CALLING
         PJSIP_INV_STATE_INCOMING
+        PJSIP_INV_STATE_EARLY
         PJSIP_INV_STATE_CONFIRMED
     enum pjmedia_mod_offer_flag:
         PJMEDIA_SDP_NEG_ALLOW_MEDIA_CHANGE
@@ -2579,6 +2581,9 @@ cdef class TransferRequestCallbackTimer(Timer):
 cdef class MessageCallbackTimer(Timer):
     cdef object rdata_dict
 
+cdef class ProvisionalResponseCallbackTimer(Timer):
+    cdef object rdata_dict
+
 cdef class Invitation(object):
     # attributes
     cdef object __weakref__
@@ -2626,6 +2631,7 @@ cdef class Invitation(object):
     cdef int _fail(self, PJSIPUA ua) except -1
     cdef int _cb_state(self, StateCallbackTimer timer) except -1
     cdef int _cb_message(self, MessageCallbackTimer timer) except -1
+    cdef int _cb_provisional_response(self, ProvisionalResponseCallbackTimer timer) except -1
     cdef int _cb_sdp_done(self, SDPCallbackTimer timer) except -1
     cdef int _cb_timer_disconnect(self, timer) except -1
     cdef int _cb_postpoll_fail(self, timer) except -1

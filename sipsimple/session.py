@@ -2643,6 +2643,19 @@ class Session(object):
         self._sylk_zrtp.handle_incoming(payload)
         return True
 
+    def _NH_SIPInvitationGotProvisionalResponse(self, notification):
+        # A provisional response (101-199) that PJSIP could not turn into an
+        # early dialog because it carried no To-tag, so it never arrived as a
+        # SIPInvitationChangedState(state='early'). The canonical case is the
+        # "110 Push sent" that SIP Thor returns while it waits for a pushed
+        # callee to register. Forward it under the same name the application
+        # already listens to for tagged provisionals, so callers do not have
+        # to care which of the two paths a 1xx took.
+        if self.state == 'terminated':
+            return
+        notification.center.post_notification('SIPSessionGotProvisionalResponse', self,
+                                              NotificationData(code=notification.data.code, reason=notification.data.reason))
+
     def _NH_SIPInvitationChangedState(self, notification):
         if self.state == 'terminated':
             return

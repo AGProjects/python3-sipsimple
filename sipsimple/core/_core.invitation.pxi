@@ -54,6 +54,11 @@ cdef class MessageCallbackTimer(Timer):
         self.rdata_dict = rdata_dict
 
 
+cdef class ProvisionalResponseCallbackTimer(Timer):
+    def __init__(self, rdata_dict):
+        self.rdata_dict = rdata_dict
+
+
 class DialogID(tuple):
     call_id = property(itemgetter(0))
     local_tag = property(itemgetter(1))
@@ -1237,6 +1242,24 @@ cdef class Invitation:
         _add_event("SIPInvitationGotMessage", timer.rdata_dict)
         return 0
 
+    cdef int _cb_provisional_response(self, ProvisionalResponseCallbackTimer timer) except -1:
+        # Posted from the reactor thread for a provisional response (101-199)
+        # received on our outgoing INVITE transaction that did NOT carry a
+        # To-tag. PJSIP only moves the invite session to the EARLY state when
+        # dlg->remote.info->tag is set (see inv_on_state_calling in
+        # sip_inv.c), so a tagless provisional -- e.g. the "110 Push sent"
+        # that OpenSIPS/SIP Thor emits while it waits for a pushed device to
+        # register -- would otherwise never reach the application at all.
+        # We surface it as its own event so the session state machine is not
+        # disturbed: the invitation stays in the "outgoing" state, exactly as
+        # PJSIP sees it.
+        cdef PJSIPUA ua
+        ua = self._check_ua()
+        if ua is None:
+            return 0
+        _add_event("SIPInvitationGotProvisionalResponse", timer.rdata_dict)
+        return 0
+
     cdef int _cb_sdp_done(self, SDPCallbackTimer timer) except -1:
         cdef int status
         cdef pj_mutex_t *lock = self._lock
@@ -1781,6 +1804,7 @@ cdef void _Invitation_cb_tsx_state_changed_impl(pjsip_inv_session *inv, pjsip_tr
     cdef PJSIPUA ua
     cdef StateCallbackTimer timer
     cdef TransferRequestCallbackTimer transfer_timer
+    cdef ProvisionalResponseCallbackTimer provisional_timer
     try:
         ua = _get_ua()
     except:
@@ -1819,6 +1843,25 @@ cdef void _Invitation_cb_tsx_state_changed_impl(pjsip_inv_session *inv, pjsip_tr
                 try:
                     timer = StateCallbackTimer("connected", "normal", rdata_dict, tdata_dict, originator)
                     timer.schedule(0, <timer_callback>invitation._cb_state, invitation)
+                except:
+                    invitation._fail(ua)
+            elif (tsx.role == PJSIP_ROLE_UAC and tsx == inv.invite_tsx and
+                  tsx.state == PJSIP_TSX_STATE_PROCEEDING and
+                  inv.state == PJSIP_INV_STATE_CALLING and
+                  rdata != NULL and rdata.msg_info.msg.type == PJSIP_RESPONSE_MSG and
+                  100 < rdata.msg_info.msg.line.status.code < 200):
+                # Tagless provisional response on our outgoing INVITE. PJSIP
+                # left the invite session in CALLING (no To-tag => no early
+                # dialog), so _Invitation_cb_state_impl will never run for it.
+                # Hand it to Python ourselves. inv.state is read here rather
+                # than invitation.state because the state handler runs before
+                # this callback and its Python-side transition is deferred
+                # through a timer -- inv.state is the race-free answer.
+                rdata_dict = dict(obj=invitation)
+                _pjsip_msg_to_dict(rdata.msg_info.msg, rdata_dict)
+                try:
+                    provisional_timer = ProvisionalResponseCallbackTimer(rdata_dict)
+                    provisional_timer.schedule(0, <timer_callback>invitation._cb_provisional_response, invitation)
                 except:
                     invitation._fail(ua)
             elif (invitation.state in ("incoming", "early") and invitation.direction == "incoming" and
