@@ -121,6 +121,30 @@ class Document(object):
         self.etag = None
         self.dirty = False
 
+    @property
+    def unparseable_name(self):
+        """Where a body that would not parse is kept, next to the good copy."""
+        return '%s.bad' % self.name
+
+    def _save_unparseable(self, document):
+        """Save a body we could not parse. Returns the name, or None."""
+        if not self.cached:
+            return None
+        try:
+            data = document if isinstance(document, bytes) else str(document).encode()
+            self.manager.storage.save(self.unparseable_name, data)
+        except (XCAPStorageError, UnicodeEncodeError, TypeError, ValueError):
+            return None
+        return self.unparseable_name
+
+    def _discard_unparseable(self):
+        """Forget an earlier bad body once the document parses again, so a file
+        left over from last week cannot be mistaken for today's failure."""
+        try:
+            self.manager.storage.delete(self.unparseable_name)
+        except XCAPStorageError:
+            pass
+
     def fetch(self):
         notification_center = NotificationCenter()
 
@@ -152,8 +176,16 @@ class Document(object):
                 notification_data = NotificationData(method='GET', url=self.url, application=self.application, result='success', reason='not_modified', code=304, etag=self.etag)
                 notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
         except ParserError as e:
+            # Keep the body. A document that fails to parse is either a server
+            # bug or a truncated response, and neither can be investigated from
+            # the exception alone -- by the time anyone looks, the server is
+            # usually serving something valid again. Saving it next to the good
+            # copy turns "it broke once yesterday" into a file to diff.
+            saved = self._save_unparseable(document)
             notification_data = NotificationData(method='GET', url=self.url, application=self.application, result='failure', reason=str(e), code=500, etag=self.etag)
             notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
+            if saved is not None:
+                raise XCAPError("failed to parse %s document: %s (the body was saved as %s)" % (self.name, e, saved))
             raise XCAPError("failed to parse %s document: %s" % (self.name, e))
         else:
             self.fetch_time = datetime.utcnow()
@@ -161,6 +193,7 @@ class Document(object):
             notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
 
             if self.cached:
+                self._discard_unparseable()
                 try:
                     data = self.etag + os.linesep
                     data += document.decode() if isinstance(document, bytes) else document
@@ -1888,28 +1921,36 @@ class XCAPManager(object):
         data=NotificationData(addressbook=addressbook, presence_rules=presence_rules, dialog_rules=dialog_rules, status_icon=status_icon, offline_status=offline_status)
         NotificationCenter().post_notification('XCAPManagerDidReloadData', sender=self, data=data)
 
-    def _fetch_one_document(self, document):
-        """Fetch one document, turning an expected failure into a log line.
+    def _fetch_one_document(self, document, failures=None):
+        """Fetch one document, turning a failure into a log line and a record.
 
-        These are spawned as greenlets whose result nobody inspects -- the
-        caller reads each document's own state afterwards. An XCAPError
-        escaping here therefore achieves nothing except to be reported by
+        These are spawned as greenlets whose result nobody inspects, so an
+        XCAPError escaping HERE achieves nothing except being reported by
         gevent as an unhandled greenlet failure: a sixty-line traceback per
-        document, every time a network blip interrupts a fetch. Losing a
-        connection mid-fetch is ordinary, the failure is already carried by
-        the XCAPTrace notification, and the retry happens regardless.
+        document, every time a network blip interrupts a fetch.
+
+        It must not be dropped either, though. _CH_fetch retries in 60 seconds
+        when _fetch_documents raises, and swallowing the error outright removed
+        that retry for every caller: one bad response -- a blip, a truncated
+        body, a document the server briefly served malformed -- and the fetch
+        was abandoned in silence, leaving the account on its last good copy
+        until something unrelated happened to ask again. So the failure is
+        recorded here and re-raised by the caller, once all the jobs are done.
         """
         try:
             document.fetch()
         except XCAPError as e:
             log.warning('failed to fetch %s document: %s' % (document.name, e))
+            if failures is not None:
+                failures.append((document.name, e))
 
     def _fetch_documents(self, documents):
+        failures = []
         try:
-            jobs = [gevent.spawn(self._fetch_one_document, document) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
+            jobs = [gevent.spawn(self._fetch_one_document, document, failures) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
             gevent.joinall(jobs, timeout=15)
         except NameError:
-            workers = [Worker.spawn(self._fetch_one_document, document) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
+            workers = [Worker.spawn(self._fetch_one_document, document, failures) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
             try:
                 while workers:
                     worker = workers.pop()
@@ -1917,6 +1958,13 @@ class XCAPManager(object):
             finally:
                 for worker in workers:
                     worker.wait_ex()
+        if failures:
+            # One exception for the caller's retry; the rest are in the log.
+            name, error = failures[0]
+            if len(failures) > 1:
+                raise XCAPError('failed to fetch %d documents (%s): %s'
+                                % (len(failures), ', '.join(n for n, _ in failures), error))
+            raise XCAPError('failed to fetch %s document: %s' % (name, error))
 
     def _save_journal(self):
         try:
