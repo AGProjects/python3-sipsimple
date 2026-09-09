@@ -1255,9 +1255,23 @@ class AddressbookManager(object, metaclass=Singleton):
                 except KeyError:
                     try:
                         contact = Contact(xcap_contact.id)
-                    except DuplicateIDError:
-                        log.exception()
-                        continue
+                    except DuplicateIDError as e:
+                        # The id belongs to a live Contact that is no longer in
+                        # this manager's map -- one deleted locally while
+                        # something else still holds a reference, so the id
+                        # stays claimed in the settings registry. The server
+                        # document says the contact exists, and the server is
+                        # what we are applying, so adopt the object we already
+                        # have rather than skipping it: a skipped contact is
+                        # still referenced by every group it belongs to, and
+                        # resolving those members is what used to abort the
+                        # entire reload a few lines below.
+                        contact = getattr(e, 'existing_object', None)
+                        if not isinstance(contact, Contact):
+                            log.exception()
+                            continue
+                        log.warning('adopting the existing Contact object for %s: it held the id '
+                                    'but was not in the addressbook' % xcap_contact.id)
                 contact.name = xcap_contact.name
                 contact.presence.policy = xcap_contact.presence.policy
                 contact.presence.subscribe = xcap_contact.presence.subscribe
@@ -1300,8 +1314,20 @@ class AddressbookManager(object, metaclass=Singleton):
                     setattr(group, name, value)
                 old_contact_ids = set(group.contacts.ids())
                 new_contact_ids = set(xcap_group.contacts.ids())
-                for contact in (self.contacts[id] for id in new_contact_ids - old_contact_ids):
-                    group.contacts.add(contact)
+                for id in new_contact_ids - old_contact_ids:
+                    try:
+                        member = self.contacts[id]
+                    except KeyError:
+                        # A group listing a contact the manager does not have.
+                        # Uncaught, this KeyError escaped the whole
+                        # _NH_XCAPManagerDidReloadData handler, so ONE such id
+                        # meant no part of the document was applied: not the
+                        # remaining groups, not the policies, not the deletes.
+                        # The group goes without that member instead.
+                        log.warning('group %s lists contact %s, which is not in the addressbook; '
+                                    'leaving it out of the group' % (xcap_group.id, id))
+                        continue
+                    group.contacts.add(member)
                 for contact in (group.contacts[id] for id in old_contact_ids - new_contact_ids):
                     group.contacts.remove(contact)
                 group._internal_save(originator=Remote(xcap_manager.account, xcap_group))

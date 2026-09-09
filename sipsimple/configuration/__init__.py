@@ -343,7 +343,12 @@ class SettingsObjectImmutableID(object):
             except StopIteration:
                 pass
             else:
-                raise DuplicateIDError('SettingsObject ID already used by another %s' % other_obj.__class__.__name__)
+                error = DuplicateIDError('SettingsObject ID already used by another %s' % other_obj.__class__.__name__)
+                # The object that already holds the id. Without it the only
+                # possible response to this exception is to give up, which is
+                # how one orphaned object used to cost a whole XCAP reload.
+                error.existing_object = other_obj
+                raise error
             self.values[obj] = value
 
     def __delete__(self, obj):
