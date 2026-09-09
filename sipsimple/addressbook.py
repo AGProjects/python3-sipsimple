@@ -5,6 +5,7 @@
 
 __all__ = ['AddressbookManager', 'Contact', 'ContactURI', 'Group', 'Policy', 'SharedSetting', 'ContactExtension', 'ContactURIExtension', 'GroupExtension', 'PolicyExtension']
 
+from contextlib import contextmanager
 from functools import reduce
 from operator import attrgetter
 from random import randint
@@ -1105,11 +1106,34 @@ class PolicyExtension(object):
 @implementer(IObserver)
 class AddressbookManager(object, metaclass=Singleton):
 
+    @contextmanager
+    def _applying_remote_document(self):
+        """Marks the stretch in which a fetched document is copied locally."""
+        self.applying_remote_data += 1
+        try:
+            yield
+        finally:
+            self.applying_remote_data -= 1
+
     def __init__(self):
         self.contacts = {}
         self.groups = {}
         self.policies = {}
         self.__xcapaddressbook__ = None
+        # Non-zero while a fetched XCAP document is being applied.
+        #
+        # Applying one account's document writes the same contacts into EVERY
+        # other account's xcap_manager (see _internal_save: the propagation
+        # loop skips only the originator), through the public mutators, which
+        # post the ordinary XCAPManagerDidAddContact / DidUpdateContact
+        # notifications. An observer therefore cannot tell "the user changed a
+        # contact" from "this device is copying a document it just fetched" --
+        # and a client that reacts to the second one, by announcing it to the
+        # user's other devices, has built a loop out of two clients answering
+        # each other. Reading this counter from such an observer is what makes
+        # the two distinguishable. A counter rather than a flag: reloads for
+        # two accounts overlap.
+        self.applying_remote_data = 0
         notification_center = NotificationCenter()
         notification_center.add_observer(self, name='AddressbookContactWasActivated')
         notification_center.add_observer(self, name='AddressbookContactWasDeleted')
@@ -1245,7 +1269,7 @@ class AddressbookManager(object, metaclass=Singleton):
                 self.__migrate_contacts(old_data)
                 return
 
-        with MultiAccountTransaction(xcap_accounts):
+        with self._applying_remote_document(), MultiAccountTransaction(xcap_accounts):
             # because groups depend on contacts, operation order is add/update contacts, add/update/remove groups & policies, remove contacts -Dan
 
             for xcap_contact in xcap_contacts:
