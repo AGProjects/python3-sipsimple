@@ -391,7 +391,8 @@ cdef class RTPTransport:
                 srtp_info = <pjmedia_srtp_info *> pjmedia_transport_info_get_spc_info(&info, PJMEDIA_TRANSPORT_TYPE_SRTP)
                 if srtp_info == NULL or not bool(srtp_info.active):
                     return None
-                return _pj_str_to_bytes(srtp_info.tx_policy.name)
+                # str, like zrtp_cipher; it used to be bytes and printed as b'...'
+                return _pj_str_to_str(srtp_info.tx_policy.name)
             finally:
                 with nogil:
                     pj_mutex_unlock(lock)
