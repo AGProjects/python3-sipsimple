@@ -1774,7 +1774,9 @@ cdef class AudioTransport:
             if timeout > 0:
                 self._timer = MediaCheckTimer(timeout)
                 self._timer.schedule(timeout, <timer_callback>self._cb_check_rtp, self)
-            self.mixer.reset_ec()
+            # Same sound device, same acoustic path: keep what the echo
+            # canceller learned (e.g. during ringback), only re-prime buffers.
+            self.mixer.resync_ec()
         finally:
             with nogil:
                 pj_mutex_unlock(lock)
@@ -1826,7 +1828,7 @@ cdef class AudioTransport:
             if direction not in valid_sdp_directions:
                 raise SIPCoreError("Unknown direction: %s" % direction)
             if direction != self.direction:
-                self.mixer.reset_ec()
+                self.mixer.resync_ec()
             self.direction = direction
         finally:
             with nogil:

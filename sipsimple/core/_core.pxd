@@ -285,6 +285,14 @@ cdef extern from "pjmedia.h":
         PJMEDIA_AUD_DEV_CAP_EC
         PJMEDIA_AUD_DEV_CAP_EC_TAIL
 
+    enum pjmedia_echo_flag:
+        PJMEDIA_ECHO_USE_SIMPLE_FIFO
+        PJMEDIA_ECHO_USE_NOISE_SUPPRESSOR
+        PJMEDIA_ECHO_AGGRESSIVENESS_DEFAULT
+        PJMEDIA_ECHO_AGGRESSIVENESS_CONSERVATIVE
+        PJMEDIA_ECHO_AGGRESSIVENESS_MODERATE
+        PJMEDIA_ECHO_AGGRESSIVENESS_AGGRESSIVE
+
     enum:
         PJMEDIA_VID_DEFAULT_CAPTURE_DEV
         PJMEDIA_VID_DEFAULT_RENDER_DEV
@@ -518,6 +526,7 @@ cdef extern from "pjmedia.h":
     struct pjmedia_snd_port
     struct pjmedia_snd_port_param:
         pjmedia_aud_param base
+        unsigned int ec_options
     ctypedef pjmedia_snd_port_param *pjmedia_snd_port_param_ptr_const "const pjmedia_snd_port_param *"
     int pjmedia_snd_port_create2(pj_pool_t *pool, pjmedia_snd_port_param_ptr_const prm, pjmedia_snd_port **p_port) nogil
     void pjmedia_snd_port_param_default(pjmedia_snd_port_param *prm)
@@ -525,6 +534,21 @@ cdef extern from "pjmedia.h":
     int pjmedia_snd_port_disconnect(pjmedia_snd_port *snd_port) nogil
     int pjmedia_snd_port_set_ec(pjmedia_snd_port *snd_port, pj_pool_t *pool, unsigned int tail_ms, int options) nogil
     int pjmedia_snd_port_reset_ec_state(pjmedia_snd_port *snd_port) nogil
+
+    # echo canceller statistics
+    enum:
+        PJMEDIA_ECHO_STAT_NOT_SPECIFIED
+    struct pjmedia_echo_stat:
+        char_ptr_const name
+        int delay
+        double return_loss
+        double return_loss_enh
+        int std
+        float frac_delay
+        unsigned int duration
+        pj_str_t stat_info
+    void pjmedia_echo_stat_default(pjmedia_echo_stat *stat)
+    int pjmedia_snd_port_get_ec_stat(pjmedia_snd_port *snd_port, pjmedia_echo_stat *p_stat) nogil
     int pjmedia_snd_port_destroy(pjmedia_snd_port *snd_port) nogil
     pjmedia_aud_stream *pjmedia_snd_port_get_snd_stream(pjmedia_snd_port *snd_port) nogil
     int pjmedia_null_port_create(pj_pool_t *pool, unsigned int sampling_rate, unsigned int channel_count,

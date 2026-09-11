@@ -2,6 +2,28 @@
 import sys
 
 
+# --- Software echo canceller -------------------------------------------------
+#
+# Options passed to pjmedia's software echo canceller (WebRTC AEC). The noise
+# suppressor and aggressive non-linear processing match the AEC sipsimple
+# shipped from 2013 until the pjsip 2.10 migration. See
+# docs/EchoCancellation.txt and deps/patches/2.17/09_aec.patch.
+
+cdef unsigned int _ec_options = PJMEDIA_ECHO_USE_NOISE_SUPPRESSOR | PJMEDIA_ECHO_AGGRESSIVENESS_AGGRESSIVE
+
+# pjmedia_snd_port_resync_ec_state() comes with 09_aec.patch; fall back to a
+# full reset when building against a pjsip tree without it.
+cdef extern from *:
+    """
+    #ifdef PJMEDIA_HAS_SND_PORT_RESYNC_EC
+    #define _sipsimple_snd_port_resync_ec(p) pjmedia_snd_port_resync_ec_state(p)
+    #else
+    #define _sipsimple_snd_port_resync_ec(p) pjmedia_snd_port_reset_ec_state(p)
+    #endif
+    """
+    int _sipsimple_snd_port_resync_ec(pjmedia_snd_port *snd_port) nogil
+
+
 # --- Deferred conference-port teardown (pjsip 2.15+ async conf bridge) -------
 #
 # In pjsip 2.15+ pjmedia_conf_remove_port() only *queues* the removal; the
@@ -402,6 +424,9 @@ cdef class AudioMixer:
                 pj_mutex_unlock(lock)
 
     def reset_ec(self):
+        """Reset the echo canceller: it forgets the learned echo path and has
+        to converge again. Use when the acoustic path changed. The reset is
+        carried out by the audio capture thread before the next frame."""
         cdef int status
         cdef pj_mutex_t *lock = self._lock
         cdef PJSIPUA ua
@@ -420,6 +445,87 @@ cdef class AudioMixer:
         finally:
             with nogil:
                 pj_mutex_unlock(lock)
+
+    def resync_ec(self):
+        """Flush and re-prime the echo canceller buffers but keep the learned
+        echo path. Use when streams are connected, disconnected or change
+        direction on the same sound device (the acoustic path is unchanged)."""
+        cdef int status
+        cdef pj_mutex_t *lock = self._lock
+        cdef PJSIPUA ua
+
+        ua = _get_ua()
+
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            if self._snd == NULL:
+                return
+            with nogil:
+                _sipsimple_snd_port_resync_ec(self._snd)
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
+    property ec_statistics:
+        # Software echo canceller statistics, or None when no canceller is
+        # running on the sound device or it has less than a second of data.
+        # With patch 09_aec the WebRTC AEC returns (None = not available):
+        #   backend              'WebRTC AEC'
+        #   delay                residual echo delay the AEC aligned to, ms
+        #   delay_std            spread of the delay estimate, ms
+        #   poor_delay_fraction  0..1, share of delay estimates outside the
+        #                        filter window; high = AEC is not aligned
+        #   erl                  echo return loss, dB (speaker->mic coupling;
+        #                        high = little echo reaches the mic)
+        #   erle                 echo return loss enhancement, dB (how much
+        #                        the linear filter removes)
+        #   duration             seconds since the canceller was (re)set
+        #   info                 one-line summary from pjmedia
+        # delay/poor_delay_fraction only mean something while there is echo
+        # (low erl): with a headset the estimator has nothing to track.
+
+        def __get__(self):
+            cdef int status
+            cdef pj_mutex_t *lock = self._lock
+            cdef pjmedia_echo_stat stat
+            cdef bytes name_bytes
+            cdef object name = None
+
+            # registers the calling (e.g. GUI) thread with pjlib
+            try:
+                _get_ua()
+            except SIPCoreError:
+                return None
+
+            with nogil:
+                status = pj_mutex_lock(lock)
+            if status != 0:
+                raise PJSIPError("failed to acquire lock", status)
+            try:
+                if self._snd == NULL:
+                    return None
+                pjmedia_echo_stat_default(&stat)
+                with nogil:
+                    status = pjmedia_snd_port_get_ec_stat(self._snd, &stat)
+                if status != 0:
+                    return None
+                if stat.name != NULL:
+                    name_bytes = <char *> stat.name
+                    name = name_bytes.decode('ascii', 'replace')
+                return dict(backend=name,
+                            delay=stat.delay if stat.delay != PJMEDIA_ECHO_STAT_NOT_SPECIFIED else None,
+                            delay_std=stat.std if stat.std != PJMEDIA_ECHO_STAT_NOT_SPECIFIED else None,
+                            poor_delay_fraction=round(stat.frac_delay, 3) if stat.frac_delay != <float> PJMEDIA_ECHO_STAT_NOT_SPECIFIED else None,
+                            erl=stat.return_loss if stat.return_loss != <double> PJMEDIA_ECHO_STAT_NOT_SPECIFIED else None,
+                            erle=stat.return_loss_enh if stat.return_loss_enh != <double> PJMEDIA_ECHO_STAT_NOT_SPECIFIED else None,
+                            duration=stat.duration / 1000.0 if stat.duration != <unsigned int> PJMEDIA_ECHO_STAT_NOT_SPECIFIED else None,
+                            info=_pj_str_to_str(stat.stat_info) if stat.stat_info.slen > 0 else None)
+            finally:
+                with nogil:
+                    pj_mutex_unlock(lock)
 
     # private methods
 
@@ -515,6 +621,7 @@ cdef class AudioMixer:
                 port_param.base.flags |= (PJMEDIA_AUD_DEV_CAP_EC | PJMEDIA_AUD_DEV_CAP_EC_TAIL)
                 port_param.base.ec_enabled = 1
                 port_param.base.ec_tail_ms = ec_tail_length
+                port_param.ec_options = _ec_options
                 with nogil:
                     status = pjmedia_snd_port_create2(snd_pool, &port_param, snd_port_address)
                 if status == PJMEDIA_ENOSNDPLAY:

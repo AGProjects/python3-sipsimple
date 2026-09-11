@@ -1,0 +1,1290 @@
+# 09_aec.patch   (2.17 port - replaces the dead 2.12 09_aec.patch)
+#
+# WebRTC AEC fixes: super-wideband band splitting, thread safe reset,
+# resync API, early delay correction, capture high pass filter.
+#
+# Background
+# ----------
+# From 2013 until the pjsip 2.10 migration (May 2021) sipsimple shipped its
+# own WebRTC AEC wrapper, pjmedia/src/pjmedia/echo_webrtc_aec.c (Saul Ibarra
+# / Dan Pascu, darcs history 2013-06..2013-07), built from
+# pjmedia/build/os-auto.mak.in with "PJMEDIA_OBJS += echo_webrtc_aec.o" and
+# its own copy of the WebRTC sources.  When deps/pjsip was replaced by the
+# pjproject tarball + patch series, the file survived in the monolithic
+# 001_pjsip_210.patch (later split into 09_aec.patch) but the build line did
+# not.  Every 2.10, 2.11, 2.12 and 2.17 build since then has linked pjsip's
+# upstream echo_webrtc.c instead (verified with strings(1) on the shipped
+# _core*.so: only echo_webrtc.o, never echo_webrtc_aec.o).  The old wrapper
+# could not have been revived as-is: it targets the 2011 WebRTC API.
+#
+# The upstream wrapper has the problems the 2013 wrapper had solved, plus
+# one that neither addressed:
+#
+#  1. 32 kHz (Blink's sample rate whenever EC is on) is processed wrongly.
+#     echo_webrtc.c feeds 160 full band samples (5 ms) with num_bands=1 to a
+#     core initialized for 32 kHz, which expects the QMF-split low band plus
+#     the high band (num_bands=2).  The core runs the 32 kHz signal as if it
+#     was 16 kHz: half the filter length, half the delay estimator range,
+#     mis-scaled NLP.  aec_core.c asserts on this; the assert is compiled out
+#     by -DNDEBUG.  pjsip issue #2404, closed as wontfix.  48 kHz is worse.
+#     The 2013 wrapper split bands with WebRtcSpl_AnalysisQMF (darcs:
+#     "pjsip: Fixed echo cancelling when using 32kHz sample rate").
+#
+#  2. pjmedia_echo_reset() is not thread safe.  sipsimple calls
+#     pjmedia_snd_port_reset_ec_state() from the Python thread on every
+#     stream start and direction change, and patch 08 re-enabled the reset in
+#     sound_port.c play_cb when EC resumes after 5 s of silence (upstream had
+#     it commented out).  The reset moves frames between the latency lists,
+#     clears lat_ready and re-inits the WebRTC core while the capture thread
+#     is using all of them.  With a stress test (playback/capture threads +
+#     reset thread) the unpatched code segfaults in 4 of 25 runs at 16 kHz,
+#     and in other runs the canceller stops processing for the rest of the
+#     stream (corrupted latency list).  The 2013 wrapper deferred
+#     the reset to the processing thread (darcs: "pjsip: Fixed resetting AEC
+#     state").
+#
+#  3. Every reset throws away the learned echo path, and the WebRTC core does
+#     not apply its signal based delay correction until 1500 frames (15 s)
+#     after init.  pjsip does not report the real system delay (sipsimple
+#     passes tail_length=2 ms), so whenever the acoustic delay is not already
+#     inside the filter window (external/Bluetooth speakers, HDMI audio,
+#     > ~60 ms) no echo is cancelled during the first 15 s of each call and
+#     for 15 s after every reset / EC resume.
+#
+# What this patch changes
+# -----------------------
+# pjmedia/src/pjmedia/echo_webrtc.c (desktop path; AECM mobile path unchanged)
+#   - Processes 10 ms blocks at the core rate.
+#   - 32 kHz: near and far end split with WebRtcSpl_AnalysisQMF, core runs
+#     with num_bands=2, output recombined with WebRtcSpl_SynthesisQMF.
+#   - Other rates (48 kHz, 44.1 kHz, ...): near and far end resampled to
+#     32 kHz (16 kHz for rates below 16 kHz) with pjmedia_resample, output
+#     resampled back.  Content above 16 kHz on the mic path is dropped.
+#   - Frames must be a whole number of 10 ms blocks (PJ_ENOTSUP otherwise).
+#   - 2nd order ~80 Hz high pass filter on the capture low band before AEC,
+#     as webrtc::AudioProcessing and the 2013 wrapper do.
+#   - Noise suppressor (PJMEDIA_ECHO_USE_NOISE_SUPPRESSOR) band aware; NS
+#     analysis on the raw capture, processing after the AEC.
+#   - Saturating float->int16 conversion.
+#   - Statistics: the capture thread snapshots WebRtcAec_GetDelayMetrics()
+#     and WebRtcAec_GetMetrics() once per second; webrtc_aec_get_stat()
+#     (pjmedia_echo_get_stat / pjmedia_snd_port_get_ec_stat) copies the
+#     snapshot under a sequence counter and fills delay, std, frac_delay,
+#     return_loss (ERL), return_loss_enh (ERLE), duration and stat_info
+#     ("delay=20ms std=0ms poor=0.00 ERL=6dB ERLE=23dB (now 26dB) NLP=8dB
+#     rate=32000/32000 9s"; values WebRTC has not measured yet print as
+#     "n/a").  Returns PJ_EPENDING during the first second.
+#     Upstream called the WebRTC metric functions from the caller's thread,
+#     racing the capture thread (UpdateDelayMetrics() clears the histogram).
+#
+# pjmedia/src/pjmedia/echo_common.c, pjmedia/include/pjmedia/echo.h
+#   - pjmedia_echo_reset() only raises a flag; the reset is carried out by
+#     the capture thread (pjmedia_echo_capture(), or pjmedia_echo_cancel()
+#     for users without latency buffer) before the next frame.  Ownership of
+#     the latency list is handed over through lat_ready exactly like the
+#     existing prefetch logic, so no lock is taken in the audio path.
+#   - New pjmedia_echo_resync(): same deferral, but only flushes and
+#     re-primes the latency/delay buffers and keeps the adaptive filter and
+#     delay estimate.
+#
+# pjmedia/src/pjmedia/sound_port.c, pjmedia/include/pjmedia/sound_port.h
+#   - play_cb: EC resume after inactivity uses pjmedia_echo_resync() instead
+#     of a full reset (the acoustic path did not change while idle).
+#   - New pjmedia_snd_port_resync_ec_state(), advertised with
+#     #define PJMEDIA_HAS_SND_PORT_RESYNC_EC 1 so bindings can detect it.
+#   - pjmedia_snd_port_reset_ec_state() reads ec_state once (no double read).
+#
+# third_party/webrtc/src/webrtc/modules/audio_processing/aec/aec_core.c
+#   - kDelayCorrectionStart 1500 -> 200 frames (2 s), overridable with
+#     -DWEBRTC_AEC_DELAY_CORRECTION_START=N.  The delay quality threshold
+#     still gates corrections; silent / -35 dB far end start, mute periods
+#     and headset (no echo) cases were tested for regressions.
+#
+# third_party/build/webrtc/Makefile, third_party/webrtc/CMakeLists.txt
+#   - Build common_audio/signal_processing/splitting_filter.c (QMF bank).
+#     The MSVC project files already list it.
+#
+# Measurements (offline harness, pjsip speech vectors, simulated room with
+# 60 ms / 150 ms delay and 150-300 ms reverb, sipsimple parameters: 20 ms
+# frames, tail 2 ms, latency 20 ms).  ERLE in dB per 2 s window:
+#
+#   32 kHz, 60 ms   before:  8 11 11  5 19 35 35 34 35 35 ... DT 12 35 34 34
+#                   after : 14 27 28 30 29 29 29 28 29 28 ... DT 27 28 28 28
+#   32 kHz, 150 ms  before:  3  2  3  1 18 32 30 31 14 33 12  8 DT  8 14  9  8
+#                   after :  3  5 28 29 29 28 29 28 28 28 28 27 DT 26 28 27 28
+#   48 kHz, 150 ms  before:  3  2  4 14 18 34 12  9  6 17 13 20 DT  8 20 11 22
+#                   after :  7 17 30 32 31 31 31 31 31 31 31 31 DT 29 30 30 30
+#   16 kHz, 150 ms  before:  3  5  5  3  4  2  1  3 26 25 25 24 DT 23 23 23 23
+#                   after :  3 13 26 27 26 26 27 25 27 24 27 25 DT 25 25 26 24
+#
+# With PJMEDIA_ECHO_USE_NOISE_SUPPRESSOR steady state ERLE is ~6 dB higher.
+# Near end speech is attenuated ~7 dB during double talk at 16 and 32 kHz
+# (before: 7 dB at 16 kHz, 3.6 dB at 32 kHz, where echo also leaked).
+#
+# Reset stress test (playback + capture + reset/resync threads):
+#   before: 16 kHz segfault 4/25 runs, some runs stop cancelling for good
+#   after : 0/75 failures at 16/32/48 kHz, ERLE back to 28-29 dB in 2-4 s
+#
+# See docs/EchoCancellation.txt for the full write-up and the harness.
+#
+--- pjsip_orig/pjmedia/src/pjmedia/echo_webrtc.c
++++ pjsip/pjmedia/src/pjmedia/echo_webrtc.c
+@@ -1,4 +1,4 @@
+-/* 
++/*
+  * Copyright (C) 2011-2015 Teluu Inc. (http://www.teluu.com)
+  *
+  * This program is free software; you can redistribute it and/or modify
+@@ -13,11 +13,13 @@
+  *
+  * You should have received a copy of the GNU General Public License
+  * along with this program; if not, write to the Free Software
+- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA 
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+  */
+ 
+ #include <pjmedia/echo.h>
+ #include <pjmedia/errno.h>
++#include <pjmedia/frame.h>
++#include <pjmedia/resample.h>
+ #include <pj/assert.h>
+ #include <pj/log.h>
+ #include <pj/pool.h>
+@@ -52,6 +54,7 @@
+     typedef short sample;
+ #else
+     #include <webrtc/modules/audio_processing/ns/include/noise_suppression.h>
++    #include <webrtc/common_audio/signal_processing/include/signal_processing_library.h>
+ 
+     typedef float sample;
+ 
+@@ -62,6 +65,124 @@
+ /* Set this to 0 to disable metrics calculation. */
+ #define SHOW_DELAY_METRICS      1
+ 
++/*
++ * Band processing (AG Projects, python3-sipsimple patch 09_aec).
++ *
++ * The (pre-AEC3) WebRTC AEC core only runs at 8 or 16 kHz.  For "super
++ * wideband" input the core must be given the 0-8 kHz band (160 samples per
++ * 10 ms, 16 kHz rate) plus the upper band(s), split with the QMF filter
++ * bank, exactly as webrtc::AudioProcessing does.  When initialized with
++ * sampFreq 32000 the core expects num_bands == 2.
++ *
++ * Upstream pjsip feeds 160 *full band* samples (5 ms at 32 kHz) with
++ * num_bands == 1 instead (pjsip issue #2404, closed as wontfix).  The core
++ * then treats 32 kHz audio as if it were 16 kHz: the adaptive filter covers
++ * half the intended echo path, the delay estimator range is halved and
++ * convergence is several times slower.  The mismatch trips an assert in
++ * aec_core.c, which is only silent because release builds use -DNDEBUG.
++ *
++ * This file therefore:
++ *  - processes 10 ms blocks at the core rate,
++ *  - at 32 kHz splits near and far end into low/high bands with
++ *    WebRtcSpl_AnalysisQMF() and recombines with WebRtcSpl_SynthesisQMF(),
++ *  - at any other rate that the core can't take natively (48 kHz, 44.1 kHz,
++ *    ...) resamples near and far end to the closest core rate (32 kHz for
++ *    rates above 16 kHz) and back.  The audio above 16 kHz on the
++ *    microphone path is lost in that case, which is irrelevant for voice.
++ *
++ *  - runs the capture signal through the same 2nd order high pass filter
++ *    (~80 Hz) that webrtc::AudioProcessing applies before the AEC, as the
++ *    original AG Projects wrapper (echo_webrtc_aec.c, 2013) did.  DC offset
++ *    and rumble below what laptop speakers can reproduce otherwise disturb
++ *    the adaptive filter.
++ *
++ * The mobile (AECM) path is unchanged.
++ */
++#define MAX_BAND_LEN            160     /* 10 ms at 16 kHz                  */
++#define MAX_PROC_LEN            320     /* 10 ms at 32 kHz                  */
++
++/* Statistics (desktop path): the WebRTC metric functions update internal
++ * state (UpdateDelayMetrics() clears the delay histogram), so they must not
++ * be called from the application thread while the capture thread runs the
++ * canceller.  The capture thread takes a snapshot every STAT_INTERVAL_BLOCKS
++ * 10 ms blocks; webrtc_aec_get_stat() copies the snapshot under a sequence
++ * counter (seqlock) and never touches the WebRTC instance.
++ */
++#define STAT_INTERVAL_BLOCKS    100     /* 1 s                              */
++#define AEC_LEVEL_UNAVAILABLE   -100    /* kOffsetLevel in echo_cancellation.c */
++
++#if !PJMEDIA_WEBRTC_AEC_USE_MOBILE
++/* High pass filter, from webrtc/modules/audio_processing/high_pass_filter_impl
++ * (same code as the 2013 AG Projects echo_webrtc_aec.c). Q12 fixed point.
++ */
++static const int16_t kHpfCoefficients8kHz[5] = {3798, -7596, 3798, 7807, -3733};
++static const int16_t kHpfCoefficients[5]     = {4012, -8024, 4012, 8002, -3913};
++
++typedef struct hpf_state
++{
++    int16_t        y[4];
++    int16_t        x[2];
++    const int16_t *ba;
++} hpf_state;
++
++static void hpf_init(hpf_state *hpf, unsigned band_rate)
++{
++    hpf->ba = (band_rate == 8000) ? kHpfCoefficients8kHz : kHpfCoefficients;
++    hpf->x[0] = hpf->x[1] = 0;
++    hpf->y[0] = hpf->y[1] = hpf->y[2] = hpf->y[3] = 0;
++}
++
++static void hpf_process(hpf_state *hpf, int16_t *data, unsigned length)
++{
++    unsigned i;
++    int32_t tmp_int32;
++    int16_t *y = hpf->y;
++    int16_t *x = hpf->x;
++    const int16_t *ba = hpf->ba;
++
++    for (i = 0; i < length; i++) {
++        /*  y[i] = b[0] * x[i] + b[1] * x[i-1] + b[2] * x[i-2]
++         *         + -a[1] * y[i-1] + -a[2] * y[i-2];
++         */
++        tmp_int32 = y[1] * ba[3];               /* -a[1] * y[i-1] (low)  */
++        tmp_int32 += y[3] * ba[4];              /* -a[2] * y[i-2] (low)  */
++        tmp_int32 = (tmp_int32 >> 15);
++        tmp_int32 += y[0] * ba[3];              /* -a[1] * y[i-1] (high) */
++        tmp_int32 += y[2] * ba[4];              /* -a[2] * y[i-2] (high) */
++        tmp_int32 = (int32_t)((uint32_t)tmp_int32 << 1);
++
++        tmp_int32 += data[i] * ba[0];           /* b[0] * x[0]   */
++        tmp_int32 += x[0] * ba[1];              /* b[1] * x[i-1] */
++        tmp_int32 += x[1] * ba[2];              /* b[2] * x[i-2] */
++
++        /* Update state (input part) */
++        x[1] = x[0];
++        x[0] = data[i];
++
++        /* Update state (filtered part) */
++        y[2] = y[0];
++        y[3] = y[1];
++        y[0] = (int16_t)(tmp_int32 >> 13);
++        y[1] = (int16_t)((tmp_int32 -
++                          (int32_t)((uint32_t)(int32_t)y[0] << 13)) << 2);
++
++        /* Rounding in Q12, i.e. add 2^11 */
++        tmp_int32 += 2048;
++
++        /* Saturate (to 2^27) so that the HP filtered signal does not
++         * overflow
++         */
++        if (tmp_int32 > 134217727)
++            tmp_int32 = 134217727;
++        else if (tmp_int32 < -134217728)
++            tmp_int32 = -134217728;
++
++        /* Convert back to Q0 and use rounding */
++        data[i] = (int16_t)(tmp_int32 >> 12);
++    }
++}
++#endif
++
+ typedef struct webrtc_ec
+ {
+     void       *AEC_inst;
+@@ -74,6 +195,53 @@
+     unsigned    subframe_len;
+     sample      tmp_buf[BUF_LEN];
+     sample      tmp_buf2[BUF_LEN];
++
++#if !PJMEDIA_WEBRTC_AEC_USE_MOBILE
++    unsigned    core_rate;      /* Rate the AEC core is initialized with.   */
++    unsigned    num_bands;      /* 1 at 8/16 kHz core rate, 2 at 32 kHz.    */
++    unsigned    band_len;       /* Samples per band per 10 ms (80 or 160).  */
++    unsigned    proc_len;       /* Samples per 10 ms at core rate.          */
++    unsigned    frame10_len;    /* Samples per 10 ms at clock rate.         */
++
++    /* Resamplers, only when clock_rate is not a native core rate. */
++    pjmedia_resample *rs_far;
++    pjmedia_resample *rs_near;
++    pjmedia_resample *rs_out;
++
++    hpf_state   hpf;            /* Capture high pass filter.               */
++
++    /* Statistics snapshot, written by the capture thread only. */
++    unsigned    blocks;         /* 10 ms blocks processed since (re)init   */
++    volatile unsigned stat_seq; /* odd while the snapshot is being written */
++    struct {
++        pj_bool_t   valid;
++        int         delay_median;   /* ms, -1 if no estimate               */
++        int         delay_std;      /* ms, -1 if no estimate               */
++        float       poor_delays;    /* 0..1, -1 if no estimate             */
++        int         erl;            /* dB, echo return loss (average)      */
++        int         erle;           /* dB, echo return loss enh. (average) */
++        int         erle_instant;   /* dB                                  */
++        int         a_nlp;          /* dB, non-linear processing (average) */
++        unsigned    duration_ms;    /* since (re)init                      */
++    } snap;
++
++    /* QMF analysis/synthesis filter states (6 x int32 each). */
++    int32_t     qmf_far_a1[6],  qmf_far_a2[6];
++    int32_t     qmf_near_a1[6], qmf_near_a2[6];
++    int32_t     qmf_syn1[6],    qmf_syn2[6];
++
++    pj_int16_t  far_rs[MAX_PROC_LEN];       /* far end at core rate        */
++    pj_int16_t  near_rs[MAX_PROC_LEN];      /* near end at core rate       */
++    pj_int16_t  out_proc[MAX_PROC_LEN];     /* output at core rate         */
++    pj_int16_t  far_lo16[MAX_BAND_LEN],  far_hi16[MAX_BAND_LEN];
++    pj_int16_t  near_lo16[MAX_BAND_LEN], near_hi16[MAX_BAND_LEN];
++    pj_int16_t  out_lo16[MAX_BAND_LEN],  out_hi16[MAX_BAND_LEN];
++
++    float       far_f[MAX_BAND_LEN];
++    float       near_f[2][MAX_BAND_LEN];
++    float       aec_out_f[2][MAX_BAND_LEN];
++    float       ns_out_f[2][MAX_BAND_LEN];
++#endif
+ } webrtc_ec;
+ 
+ 
+@@ -97,7 +265,7 @@
+         aec_config.echoMode = 4;
+     aec_config.cngMode = AecmTrue;
+ #else
+-    
++
+     aec_config.nlpMode = kAecNlpModerate;
+     if (aggr_opt == PJMEDIA_ECHO_AGGRESSIVENESS_CONSERVATIVE)
+         aec_config.nlpMode = kAecNlpConservative;
+@@ -105,7 +273,7 @@
+         aec_config.nlpMode = kAecNlpAggressive;
+     else
+         aec_config.nlpMode = kAecNlpModerate;
+-    
++
+     aec_config.skewMode = kAecFalse;
+ #if SHOW_DELAY_METRICS
+     aec_config.metricsMode = kAecTrue;
+@@ -123,6 +291,40 @@
+     }
+ }
+ 
++#if !PJMEDIA_WEBRTC_AEC_USE_MOBILE
++/* Select the AEC core rate for a given device clock rate. */
++static unsigned select_core_rate(unsigned clock_rate)
++{
++    if (clock_rate == 8000 || clock_rate == 16000 || clock_rate == 32000)
++        return clock_rate;
++    return (clock_rate > 16000) ? 32000 : 16000;
++}
++
++static void free_webrtc_inst(webrtc_ec *echo)
++{
++    if (echo->AEC_inst) {
++        WebRtcAec_Free(echo->AEC_inst);
++        echo->AEC_inst = NULL;
++    }
++    if (echo->NS_inst) {
++        WebRtcNs_Free(echo->NS_inst);
++        echo->NS_inst = NULL;
++    }
++    if (echo->rs_far) {
++        pjmedia_resample_destroy(echo->rs_far);
++        echo->rs_far = NULL;
++    }
++    if (echo->rs_near) {
++        pjmedia_resample_destroy(echo->rs_near);
++        echo->rs_near = NULL;
++    }
++    if (echo->rs_out) {
++        pjmedia_resample_destroy(echo->rs_out);
++        echo->rs_out = NULL;
++    }
++}
++#endif
++
+ /*
+  * Create the AEC.
+  */
+@@ -136,12 +338,12 @@
+ {
+     webrtc_ec *echo;
+     int status;
+-    
++
+     *p_echo = NULL;
+-    
++
+     echo = PJ_POOL_ZALLOC_T(pool, webrtc_ec);
+     PJ_ASSERT_RETURN(echo != NULL, PJ_ENOMEM);
+-    
++
+     /* Currently we only support mono. */
+     if (channel_count != 1) {
+         PJ_LOG(3, (THIS_FILE, "WebRTC AEC doesn't support stereo"));
+@@ -158,18 +360,76 @@
+     else
+         echo->subframe_len = 80;
+     echo->options = options;
+-    
++
++#if !PJMEDIA_WEBRTC_AEC_USE_MOBILE
++    /* The core works on 10 ms blocks; frames must be a whole number of
++     * them, at a clock rate with an integral number of samples per 10 ms.
++     */
++    if (clock_rate % 100 != 0 ||
++        samples_per_frame % (clock_rate / 100) != 0)
++    {
++        PJ_LOG(3, (THIS_FILE, "WebRTC AEC: unsupported clock rate %u / "
++                              "frame size %u (need whole 10 ms blocks)",
++                              clock_rate, samples_per_frame));
++        return PJ_ENOTSUP;
++    }
++
++    echo->frame10_len = clock_rate / 100;
++    echo->core_rate = select_core_rate(clock_rate);
++    echo->proc_len = echo->core_rate / 100;
++    echo->num_bands = (echo->core_rate == 32000) ? 2 : 1;
++    echo->band_len = echo->proc_len / echo->num_bands;
++    hpf_init(&echo->hpf, echo->core_rate / echo->num_bands);
++
++    if (echo->core_rate != clock_rate) {
++        pj_status_t rs_status;
++
++        rs_status = pjmedia_resample_create(pool, PJ_TRUE, PJ_FALSE, 1,
++                                            clock_rate, echo->core_rate,
++                                            echo->frame10_len,
++                                            &echo->rs_far);
++        if (rs_status == PJ_SUCCESS)
++            rs_status = pjmedia_resample_create(pool, PJ_TRUE, PJ_FALSE, 1,
++                                                clock_rate, echo->core_rate,
++                                                echo->frame10_len,
++                                                &echo->rs_near);
++        if (rs_status == PJ_SUCCESS)
++            rs_status = pjmedia_resample_create(pool, PJ_TRUE, PJ_FALSE, 1,
++                                                echo->core_rate, clock_rate,
++                                                echo->proc_len,
++                                                &echo->rs_out);
++        if (rs_status != PJ_SUCCESS) {
++            PJ_PERROR(3, (THIS_FILE, rs_status, "WebRTC AEC: unable to "
++                          "create resampler %u <-> %u", clock_rate,
++                          echo->core_rate));
++            free_webrtc_inst(echo);
++            return rs_status;
++        }
++    }
++#endif
++
+     /* Create WebRTC AEC */
+     echo->AEC_inst = WebRtcAec_Create();
+     if (!echo->AEC_inst) {
++#if !PJMEDIA_WEBRTC_AEC_USE_MOBILE
++        free_webrtc_inst(echo);
++#endif
+         return PJ_ENOMEM;
+     }
+-    
++
+     /* Init WebRTC AEC */
++#if PJMEDIA_WEBRTC_AEC_USE_MOBILE
+     status = WebRtcAec_Init(echo->AEC_inst, clock_rate, clock_rate);
++#else
++    status = WebRtcAec_Init(echo->AEC_inst, echo->core_rate, echo->core_rate);
++#endif
+     if (status != 0) {
+         print_webrtc_aec_error("Init", echo->AEC_inst);
++#if PJMEDIA_WEBRTC_AEC_USE_MOBILE
+         WebRtcAec_Free(echo->AEC_inst);
++#else
++        free_webrtc_inst(echo);
++#endif
+         return PJ_ENOTSUP;
+     }
+ 
+@@ -186,13 +446,17 @@
+      * the beginning of a call.
+      */
+     WebRtcAec_enable_delay_agnostic(WebRtcAec_aec_core(echo->AEC_inst), 1);
+-    
++
+     set_config(echo->AEC_inst, options);
+ 
+     if (options & PJMEDIA_ECHO_USE_NOISE_SUPPRESSOR) {
+         echo->NS_inst = WebRtcNs_Create();
+         if (echo->NS_inst) {
++#if PJMEDIA_WEBRTC_AEC_USE_MOBILE
+             status = WebRtcNs_Init(echo->NS_inst, clock_rate);
++#else
++            status = WebRtcNs_Init(echo->NS_inst, echo->core_rate);
++#endif
+             if (status != 0) {
+                 WebRtcNs_Free(echo->NS_inst);
+                 echo->NS_inst = NULL;
+@@ -208,13 +472,17 @@
+                           "options %d", options));
+ #else
+     PJ_LOG(3, (THIS_FILE, "WebRTC AEC successfully created with "
+-                          "options %d", options));
++                          "options %d, clock rate %u, core rate %u, "
++                          "%u band(s)%s%s", options, clock_rate,
++                          echo->core_rate, echo->num_bands,
++                          (echo->rs_far ? ", resampling" : ""),
++                          (echo->NS_inst ? ", noise suppressor" : "")));
+ #endif
+ 
+     /* Done */
+     *p_echo = echo;
+     return PJ_SUCCESS;
+-    
++
+ }
+ 
+ 
+@@ -225,7 +493,8 @@
+ {
+     webrtc_ec *echo = (webrtc_ec*) state;
+     PJ_ASSERT_RETURN(echo, PJ_EINVAL);
+-    
++
++#if PJMEDIA_WEBRTC_AEC_USE_MOBILE
+     if (echo->AEC_inst) {
+         WebRtcAec_Free(echo->AEC_inst);
+         echo->AEC_inst = NULL;
+@@ -234,34 +503,243 @@
+         WebRtcNs_Free(echo->NS_inst);
+         echo->NS_inst = NULL;
+     }
+-    
++#else
++    free_webrtc_inst(echo);
++#endif
++
+     return PJ_SUCCESS;
+ }
+ 
+ 
+ /*
+  * Reset AEC
++ *
++ * Note: pjmedia_echo_reset() (echo_common.c) defers this call to the
++ * thread that runs webrtc_aec_cancel_echo(), so no locking is needed here.
+  */
+ PJ_DEF(void) webrtc_aec_reset(void *state )
+ {
+     webrtc_ec *echo = (webrtc_ec*) state;
+     int status;
+-    
++
+     pj_assert(echo != NULL);
+-    
++
+     /* Re-initialize the EC */
++#if PJMEDIA_WEBRTC_AEC_USE_MOBILE
+     status = WebRtcAec_Init(echo->AEC_inst, echo->clock_rate, echo->clock_rate);
++#else
++    status = WebRtcAec_Init(echo->AEC_inst, echo->core_rate, echo->core_rate);
++#endif
+     if (status != 0) {
+         print_webrtc_aec_error("reset", echo->AEC_inst);
+         return;
+     }
+-    
++
+     set_config(echo->AEC_inst, echo->options);
+-    
++
++#if !PJMEDIA_WEBRTC_AEC_USE_MOBILE
++    if (echo->NS_inst)
++        WebRtcNs_Init(echo->NS_inst, echo->core_rate);
++
++    pj_bzero(echo->qmf_far_a1, sizeof(echo->qmf_far_a1));
++    pj_bzero(echo->qmf_far_a2, sizeof(echo->qmf_far_a2));
++    pj_bzero(echo->qmf_near_a1, sizeof(echo->qmf_near_a1));
++    pj_bzero(echo->qmf_near_a2, sizeof(echo->qmf_near_a2));
++    pj_bzero(echo->qmf_syn1, sizeof(echo->qmf_syn1));
++    pj_bzero(echo->qmf_syn2, sizeof(echo->qmf_syn2));
++    hpf_init(&echo->hpf, echo->core_rate / echo->num_bands);
++
++    echo->stat_seq++;
++    echo->snap.valid = PJ_FALSE;
++    echo->blocks = 0;
++    echo->stat_seq++;
++#endif
++
+     PJ_LOG(4, (THIS_FILE, "WebRTC AEC reset succeeded"));
+ }
+ 
+ 
++#if !PJMEDIA_WEBRTC_AEC_USE_MOBILE
++
++/* Format helpers for stat_info: unavailable values print as "n/a". */
++static const char *fmt_ms(char *buf, unsigned len, int ms)
++{
++    if (ms == -1)
++        return "n/a";
++    pj_ansi_snprintf(buf, len, "%dms", ms);
++    return buf;
++}
++
++static const char *fmt_db(char *buf, unsigned len, int db)
++{
++    if (db <= AEC_LEVEL_UNAVAILABLE)
++        return "n/a";
++    pj_ansi_snprintf(buf, len, "%ddB", db);
++    return buf;
++}
++
++static const char *fmt_frac(char *buf, unsigned len, float frac)
++{
++    if (frac < 0.0f)
++        return "n/a";
++    pj_ansi_snprintf(buf, len, "%.2f", frac);
++    return buf;
++}
++
++/* Capture thread: refresh the statistics snapshot. */
++static void publish_stats(webrtc_ec *echo)
++{
++    AecMetrics metrics;
++    int median = -1, std = -1;
++    float poor = -1.0f;
++    pj_bool_t have_metrics;
++
++    if (WebRtcAec_GetDelayMetrics(echo->AEC_inst, &median, &std, &poor) != 0) {
++        median = std = -1;
++        poor = -1.0f;
++    }
++    have_metrics = (WebRtcAec_GetMetrics(echo->AEC_inst, &metrics) == 0);
++
++    echo->stat_seq++;
++    echo->snap.delay_median = median;
++    echo->snap.delay_std = std;
++    echo->snap.poor_delays = poor;
++    if (have_metrics) {
++        echo->snap.erl = metrics.erl.average;
++        echo->snap.erle = metrics.erle.average;
++        echo->snap.erle_instant = metrics.erle.instant;
++        echo->snap.a_nlp = metrics.aNlp.average;
++    } else {
++        echo->snap.erl = echo->snap.erle = echo->snap.erle_instant =
++            echo->snap.a_nlp = AEC_LEVEL_UNAVAILABLE;
++    }
++    echo->snap.duration_ms = echo->blocks * 10;
++    echo->snap.valid = PJ_TRUE;
++    echo->stat_seq++;
++}
++
++static void int16_to_float(const pj_int16_t *in, float *out, unsigned len)
++{
++    unsigned i;
++    for (i = 0; i < len; ++i)
++        out[i] = (float)in[i];
++}
++
++static void float_to_int16(const float *in, pj_int16_t *out, unsigned len)
++{
++    unsigned i;
++    for (i = 0; i < len; ++i) {
++        float v = in[i];
++        if (v > 32767.0f)
++            out[i] = 32767;
++        else if (v < -32768.0f)
++            out[i] = -32768;
++        else
++            out[i] = (pj_int16_t)(v >= 0 ? v + 0.5f : v - 0.5f);
++    }
++}
++
++/* Process one 10 ms block. near10/far10 are at clock rate, the result is
++ * written back to near10.
++ */
++static pj_status_t process_10ms(webrtc_ec *echo, pj_int16_t *near10,
++                                const pj_int16_t *far10)
++{
++    const pj_int16_t *far_c, *near_c;
++    const float *near_bands[2];
++    float *aec_out_bands[2];
++    float *ns_out_bands[2];
++    float *const *result;
++    unsigned band_len = echo->band_len;
++    int status;
++
++    /* 1. Bring near and far end to the core rate. */
++    if (echo->rs_far) {
++        pjmedia_resample_run(echo->rs_far, far10, echo->far_rs);
++        pjmedia_resample_run(echo->rs_near, near10, echo->near_rs);
++        far_c = echo->far_rs;
++        near_c = echo->near_rs;
++    } else {
++        far_c = far10;
++        near_c = near10;
++    }
++
++    /* 2. Split into bands (32 kHz core rate) or use as is. */
++    if (echo->num_bands == 2) {
++        WebRtcSpl_AnalysisQMF(far_c, echo->proc_len,
++                              echo->far_lo16, echo->far_hi16,
++                              echo->qmf_far_a1, echo->qmf_far_a2);
++        WebRtcSpl_AnalysisQMF(near_c, echo->proc_len,
++                              echo->near_lo16, echo->near_hi16,
++                              echo->qmf_near_a1, echo->qmf_near_a2);
++        int16_to_float(echo->far_lo16, echo->far_f, band_len);
++        int16_to_float(echo->near_hi16, echo->near_f[1], band_len);
++    } else {
++        int16_to_float(far_c, echo->far_f, band_len);
++        pjmedia_copy_samples(echo->near_lo16, near_c, band_len);
++    }
++
++    /* High pass filter on the capture (low band), before AEC and NS. */
++    hpf_process(&echo->hpf, echo->near_lo16, band_len);
++    int16_to_float(echo->near_lo16, echo->near_f[0], band_len);
++
++    /* 3. Feed far end (low band only, as the core expects). */
++    status = WebRtcAec_BufferFarend(echo->AEC_inst, echo->far_f, band_len);
++    if (status != 0) {
++        print_webrtc_aec_error("Buffer farend", echo->AEC_inst);
++        return PJ_EUNKNOWN;
++    }
++
++    near_bands[0] = echo->near_f[0];
++    near_bands[1] = echo->near_f[1];
++    aec_out_bands[0] = echo->aec_out_f[0];
++    aec_out_bands[1] = echo->aec_out_f[1];
++    ns_out_bands[0] = echo->ns_out_f[0];
++    ns_out_bands[1] = echo->ns_out_f[1];
++
++    /* 4. Noise suppressor analysis runs on the unprocessed capture. */
++    if (echo->NS_inst)
++        WebRtcNs_Analyze(echo->NS_inst, echo->near_f[0]);
++
++    /* 5. Echo cancellation. */
++    status = WebRtcAec_Process(echo->AEC_inst, near_bands, echo->num_bands,
++                               aec_out_bands, band_len,
++                               (int16_t)echo->tail, 0);
++    if (status != 0) {
++        print_webrtc_aec_error("Process echo", echo->AEC_inst);
++        return PJ_EUNKNOWN;
++    }
++    result = aec_out_bands;
++
++    /* 6. Noise suppression. */
++    if (echo->NS_inst) {
++        WebRtcNs_Process(echo->NS_inst, (const float *const *)aec_out_bands,
++                         echo->num_bands, ns_out_bands);
++        result = ns_out_bands;
++    }
++
++    /* 7. Merge bands and bring back to the clock rate. */
++    if (echo->num_bands == 2) {
++        float_to_int16(result[0], echo->out_lo16, band_len);
++        float_to_int16(result[1], echo->out_hi16, band_len);
++        WebRtcSpl_SynthesisQMF(echo->out_lo16, echo->out_hi16, band_len,
++                               echo->out_proc,
++                               echo->qmf_syn1, echo->qmf_syn2);
++    } else {
++        float_to_int16(result[0], echo->out_proc, band_len);
++    }
++
++    if (echo->rs_out)
++        pjmedia_resample_run(echo->rs_out, echo->out_proc, near10);
++    else
++        pjmedia_copy_samples(near10, echo->out_proc, echo->frame10_len);
++
++    return PJ_SUCCESS;
++}
++
++#endif  /* !PJMEDIA_WEBRTC_AEC_USE_MOBILE */
++
++
+ /*
+  * Perform echo cancellation.
+  */
+@@ -273,81 +751,74 @@
+ {
+     webrtc_ec *echo = (webrtc_ec*) state;
+     int status;
+-    unsigned i, j, frm_idx = 0;
++    unsigned i, frm_idx = 0;
++#if PJMEDIA_WEBRTC_AEC_USE_MOBILE
+     const sample * buf_ptr;
+     sample * out_buf_ptr;
++#endif
+ 
+     PJ_UNUSED_ARG(options);
+     PJ_UNUSED_ARG(reserved);
+ 
+     /* Sanity checks */
+     PJ_ASSERT_RETURN(echo && rec_frm && play_frm, PJ_EINVAL);
+-    
++
++#if !PJMEDIA_WEBRTC_AEC_USE_MOBILE
++    PJ_UNUSED_ARG(i);
++    for (frm_idx = 0; frm_idx < echo->samples_per_frame;
++         frm_idx += echo->frame10_len)
++    {
++        status = process_10ms(echo, &rec_frm[frm_idx], &play_frm[frm_idx]);
++        if (status != PJ_SUCCESS)
++            return status;
++        if ((++echo->blocks % STAT_INTERVAL_BLOCKS) == 0)
++            publish_stats(echo);
++    }
++
++    return PJ_SUCCESS;
++
++#else   /* PJMEDIA_WEBRTC_AEC_USE_MOBILE */
++
+     for(i = echo->samples_per_frame / echo->subframe_len; i > 0; i--) {
+-#if PJMEDIA_WEBRTC_AEC_USE_MOBILE
++        unsigned j;
++
+         buf_ptr = &play_frm[frm_idx];
+-#else
+-        for (j = 0; j < echo->subframe_len; j++) {
+-            echo->tmp_buf[j] = rec_frm[frm_idx+j];
+-            echo->tmp_buf2[j] = play_frm[frm_idx+j];
+-        }
+-        buf_ptr = echo->tmp_buf2;
+-#endif
+-        
++
+         /* Feed farend buffer */
+         status = WebRtcAec_BufferFarend(echo->AEC_inst, buf_ptr,
+                                         echo->subframe_len);
+         if (status != 0) {
+             print_webrtc_aec_error("Buffer farend", echo->AEC_inst);
+             return PJ_EUNKNOWN;
+-        }        
+-        
++        }
++
+         buf_ptr = echo->tmp_buf;
+         out_buf_ptr = echo->tmp_buf2;
+         if (echo->NS_inst) {
+-#if PJMEDIA_WEBRTC_AEC_USE_MOBILE
+             buf_ptr = &rec_frm[frm_idx];
+             WebRtcNsx_Process(echo->NS_inst, &buf_ptr, echo->channel_count,
+                               &out_buf_ptr);
+             buf_ptr = out_buf_ptr;
+             out_buf_ptr = echo->tmp_buf;
+-#else
+-            WebRtcNs_Analyze(echo->NS_inst, buf_ptr);
+-#endif
+         }
+-        
++
+         /* Process echo cancellation */
+-#if PJMEDIA_WEBRTC_AEC_USE_MOBILE
+         status = WebRtcAecm_Process(echo->AEC_inst, &rec_frm[frm_idx],
+                                     (echo->NS_inst? buf_ptr: NULL),
+                                     out_buf_ptr, echo->subframe_len,
+                                     echo->tail);
+-#else
+-        status = WebRtcAec_Process(echo->AEC_inst, &buf_ptr,
+-                                   echo->channel_count, &out_buf_ptr,
+-                                   echo->subframe_len, (int16_t)echo->tail, 0);
+-#endif
+         if (status != 0) {
+             print_webrtc_aec_error("Process echo", echo->AEC_inst);
+             return PJ_EUNKNOWN;
+         }
+ 
+-#if !PJMEDIA_WEBRTC_AEC_USE_MOBILE
+-        if (echo->NS_inst) {
+-            /* Noise suppression */
+-            buf_ptr = echo->tmp_buf2;
+-            out_buf_ptr = echo->tmp_buf;
+-            WebRtcNs_Process(echo->NS_inst, &buf_ptr,
+-                             echo->channel_count, &out_buf_ptr);
+-        }
+-#endif
+-    
+         for (j = 0; j < echo->subframe_len; j++) {
+             rec_frm[frm_idx++] = (pj_int16_t)out_buf_ptr[j];
+         }
+     }
+ 
+     return PJ_SUCCESS;
++#endif
+ }
+ 
+ 
+@@ -356,6 +827,73 @@
+ {
+     webrtc_ec *echo = (webrtc_ec*) state;
+ 
++#if !PJMEDIA_WEBRTC_AEC_USE_MOBILE
++    /* Safe from any thread: copies the snapshot published by the capture
++     * thread, see publish_stats().
++     */
++    unsigned seq1, seq2, tries = 0;
++    pj_bool_t valid;
++    int median, std, erl, erle, erle_instant, a_nlp;
++    float poor;
++    unsigned duration_ms;
++
++    PJ_ASSERT_RETURN(echo && p_stat, PJ_EINVAL);
++
++    do {
++        seq1 = echo->stat_seq;
++        valid = echo->snap.valid;
++        median = echo->snap.delay_median;
++        std = echo->snap.delay_std;
++        poor = echo->snap.poor_delays;
++        erl = echo->snap.erl;
++        erle = echo->snap.erle;
++        erle_instant = echo->snap.erle_instant;
++        a_nlp = echo->snap.a_nlp;
++        duration_ms = echo->snap.duration_ms;
++        seq2 = echo->stat_seq;
++    } while ((seq1 != seq2 || (seq1 & 1)) && ++tries < 100);
++
++    p_stat->name = "WebRTC AEC";
++    if (!valid)
++        return PJ_EPENDING;     /* less than a second since (re)init */
++
++    p_stat->delay = (median != -1) ? median : PJMEDIA_ECHO_STAT_NOT_SPECIFIED;
++    p_stat->std = (std != -1) ? std : PJMEDIA_ECHO_STAT_NOT_SPECIFIED;
++    p_stat->frac_delay = (poor >= 0.0f) ? poor :
++                         (float)PJMEDIA_ECHO_STAT_NOT_SPECIFIED;
++    p_stat->return_loss = (erl > AEC_LEVEL_UNAVAILABLE) ? (double)erl :
++                          (double)PJMEDIA_ECHO_STAT_NOT_SPECIFIED;
++    p_stat->return_loss_enh = (erle > AEC_LEVEL_UNAVAILABLE) ? (double)erle :
++                              (double)PJMEDIA_ECHO_STAT_NOT_SPECIFIED;
++    p_stat->duration = duration_ms;
++
++    {
++        char b_delay[16], b_std[16], b_poor[16], b_erl[16], b_erle[16],
++             b_now[16], b_nlp[16];
++
++        p_stat->stat_info.ptr = p_stat->buf_;
++        p_stat->stat_info.slen =
++            pj_ansi_snprintf(p_stat->buf_, sizeof(p_stat->buf_),
++                             "delay=%s std=%s poor=%s ERL=%s "
++                             "ERLE=%s (now %s) NLP=%s rate=%u/%u %us",
++                             fmt_ms(b_delay, sizeof(b_delay), median),
++                             fmt_ms(b_std, sizeof(b_std), std),
++                             fmt_frac(b_poor, sizeof(b_poor), poor),
++                             fmt_db(b_erl, sizeof(b_erl), erl),
++                             fmt_db(b_erle, sizeof(b_erle), erle),
++                             fmt_db(b_now, sizeof(b_now), erle_instant),
++                             fmt_db(b_nlp, sizeof(b_nlp), a_nlp),
++                             echo->clock_rate, echo->core_rate,
++                             duration_ms / 1000);
++    }
++    if (p_stat->stat_info.slen < 0 ||
++        p_stat->stat_info.slen >= (pj_ssize_t)sizeof(p_stat->buf_))
++    {
++        p_stat->stat_info.slen = pj_ansi_strlen(p_stat->buf_);
++    }
++
++    return PJ_SUCCESS;
++#else
+     if (WebRtcAec_GetDelayMetrics(echo->AEC_inst, &p_stat->delay,
+                                   &p_stat->std, &p_stat->frac_delay) != 0)
+     {
+@@ -371,6 +909,7 @@
+                          p_stat->delay, p_stat->std, p_stat->frac_delay);
+ 
+     return PJ_SUCCESS;
++#endif
+ }
+ 
+ 
+--- pjsip_orig/pjmedia/src/pjmedia/echo_common.c
++++ pjsip/pjmedia/src/pjmedia/echo_common.c
+@@ -52,6 +52,21 @@
+ 
+     pjmedia_delay_buf   *delay_buf;
+     pj_int16_t      *frm_buf;
++
++    /* Pending reset/resync requests (AG Projects, patch 09_aec).
++     *
++     * pjmedia_echo_reset() and pjmedia_echo_resync() may be called from any
++     * thread (application thread, or the playback thread when the sound
++     * port resumes a suspended EC), while pjmedia_echo_playback() and
++     * pjmedia_echo_capture() run concurrently on the audio I/O threads.
++     * The latency list, lat_ready and the backend state are not protected
++     * by any lock, so those calls only raise a flag here; the request is
++     * carried out by the thread that runs the canceller (capture side, see
++     * apply_pending_requests()).  Requesters only ever set the flags,
++     * the canceller thread only ever clears them.
++     */
++    volatile pj_bool_t   reset_req;     /* Reset buffers + backend state.  */
++    volatile pj_bool_t   resync_req;    /* Reset buffers only.             */
+ };
+ 
+ 
+@@ -328,17 +343,100 @@
+  */
+ PJ_DEF(pj_status_t) pjmedia_echo_reset(pjmedia_echo_state *echo )
+ {
++    PJ_ASSERT_RETURN(echo, PJ_EINVAL);
++
++    /* Deferred: carried out by the canceller thread before it processes
++     * the next frame. See apply_pending_requests().
++     */
++    echo->reset_req = PJ_TRUE;
++    return PJ_SUCCESS;
++}
++
++
++/*
++ * Re-prime the latency and delay buffers without discarding what the
++ * backend has learned (adaptive filter, delay estimate).
++ */
++PJ_DEF(pj_status_t) pjmedia_echo_resync(pjmedia_echo_state *echo )
++{
++    PJ_ASSERT_RETURN(echo, PJ_EINVAL);
++
++    echo->resync_req = PJ_TRUE;
++    return PJ_SUCCESS;
++}
++
++
++/*
++ * Carry out pending reset/resync requests. Must only be called from the
++ * thread that runs the canceller (pjmedia_echo_capture() or a direct
++ * pjmedia_echo_cancel() user).
++ *
++ * Returns PJ_TRUE if the latency buffer is being re-primed, in which case
++ * the caller must not touch the latency list for this frame.
++ *
++ * Ownership of the latency list (lat_buf/lat_free) is handed over through
++ * lat_ready: while it is PJ_FALSE only the playback thread moves frames
++ * (prefetching), once the playback thread has set it to PJ_TRUE only the
++ * capture thread does. A resync therefore rebuilds the list first, while
++ * the capture thread still owns it, and only then sets lat_ready to
++ * PJ_FALSE to hand it back to the playback thread.
++ */
++static pj_bool_t apply_pending_requests(pjmedia_echo_state *echo)
++{
++    pj_bool_t do_reset, do_resync;
++
++    if (!echo->reset_req && !echo->resync_req)
++        return PJ_FALSE;
++
++    if (echo->delay_buf == NULL) {
++        /* Backend without latency buffer (own playback/capture handlers,
++         * or direct pjmedia_echo_cancel() users). Nothing to re-prime.
++         */
++        echo->resync_req = PJ_FALSE;
++        if (echo->reset_req) {
++            echo->reset_req = PJ_FALSE;
++            echo->op->ec_reset(echo->state);
++        }
++        return PJ_FALSE;
++    }
++
++    if (!echo->lat_ready) {
++        /* The playback thread owns the latency list and is re-priming it
++         * already, so a resync is implicitly satisfied. The backend state
++         * is only used by this thread and can be reset right away.
++         */
++        echo->resync_req = PJ_FALSE;
++        if (echo->reset_req) {
++            echo->reset_req = PJ_FALSE;
++            echo->op->ec_reset(echo->state);
++            PJ_LOG(4,(echo->obj_name, "EC reset (while prefetching)"));
++        }
++        return PJ_TRUE;
++    }
++
++    /* Clear before acting, so a request raised meanwhile is not lost. */
++    do_reset = echo->reset_req;
++    do_resync = echo->resync_req;
++    echo->reset_req = PJ_FALSE;
++    echo->resync_req = PJ_FALSE;
++
+     while (!pj_list_empty(&echo->lat_buf)) {
+         struct frame *frm;
+         frm = echo->lat_buf.next;
+         pj_list_erase(frm);
+         pj_list_push_back(&echo->lat_free, frm);
+     }
++    pjmedia_delay_buf_reset(echo->delay_buf);
++
++    if (do_reset)
++        echo->op->ec_reset(echo->state);
++
++    /* Hand the latency list back to the playback thread. */
+     echo->lat_ready = PJ_FALSE;
+-    if (echo->delay_buf)
+-        pjmedia_delay_buf_reset(echo->delay_buf);
+-    echo->op->ec_reset(echo->state);
+-    return PJ_SUCCESS;
++
++    PJ_LOG(4,(echo->obj_name, "EC %s", do_reset ? "reset" :
++                              (do_resync ? "resynchronized" : "")));
++    return PJ_TRUE;
+ }
+ 
+ 
+@@ -406,6 +504,12 @@
+     struct frame *oldest_frm;
+     pj_status_t status, rc;
+ 
++    /* Carry out pending reset/resync requests from other threads. */
++    if (apply_pending_requests(echo)) {
++        PJ_LOG(5,(echo->obj_name, "Prefetching.."));
++        return PJ_SUCCESS;
++    }
++
+     /* If EC algo has capture handler, just pass the frame. */
+     if (echo->op->ec_capture) {
+         return (*echo->op->ec_capture)(echo->state, rec_frm, options);
+@@ -448,6 +552,13 @@
+                                          unsigned options,
+                                          void *reserved )
+ {
++    /* Direct users (no latency buffer): apply pending reset here. When
++     * called from pjmedia_echo_capture() the requests were already handled
++     * there, and with a latency buffer they are left for the next capture.
++     */
++    if (echo->delay_buf == NULL)
++        apply_pending_requests(echo);
++
+     return (*echo->op->ec_cancel)( echo->state, rec_frm, play_frm, options, 
+                                    reserved);
+ }
+--- pjsip_orig/pjmedia/include/pjmedia/echo.h
++++ pjsip/pjmedia/include/pjmedia/echo.h
+@@ -335,6 +335,13 @@
+ /**
+  * Reset the echo canceller.
+  *
++ * The reset is deferred: it is carried out by the thread that runs the
++ * canceller (#pjmedia_echo_capture() or #pjmedia_echo_cancel()) before it
++ * processes the next frame, so this function is safe to call from any
++ * thread while audio is flowing. The latency buffer is re-primed and the
++ * backend discards everything it has learned (adaptive filter, delay
++ * estimate), so it has to converge again.
++ *
+  * @param echo          The Echo Canceller.
+  *
+  * @return              PJ_SUCCESS on success.
+@@ -343,6 +350,24 @@
+ 
+ 
+ /**
++ * Re-synchronize the echo canceller: flush and re-prime the latency and
++ * delay buffers between playback and capture, but keep the backend state
++ * (adaptive filter, delay estimate). Use this instead of
++ * #pjmedia_echo_reset() when the acoustic echo path did not change, e.g.
++ * after playback was paused, on hold/unhold or when a new stream is
++ * connected to the same sound device.
++ *
++ * Like #pjmedia_echo_reset(), this is deferred and safe to call from any
++ * thread.
++ *
++ * @param echo          The Echo Canceller.
++ *
++ * @return              PJ_SUCCESS on success.
++ */
++PJ_DECL(pj_status_t) pjmedia_echo_resync(pjmedia_echo_state *echo );
++
++
++/**
+  * Get the echo canceller statistics.
+  *
+  * @param echo          The Echo Canceller.
+--- pjsip_orig/pjmedia/src/pjmedia/sound_port.c
++++ pjsip/pjmedia/src/pjmedia/sound_port.c
+@@ -115,7 +115,11 @@
+     if (snd_port->ec_state) {
+         if (snd_port->ec_suspended) {
+             snd_port->ec_suspended = PJ_FALSE;
+-            pjmedia_echo_reset(snd_port->ec_state);
++            /* Re-prime the latency buffer but keep the learned echo path;
++             * the acoustic path did not change while playback was idle.
++             * (Deferred to the capture thread, see echo_common.c.)
++             */
++            pjmedia_echo_resync(snd_port->ec_state);
+             PJ_LOG(4,(THIS_FILE, "EC activated"));
+         }
+         snd_port->ec_suspend_count = 0;
+@@ -717,13 +721,30 @@
+     return snd_port->aud_stream;
+ }
+ 
+-/* Reset EC internal state. */
++/* Reset EC internal state (deferred to the capture thread). */
+ PJ_DEF(pj_status_t) pjmedia_snd_port_reset_ec_state( pjmedia_snd_port *snd_port )
+ {
++    pjmedia_echo_state *ec_state;
++
+     PJ_ASSERT_RETURN(snd_port, PJ_EINVAL);
+-    if (snd_port->ec_state) {
+-       pjmedia_echo_reset(snd_port->ec_state);
+-       PJ_LOG(4,(THIS_FILE, "EC reset"));
++    ec_state = snd_port->ec_state;
++    if (ec_state) {
++       pjmedia_echo_reset(ec_state);
++       PJ_LOG(4,(THIS_FILE, "EC reset requested"));
++    }
++    return PJ_SUCCESS;
++}
++
++/* Re-prime EC buffers, keep learned echo path (deferred to capture thread). */
++PJ_DEF(pj_status_t) pjmedia_snd_port_resync_ec_state( pjmedia_snd_port *snd_port )
++{
++    pjmedia_echo_state *ec_state;
++
++    PJ_ASSERT_RETURN(snd_port, PJ_EINVAL);
++    ec_state = snd_port->ec_state;
++    if (ec_state) {
++       pjmedia_echo_resync(ec_state);
++       PJ_LOG(4,(THIS_FILE, "EC resync requested"));
+     }
+     return PJ_SUCCESS;
+ }
+--- pjsip_orig/pjmedia/include/pjmedia/sound_port.h
++++ pjsip/pjmedia/include/pjmedia/sound_port.h
+@@ -402,9 +402,16 @@
+  * @}
+  */
+ 
+-/* Reset the echo canceller internal state. */
++/* Reset the echo canceller internal state. Safe from any thread; the reset
++ * is carried out by the capture thread before the next frame. The canceller
++ * has to re-learn the echo path afterwards. */
+ PJ_DECL(pj_status_t) pjmedia_snd_port_reset_ec_state(pjmedia_snd_port *snd_port);
+ 
++/* Flush and re-prime the echo canceller latency buffers, keeping the learned
++ * echo path. Safe from any thread (deferred like the reset). */
++#define PJMEDIA_HAS_SND_PORT_RESYNC_EC  1
++PJ_DECL(pj_status_t) pjmedia_snd_port_resync_ec_state(pjmedia_snd_port *snd_port);
++
+ /* Create a mixer port - small frame buffer used by sipsimple's AudioBridge. */
+ PJ_DECL(pj_status_t) pjmedia_mixer_port_create(pj_pool_t *pool,
+                                                unsigned int sampling_rate,
+--- pjsip_orig/third_party/build/webrtc/Makefile
++++ pjsip/third_party/build/webrtc/Makefile
+@@ -55,6 +55,7 @@
+ 	common_audio/signal_processing/spl_init.o                  \
+ 	common_audio/signal_processing/spl_sqrt.o                  \
+ 	common_audio/signal_processing/spl_sqrt_floor.o            \
++	common_audio/signal_processing/splitting_filter.o          \
+ 	common_audio/signal_processing/vector_scaling_operations.o \
+ 	$(WEBRTC_SRC)
+ 
+--- pjsip_orig/third_party/webrtc/CMakeLists.txt
++++ pjsip/third_party/webrtc/CMakeLists.txt
+@@ -30,6 +30,7 @@
+   src/webrtc/common_audio/signal_processing/spl_init.c
+   src/webrtc/common_audio/signal_processing/spl_sqrt.c
+   src/webrtc/common_audio/signal_processing/spl_sqrt_floor.c
++  src/webrtc/common_audio/signal_processing/splitting_filter.c
+   src/webrtc/common_audio/signal_processing/vector_scaling_operations.c
+ )
+ 
+--- pjsip_orig/third_party/webrtc/src/webrtc/modules/audio_processing/aec/aec_core.c
++++ pjsip/third_party/webrtc/src/webrtc/modules/audio_processing/aec/aec_core.c
+@@ -105,7 +105,17 @@
+ static const float kDelayQualityThresholdMin = 0.01f;
+ static const int kInitialShiftOffset = 5;
+ #if !defined(WEBRTC_ANDROID)
+-static const int kDelayCorrectionStart = 1500;  // 10 ms chunks
++// pjsip/python3-sipsimple (patch 09_aec): upstream waits 1500 frames (15 s)
++// before the signal based delay correction may move the far-end read pointer.
++// pjsip does not report the real system delay, so for any echo path that is
++// not already aligned (e.g. Bluetooth, external speakers, > ~60 ms) no echo
++// is cancelled for the first 15 s of every call and again after every reset.
++// 2 s is enough for the delay estimator to converge on speech, and the
++// delay quality threshold still guards against bogus estimates.
++#ifndef WEBRTC_AEC_DELAY_CORRECTION_START
++#define WEBRTC_AEC_DELAY_CORRECTION_START 200
++#endif
++static const int kDelayCorrectionStart = WEBRTC_AEC_DELAY_CORRECTION_START;  // 10 ms chunks
+ #endif
+ 
+ // Target suppression levels for nlp modes.

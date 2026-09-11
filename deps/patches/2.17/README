@@ -78,6 +78,29 @@ Media / SDP / codecs:
                                        event, real EC reset, TIAS disable,
                                        MIXER signature.  Skipped:
                                        converter.c debug logging.
+  09_aec.patch                         2.17 rewrite (Sep 2026) - NOT a
+                                       port of the 2.12 file.  The 2.12
+                                       09_aec.patch added the 2013 AG
+                                       echo_webrtc_aec.c but nothing has
+                                       compiled it since the May 2021
+                                       pjsip 2.10 migration; every build
+                                       since used upstream echo_webrtc.c.
+                                       This patch fixes upstream's wrapper
+                                       instead: QMF band split at 32 kHz
+                                       (resample at 48 kHz), capture high
+                                       pass filter, band aware NS,
+                                       thread safe deferred reset, new
+                                       pjmedia_echo_resync() /
+                                       pjmedia_snd_port_resync_ec_state(),
+                                       EC resume uses resync, WebRTC delay
+                                       correction after 2 s instead of
+                                       15 s, thread safe statistics
+                                       (pjmedia_snd_port_get_ec_stat ->
+                                       AudioMixer.ec_statistics).  Builds
+                                       splitting_filter.c.
+                                       Details + measurements in the patch
+                                       header, docs/EchoCancellation.txt
+                                       and aec-harness/.
   15_vpx.patch                         ported - verified, no-op guard,
                                        preserves 2.12 behaviour.
   20_sylk_aead_transport.patch         ported - Makefile hunk re-targeted
@@ -213,13 +236,6 @@ Tier 5+ (heavy):
                                        (individual patches touch their
                                        own Makefile fragments) so this
                                        is cleanup, not a blocker.
-  09_aec.patch                         AEC2 / AEC3 are split into
-                                       echo_webrtc.c (AEC2) and
-                                       echo_webrtc_aec3.c (AEC3) in
-                                       2.17.  The 2.12 patch was a
-                                       single-file drop; needs splitting.
-                                       Audio quality regression vs 2.12
-                                       until done.
 
 
 Cython / sipsimple-side work pending
@@ -232,8 +248,11 @@ Patch 08 added two C symbols that nothing in Python calls yet:
     decoder loses sync.
 
   * pjmedia_snd_port_reset_ec_state() is now real (was a no-op stub)
-    but the existing Python wrapper - if any - may still bail early
-    because it predates a working impl.
+    and, since 09_aec, deferred to the capture thread.  AudioMixer
+    exposes it as reset_ec(); the new resync_ec() (patch 09) is what
+    AudioStream uses on start and direction change.  AudioMixer passes
+    PJMEDIA_ECHO_USE_NOISE_SUPPRESSOR | AGGRESSIVENESS_AGGRESSIVE as
+    ec_options (_core.sound.pxi, _ec_options).
 
 
 Rebase / verification order
