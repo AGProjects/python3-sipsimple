@@ -2163,7 +2163,7 @@ cdef class VideoCamera(VideoProducer):
 
 cdef class FrameBufferVideoRenderer(VideoConsumer):
     cdef pjmedia_vid_dev_stream *_video_stream
-    cdef object _frame_handler
+    cdef object _frame_handlers
 
     cdef _initialize(self, VideoProducer producer)
     cdef void _destroy_video_port(self)

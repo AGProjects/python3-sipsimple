@@ -814,7 +814,72 @@ cdef class FrameBufferVideoRenderer(VideoConsumer):
         super(FrameBufferVideoRenderer, self).__init__()
         if not callable(frame_handler):
             raise TypeError('frame_handler must be callable')
-        self._frame_handler = frame_handler
+        self._frame_handlers = (frame_handler,)
+
+    property frame_handlers:
+
+        def __get__(self):
+            return self._frame_handlers
+
+    def add_frame_handler(self, frame_handler):
+        """Subscribe an additional callable to the decoded frames.
+
+        Every subscriber is called on the pjsip video thread, in
+        subscription order, with the same VideoFrame instance. A handler
+        must return quickly and must not block: this call sits on the
+        render path, so anything slower than the frame interval stalls
+        the video port. Subscribing a handler that is already subscribed
+        is a no-op.
+        """
+        cdef int status
+        cdef pj_mutex_t *lock
+
+        if not callable(frame_handler):
+            raise TypeError('frame_handler must be callable')
+
+        lock = self._lock
+
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            if self._closed:
+                raise SIPCoreError("renderer is closed")
+            if frame_handler in self._frame_handlers:
+                return
+            # Rebind rather than mutate: the frame callback reads this
+            # attribute once and iterates the snapshot it got, so it
+            # never sees a half-updated sequence and never needs to take
+            # the lock on the media thread.
+            self._frame_handlers = self._frame_handlers + (frame_handler,)
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
+    def remove_frame_handler(self, frame_handler):
+        """Unsubscribe a callable added with add_frame_handler().
+
+        Removing a handler that is not subscribed is a no-op. A frame
+        already in flight on the media thread may still reach the
+        handler after this returns.
+        """
+        cdef int status
+        cdef pj_mutex_t *lock
+
+        lock = self._lock
+
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            if frame_handler not in self._frame_handlers:
+                return
+            self._frame_handlers = tuple(handler for handler in self._frame_handlers if handler != frame_handler)
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
 
     cdef _initialize(self, VideoProducer producer):
         cdef pjmedia_vid_port_param vp_param
@@ -934,7 +999,7 @@ cdef class FrameBufferVideoRenderer(VideoConsumer):
             self._stop()
             self._closed = 1
             self._destroy_video_port()
-            self._frame_handler = None
+            self._frame_handlers = ()
         finally:
             with nogil:
                 pj_mutex_unlock(lock)
@@ -1016,9 +1081,20 @@ cdef void FrameBufferVideoRenderer_frame_handler_impl(pjmedia_frame_ptr_const fr
     rend = (<object> user_data)()
     if rend is None:
         return
-    if rend._frame_handler is not None:
+    handlers = rend._frame_handlers
+    if handlers:
         data = PyBytes_FromStringAndSize(<char*>frame.buf, frame.size)
-        rend._frame_handler(VideoFrame(data, size.w, size.h))
+        video_frame = VideoFrame(data, size.w, size.h)
+        for handler in handlers:
+            try:
+                handler(video_frame)
+            except:
+                # One bad subscriber must not take down the render path,
+                # nor propagate out of this function into pjsip through
+                # the noexcept nogil trampoline below. Report it the way
+                # the rest of the SDK reports callback failures and carry
+                # on with the remaining handlers.
+                ua._handle_exception(0)
 
 
 cdef void FrameBufferVideoRenderer_frame_handler(pjmedia_frame_ptr_const frame, pjmedia_rect_size size, void *user_data) noexcept nogil:
