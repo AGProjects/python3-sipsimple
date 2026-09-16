@@ -387,8 +387,14 @@ class PJSIP_build_ext(build_ext):
 
         if sys_platform == "darwin":
             extension.define_macros.append(("MACOSX_DEPLOYMENT_TARGET", min_osx_version))
-            frameworks = re.findall(r"-framework (\S+)(?:\s|$)", build_mak_vars["PJ_LDLIBS"])
-            extension.extra_link_args = list(itertools.chain(*(("-framework", val) for val in frameworks)))
+            framework_flags = re.findall(r"(-framework|-weak_framework) (\S+)(?:\s|$)", build_mak_vars["PJ_LDLIBS"])
+            # avf_dev.m uses ScreenCaptureKit (macOS 12.3+) for the "My screen"
+            # capture devices. configure adds it weak-linked, but a build tree
+            # configured before that change has no such flag: add it here so
+            # _core still links without forcing a reconfigure.
+            if not any(name == "ScreenCaptureKit" for _, name in framework_flags):
+                framework_flags.append(("-weak_framework", "ScreenCaptureKit"))
+            extension.extra_link_args = list(itertools.chain(*framework_flags))
             extension.extra_link_args.append("-mmacosx-version-min=%s" % min_osx_version)
             extension.extra_compile_args.append("-mmacosx-version-min=%s" % min_osx_version)
             extension.library_dirs.append("%s/usr/lib" % osx_sdk_path)
