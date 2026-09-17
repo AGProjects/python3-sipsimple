@@ -209,6 +209,8 @@ cdef class SIPURI(BaseSIPURI):
         cdef pj_pool_t *pool = NULL
         cdef pj_str_t tmp
         cdef char buffer[4096]
+        if not _sip_parser_ready:
+            raise SIPCoreError("Cannot parse SIP URI: the SIP engine is not running")
         pool = pj_pool_create_on_buf("SIPURI_parse", buffer, sizeof(buffer))
         if pool == NULL:
             raise SIPCoreError("Could not allocate memory pool")
@@ -272,6 +274,8 @@ cdef class FrozenSIPURI(BaseSIPURI):
         cdef pj_pool_t *pool = NULL
         cdef pj_str_t tmp
         cdef char buffer[4096]
+        if not _sip_parser_ready:
+            raise SIPCoreError("Cannot parse SIP URI: the SIP engine is not running")
         pool = pj_pool_create_on_buf("FrozenSIPURI_parse", buffer, sizeof(buffer))
         if pool == NULL:
             raise SIPCoreError("Could not allocate memory pool")

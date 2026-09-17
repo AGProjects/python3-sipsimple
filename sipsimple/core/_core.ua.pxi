@@ -72,7 +72,7 @@ cdef class PJSIPUA:
         self._sent_messages = set()
 
     def __init__(self, event_handler, *args, **kwargs):
-        global _event_queue_lock
+        global _event_queue_lock, _sip_parser_ready
         cdef object event
         cdef object method
         cdef list accept_types
@@ -98,6 +98,8 @@ cdef class PJSIPUA:
                                              kwargs["tcp_port"], kwargs["tls_port"],
                                              kwargs["tls_verify_server"], kwargs["tls_ca_file"],
                                              kwargs["tls_cert_file"], kwargs["tls_privkey_file"], kwargs["tls_timeout"])
+        # pjsip_endpt_create() has run init_sip_parser(); pjsip_parse_uri() is usable now
+        _sip_parser_ready = 1
         status = pj_mutex_create_simple(self._pjsip_endpoint._pool, "event_queue_lock", &_event_queue_lock)
         if status != 0:
             raise PJSIPError("Could not initialize event queue mutex", status)
@@ -767,10 +769,16 @@ cdef class PJSIPUA:
         self.dealloc()
 
     def dealloc(self):
-        global _ua, _dealloc_handler_queue, _event_queue_lock
+        global _ua, _dealloc_handler_queue, _event_queue_lock, _sip_parser_ready
         if _ua == NULL:
             return
         self._check_thread()
+        # Must be cleared while holding the GIL and before any endpoint teardown:
+        # PJSIPEndpoint.__dealloc__ releases the GIL around pjsip_endpt_destroy(),
+        # which runs deinit_sip_parser() (clears the URI handlers and exception
+        # ids). A SIPURI.parse() from another thread in that window, or any time
+        # after, returns garbage from pjsip_parse_uri() and crashes.
+        _sip_parser_ready = 0
         pjmedia_aud_dev_set_observer_cb(NULL)
         if self.audio_change_rwlock != NULL:
             pj_rwmutex_destroy(self.audio_change_rwlock)
@@ -1303,6 +1311,7 @@ cdef int deallocate_weakref(object weak_ref, object timer) except -1:
 # globals
 
 cdef void *_ua = NULL
+cdef int _sip_parser_ready = 0
 cdef PJSTR _user_agent_hdr_name = PJSTR(b"User-Agent")
 cdef PJSTR _server_hdr_name = PJSTR(b"Server")
 cdef PJSTR _event_hdr_name = PJSTR(b"Event")
