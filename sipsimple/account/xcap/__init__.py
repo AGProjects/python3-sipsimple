@@ -6,6 +6,7 @@ __all__ = ['Group', 'Contact', 'ContactURI', 'EventHandling', 'Policy', 'Icon', 
 
 import base64
 import pickle
+import threading
 import os
 import random
 import socket
@@ -21,6 +22,7 @@ else:
 
 from io import StringIO
 from collections import OrderedDict
+from contextlib import contextmanager
 from datetime import datetime
 from itertools import chain
 from operator import attrgetter
@@ -757,6 +759,33 @@ class XCAPSubscriber(Subscriber):
         return Content(resourcelists.ResourceLists([rlist]).toxml(), resourcelists.ResourceListsDocument.content_type)
 
 
+# Whether the calling thread is copying a document fetched from the server.
+#
+# Applying one account's addressbook writes the same contacts into every other
+# account's XCAPManager through the public mutators below, which post the same
+# XCAPManagerDid* notifications a user edit posts. The notifications are
+# delivered to observers later and on other threads (Blink handles them on the
+# GUI thread), by which time AddressbookManager.applying_remote_data has long
+# gone back to zero -- so a counter read by the observer cannot tell the two
+# apart, and a client announcing "the addressbook changed" announced every
+# copy. The answer is taken here instead, at the moment of posting, and sent
+# with the notification as data.remote.
+_remote_apply = threading.local()
+
+
+@contextmanager
+def applying_remote_document():
+    _remote_apply.depth = getattr(_remote_apply, 'depth', 0) + 1
+    try:
+        yield
+    finally:
+        _remote_apply.depth -= 1
+
+
+def is_applying_remote_document():
+    return getattr(_remote_apply, 'depth', 0) > 0
+
+
 @implementer(IObserver)
 class XCAPManager(object):
 
@@ -888,17 +917,17 @@ class XCAPManager(object):
 
     def add_contact(self, contact):
         notification_center = NotificationCenter()
-        notification_center.post_notification('XCAPManagerDidAddContact', sender=self, data=NotificationData(contact=contact))
+        notification_center.post_notification('XCAPManagerDidAddContact', sender=self, data=NotificationData(contact=contact, remote=is_applying_remote_document()))
         self._schedule_operation(AddContactOperation(contact=contact))
 
     def update_contact(self, contact, attributes):
         notification_center = NotificationCenter()
-        notification_center.post_notification('XCAPManagerDidUpdateContact', sender=self, data=NotificationData(contact=contact))
+        notification_center.post_notification('XCAPManagerDidUpdateContact', sender=self, data=NotificationData(contact=contact, remote=is_applying_remote_document()))
         self._schedule_operation(UpdateContactOperation(contact=contact, attributes=attributes))
 
     def remove_contact(self, contact):
         notification_center = NotificationCenter()
-        notification_center.post_notification('XCAPManagerDidRemoveContact', sender=self, data=NotificationData(contact=contact))
+        notification_center.post_notification('XCAPManagerDidRemoveContact', sender=self, data=NotificationData(contact=contact, remote=is_applying_remote_document()))
         self._schedule_operation(RemoveContactOperation(contact=contact))
 
     def add_contact_uri(self, contact, uri):
@@ -912,27 +941,27 @@ class XCAPManager(object):
 
     def add_group(self, group):
         notification_center = NotificationCenter()
-        notification_center.post_notification('XCAPManagerDidAddGroup', sender=self, data=NotificationData(group=group))
+        notification_center.post_notification('XCAPManagerDidAddGroup', sender=self, data=NotificationData(group=group, remote=is_applying_remote_document()))
         self._schedule_operation(AddGroupOperation(group=group))
 
     def update_group(self, group, attributes):
         notification_center = NotificationCenter()
-        notification_center.post_notification('XCAPManagerDidUpdateGroup', sender=self, data=NotificationData(group=group))
+        notification_center.post_notification('XCAPManagerDidUpdateGroup', sender=self, data=NotificationData(group=group, remote=is_applying_remote_document()))
         self._schedule_operation(UpdateGroupOperation(group=group, attributes=attributes))
 
     def remove_group(self, group):
         notification_center = NotificationCenter()
-        notification_center.post_notification('XCAPManagerDidRemoveGroup', sender=self, data=NotificationData(group=group))
+        notification_center.post_notification('XCAPManagerDidRemoveGroup', sender=self, data=NotificationData(group=group, remote=is_applying_remote_document()))
         self._schedule_operation(RemoveGroupOperation(group=group))
 
     def add_group_member(self, group, contact):
         notification_center = NotificationCenter()
-        notification_center.post_notification('XCAPManageDidAddGroupMember', sender=self, data=NotificationData(group=group, contact=contact))
+        notification_center.post_notification('XCAPManageDidAddGroupMember', sender=self, data=NotificationData(group=group, contact=contact, remote=is_applying_remote_document()))
         self._schedule_operation(AddGroupMemberOperation(group=group, contact=contact))
 
     def remove_group_member(self, group, contact):
         notification_center = NotificationCenter()
-        notification_center.post_notification('XCAPManageDidRemoveGroupMember', sender=self, data=NotificationData(group=group, contact=contact))
+        notification_center.post_notification('XCAPManageDidRemoveGroupMember', sender=self, data=NotificationData(group=group, contact=contact, remote=is_applying_remote_document()))
         self._schedule_operation(RemoveGroupMemberOperation(group=group, contact=contact))
 
     def add_policy(self, policy):

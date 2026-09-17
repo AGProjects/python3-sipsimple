@@ -29,6 +29,20 @@ from sipsimple.payloads.resourcelists import ResourceListsDocument
 from sipsimple.threading import run_in_thread
 
 
+def _remote_originated(method):
+    """An _internal_save / _internal_delete for data that came from a server
+    document (originator is Remote) copies it into the other accounts: the
+    XCAPManager notifications it causes carry data.remote=True."""
+    def wrapper(self, originator):
+        if originator is Local:
+            return method(self, originator)
+        with xcap.applying_remote_document():
+            return method(self, originator)
+    wrapper.__name__ = method.__name__
+    wrapper.__doc__ = method.__doc__
+    return wrapper
+
+
 def unique_id(prefix='id'):
     return "%s%d%06d" % (prefix, time()*1e6, randint(0, 999999))
 
@@ -448,6 +462,7 @@ class Group(SettingsState):
         return XCAPGroup(self.id, self.name, xcap_contacts, **attributes)
 
     @run_in_thread('file-io')
+    @_remote_originated
     def _internal_save(self, originator):
         if self.__state__ == 'deleted':
             return
@@ -525,6 +540,7 @@ class Group(SettingsState):
             notification_center.post_notification('CFGManagerSaveFailed', sender=configuration, data=NotificationData(object=self, operation='save', modified=modified_data, exception=e))
 
     @run_in_thread('file-io')
+    @_remote_originated
     def _internal_delete(self, originator):
         if self.__state__ == 'deleted':
             return
@@ -758,6 +774,7 @@ class Contact(SettingsState):
         return XCAPContact(self.id, self.name, contact_uris, presence_handling, dialog_handling, **attributes)
 
     @run_in_thread('file-io')
+    @_remote_originated
     def _internal_save(self, originator):
         if self.__state__ == 'deleted':
             return
@@ -840,6 +857,7 @@ class Contact(SettingsState):
             notification_center.post_notification('CFGManagerSaveFailed', sender=configuration, data=NotificationData(object=self, operation='save', modified=modified_data, exception=e))
 
     @run_in_thread('file-io')
+    @_remote_originated
     def _internal_delete(self, originator):
         if self.__state__ == 'deleted':
             return
@@ -969,6 +987,7 @@ class Policy(SettingsState):
         return XCAPPolicy(self.id, self.uri, self.name, presence_handling, dialog_handling, **attributes)
 
     @run_in_thread('file-io')
+    @_remote_originated
     def _internal_save(self, originator):
         if self.__state__ == 'deleted':
             return
@@ -1029,6 +1048,7 @@ class Policy(SettingsState):
             notification_center.post_notification('CFGManagerSaveFailed', sender=configuration, data=NotificationData(object=self, operation='save', modified=modified_data, exception=e))
 
     @run_in_thread('file-io')
+    @_remote_originated
     def _internal_delete(self, originator):
         if self.__state__ == 'deleted':
             return
@@ -1111,7 +1131,8 @@ class AddressbookManager(object, metaclass=Singleton):
         """Marks the stretch in which a fetched document is copied locally."""
         self.applying_remote_data += 1
         try:
-            yield
+            with xcap.applying_remote_document():
+                yield
         finally:
             self.applying_remote_data -= 1
 
