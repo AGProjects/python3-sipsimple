@@ -10,7 +10,7 @@ from time import time
 from application.notification import IObserver, NotificationCenter, NotificationData
 from application.python import Null, limit
 from application.system import host as Host
-from eventlib import coros, proc
+from eventlib import api, coros, proc
 from twisted.internet import reactor
 from zope.interface import implementer
 
@@ -42,6 +42,10 @@ class RegistrationError(Exception):
 
 @implementer(IObserver)
 class Registrar(object):
+
+    # extra time allowed beyond the core transaction timeout for the final
+    # notification to reach us before we give up waiting for it
+    notification_grace_period = 10
 
     def __init__(self, account):
         self.account = account
@@ -167,17 +171,25 @@ class Registrar(object):
                     if self.account.nat_traversal.use_ice:
                         contact_header.parameters[b"+sip.ice"] = None
                     route_header = RouteHeader(route.uri)
+                    register_tsx_timeout = limit(remaining_time, min=1, max=10)
                     try:
-                        self._registration.register(contact_header, route_header, timeout=limit(remaining_time, min=1, max=10))
+                        self._registration.register(contact_header, route_header, timeout=register_tsx_timeout)
                     except SIPCoreError:
                         raise RegistrationError('Internal error', retry_after=5)
                     try:
-                        while True:
-                            notification = self._data_channel.wait()
-                            if notification.name == 'SIPRegistrationDidSucceed':
-                                break
-                            if notification.name == 'SIPRegistrationDidEnd':
-                                raise RegistrationError('Registration expired', retry_after=int(random.uniform(60, 120)))  # registration expired while we were trying to re-register
+                        # The core reports the outcome within register_tsx_timeout (plus the
+                        # authentication round trip). Guard against a lost final notification,
+                        # which would otherwise block this command loop forever.
+                        with api.timeout(2*register_tsx_timeout + self.notification_grace_period):
+                            while True:
+                                notification = self._data_channel.wait()
+                                if notification.name == 'SIPRegistrationDidSucceed':
+                                    break
+                                if notification.name == 'SIPRegistrationDidEnd':
+                                    raise RegistrationError('Registration expired', retry_after=int(random.uniform(60, 120)))  # registration expired while we were trying to re-register
+                    except api.TimeoutError:
+                        self._data_channel = coros.queue()  # drop anything the abandoned registration may still deliver
+                        raise RegistrationError('No answer from the SIP core', retry_after=int(random.uniform(15, 40)))
                     except SIPRegistrationDidFail as e:
                         notification_data = NotificationData(code=e.data.code, reason=e.data.reason, registration=self._registration, registrar=route)
                         notification_center.post_notification('SIPAccountRegistrationGotAnswer', sender=self.account, data=notification_data)
@@ -258,10 +270,15 @@ class Registrar(object):
             if registered:
                 self._registration.end(timeout=2)
                 try:
-                    while True:
-                        notification = self._data_channel.wait()
-                        if notification.name == 'SIPRegistrationDidEnd':
-                            break
+                    with api.timeout(2 + self.notification_grace_period):
+                        while True:
+                            notification = self._data_channel.wait()
+                            if notification.name == 'SIPRegistrationDidEnd':
+                                break
+                except api.TimeoutError:
+                    self._data_channel = coros.queue()  # drop anything the abandoned registration may still deliver
+                    notification_center.post_notification('SIPAccountRegistrationDidNotEnd', sender=self.account, data=NotificationData(code=408, reason='No answer from the SIP core',
+                                                                                                                                        registration=self._registration))
                 except (SIPRegistrationDidFail, SIPRegistrationDidNotEnd) as e:
                     notification_center.post_notification('SIPAccountRegistrationDidNotEnd', sender=self.account, data=NotificationData(code=e.data.code, reason=e.data.reason,
                                                                                                                                         registration=self._registration))
