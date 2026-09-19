@@ -13,7 +13,7 @@ from application.notification import IObserver, NotificationCenter, Notification
 from application.python import Null, limit
 from application.python.types import MarkerType
 from application.system import host as Host
-from eventlib import coros, proc
+from eventlib import api, coros, proc
 from twisted.internet import reactor
 from zope.interface import implementer
 
@@ -65,6 +65,10 @@ class PublisherNickname(dict):
 class Publisher(object, metaclass=ABCMeta):
     __nickname__  = PublisherNickname()
     __transports__ = frozenset(['tls', 'tcp', 'udp'])
+
+    # extra time allowed beyond the core transaction timeout for the final
+    # notification to reach us before we give up waiting for it
+    notification_grace_period = 10
 
 
     def __init__(self, account):
@@ -226,15 +230,16 @@ class Publisher(object, metaclass=ABCMeta):
 
                 remaining_time = publish_timeout-time()
                 if remaining_time > 0:
+                    publish_tsx_timeout = limit(remaining_time, min=1, max=10)
                     try:
                         try:
-                            self._publication.publish(body, RouteHeader(route.uri), timeout=limit(remaining_time, min=1, max=10))
+                            self._publication.publish(body, RouteHeader(route.uri), timeout=publish_tsx_timeout)
                         except (ValueError, AttributeError) as e:  # this happens for an initial PUBLISH with body=None
                             raise PublicationError(str(e), retry_after=0)
                         except PublicationETagError:
                             state = self.state # access self.state only once to avoid race conditions
                             if state is not None:
-                                self._publication.publish(state.toxml(), RouteHeader(route.uri), timeout=limit(remaining_time, min=1, max=10))
+                                self._publication.publish(state.toxml(), RouteHeader(route.uri), timeout=publish_tsx_timeout)
                             else:
                                 command.signal()
                                 return
@@ -242,12 +247,17 @@ class Publisher(object, metaclass=ABCMeta):
                         raise PublicationError('Internal error', retry_after=5)
 
                     try:
-                        while True:
-                            notification = self._data_channel.wait()
-                            if notification.name == 'SIPPublicationDidSucceed':
-                                break
-                            if notification.name == 'SIPPublicationDidEnd':
-                                raise PublicationError('Publication expired', retry_after=random.uniform(60, 120))  # publication expired while we were trying to re-publish
+                        # Guard against a lost final notification from the core (allow for the auth round trip)
+                        with api.timeout(2*publish_tsx_timeout + self.notification_grace_period):
+                            while True:
+                                notification = self._data_channel.wait()
+                                if notification.name == 'SIPPublicationDidSucceed':
+                                    break
+                                if notification.name == 'SIPPublicationDidEnd':
+                                    raise PublicationError('Publication expired', retry_after=random.uniform(60, 120))  # publication expired while we were trying to re-publish
+                    except api.TimeoutError:
+                        self._data_channel = coros.queue()  # drop anything the abandoned publication may still deliver
+                        raise PublicationError('No answer from the SIP core', retry_after=random.uniform(15, 40))
                     except SIPPublicationDidFail as e:
                         if e.data.code == 407:
                             # Authentication failed, so retry the publication in some time
@@ -303,11 +313,14 @@ class Publisher(object, metaclass=ABCMeta):
             if publishing:
                 self._publication.end(timeout=2)
                 try:
-                    while True:
-                        notification = self._data_channel.wait()
-                        if notification.name == 'SIPPublicationDidEnd':
-                            break
-                except (SIPPublicationDidFail, SIPPublicationDidNotEnd):
+                    with api.timeout(2 + self.notification_grace_period):
+                        while True:
+                            notification = self._data_channel.wait()
+                            if notification.name == 'SIPPublicationDidEnd':
+                                break
+                except (SIPPublicationDidFail, SIPPublicationDidNotEnd, api.TimeoutError) as e:
+                    if isinstance(e, api.TimeoutError):
+                        self._data_channel = coros.queue()  # drop anything the abandoned publication may still deliver
                     notification_center.post_notification(self.__nickname__ + 'PublicationDidNotEnd', sender=self)
                 else:
                     notification_center.post_notification(self.__nickname__ + 'PublicationDidEnd', sender=self)
