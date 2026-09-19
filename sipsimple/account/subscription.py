@@ -11,7 +11,7 @@ from time import time
 from application.notification import IObserver, NotificationCenter, NotificationData
 from application.python import Null, limit
 from application.system import host as Host
-from eventlib import coros, proc
+from eventlib import api, coros, proc
 from twisted.internet import reactor
 from zope.interface import implementer
 
@@ -61,6 +61,10 @@ class SubscriberNickname(dict):
 class Subscriber(object, metaclass=ABCMeta):
     __nickname__   = SubscriberNickname()
     __transports__ = frozenset(['tls', 'tcp', 'udp'])
+
+    # extra time allowed beyond the core transaction timeout for the final
+    # notification to reach us before we give up waiting for it
+    notification_grace_period = 10
 
 
     def __init__(self, account):
@@ -220,17 +224,30 @@ class Subscriber(object, metaclass=ABCMeta):
                                                 credentials=self.account.credentials,
                                                 refresh=refresh_interval)
                     notification_center.add_observer(self, sender=subscription)
+                    subscribe_tsx_timeout = limit(remaining_time, min=1, max=5)
                     try:
-                        subscription.subscribe(body=content.body, content_type=content.type, extra_headers=self.extra_headers, timeout=limit(remaining_time, min=1, max=5))
+                        subscription.subscribe(body=content.body, content_type=content.type, extra_headers=self.extra_headers, timeout=subscribe_tsx_timeout)
                     except SIPCoreError:
                         notification_center.remove_observer(self, sender=subscription)
                         raise SubscriptionError('Internal error', retry_after=5)
                     self._subscription = subscription
                     try:
-                        while True:
-                            notification = self._data_channel.wait()
-                            if notification.name == 'SIPSubscriptionDidStart':
-                                break
+                        # Guard against a lost final notification from the core (allow for the auth round trip)
+                        with api.timeout(2*subscribe_tsx_timeout + self.notification_grace_period):
+                            while True:
+                                notification = self._data_channel.wait()
+                                if notification.name == 'SIPSubscriptionDidStart':
+                                    break
+                    except api.TimeoutError:
+                        notification_center.remove_observer(self, sender=subscription)
+                        self._subscription = None
+                        self._data_channel = coros.queue()  # drop anything the abandoned subscription may still deliver
+                        try:
+                            subscription.end(timeout=2)
+                        except SIPCoreError:
+                            pass
+                        # Try the next route
+                        continue
                     except SIPSubscriptionDidFail as e:
                         notification_center.remove_observer(self, sender=subscription)
                         self._subscription = None
@@ -296,10 +313,13 @@ class Subscriber(object, metaclass=ABCMeta):
                     pass
                 else:
                     try:
-                        while True:
-                            notification = self._data_channel.wait()
-                            if notification.name == 'SIPSubscriptionDidEnd':
-                                break
+                        with api.timeout(2 + self.notification_grace_period):
+                            while True:
+                                notification = self._data_channel.wait()
+                                if notification.name == 'SIPSubscriptionDidEnd':
+                                    break
+                    except api.TimeoutError:
+                        self._data_channel = coros.queue()  # drop anything the abandoned subscription may still deliver
                     except SIPSubscriptionDidFail:
                         pass
                 finally:
