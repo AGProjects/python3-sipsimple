@@ -57,6 +57,11 @@ def _green_wait_for(fd, readable, writable, _error, expiration):
     if not rlist and not wlist:
         raise dns.exception.Timeout
 
+# dnspython 2.x renamed Resolver.query() to Resolver.resolve() and deprecated
+# the old name. Provide resolve() on dnspython 1.x so we can use it everywhere.
+if not hasattr(dns.resolver.Resolver, 'resolve'):
+    dns.resolver.Resolver.resolve = dns.resolver.Resolver.query
+
 if hasattr(dns.query, '_wait_for'):
     dns.query._wait_for = _green_wait_for
 elif hasattr(dns.query, '_set_polling_backend'):  # old dnspython
@@ -152,10 +157,10 @@ class DNSResolver(dns.resolver.Resolver):
         self.domain = dns_manager.domain
         self.nameservers = dns_manager.nameservers
 
-    def query(self, *args, **kw):
+    def resolve(self, *args, **kw):
         start_time = time()
         try:
-            return dns.resolver.Resolver.query(self, *args, **kw)
+            return dns.resolver.Resolver.resolve(self, *args, **kw)
         finally:
             self.lifetime -= min(self.lifetime, time()-start_time)
 
@@ -403,7 +408,7 @@ class DNSLookup(object):
             record_name = 'xcap.%s' % uri.host.decode()
             results = []
             try:
-                answer = resolver.query(record_name, rdatatype.TXT)
+                answer = resolver.resolve(record_name, rdatatype.TXT)
             except dns.resolver.Timeout as e:
                 notification_center.post_notification('DNSLookupTrace', sender=self, data=NotificationData(query_type='TXT', query_name=str(record_name), nameservers=resolver.nameservers, answer=None, error=e, **log_context))
                 raise
@@ -431,7 +436,7 @@ class DNSLookup(object):
                 addresses[hostname] = [r.address for r in additional_addresses[hostname]]
             else:
                 try:
-                    answer = resolver.query(hostname, rdatatype.A)
+                    answer = resolver.resolve(hostname, rdatatype.A)
                 except dns.resolver.Timeout as e:
                     notification_center.post_notification('DNSLookupTrace', sender=self, data=NotificationData(query_type='A', query_name=str(hostname), nameservers=resolver.nameservers, answer=None, error=e, **log_context))
                     raise
@@ -456,7 +461,7 @@ class DNSLookup(object):
                     services[srv_name].extend(SRVResult(record.priority, record.weight, record.port, addr) for addr in addresses.get(record.target.to_text(), ()))
             else:
                 try:
-                    answer = resolver.query(srv_name, rdatatype.SRV)
+                    answer = resolver.resolve(srv_name, rdatatype.SRV)
                 except dns.resolver.Timeout as e:
                     notification_center.post_notification('DNSLookupTrace', sender=self, data=NotificationData(query_type='SRV', query_name=str(srv_name), nameservers=resolver.nameservers, answer=None, error=e, **log_context))
                     raise
@@ -475,7 +480,7 @@ class DNSLookup(object):
         notification_center = NotificationCenter()
         pointers = []
         try:
-            answer = resolver.query(domain, rdatatype.NAPTR)
+            answer = resolver.resolve(domain, rdatatype.NAPTR)
         except dns.resolver.Timeout as e:
             notification_center.post_notification('DNSLookupTrace', sender=self, data=NotificationData(query_type='NAPTR', query_name=str(domain), nameservers=resolver.nameservers, answer=None, error=e, **log_context))
             raise
@@ -570,10 +575,10 @@ class DNSManager(object, metaclass=Singleton):
         resolver.timeout = 1
         resolver.lifetime = 3
         try:
-            answer = resolver.query(self.probed_domain, rdatatype.NAPTR)
+            answer = resolver.resolve(self.probed_domain, rdatatype.NAPTR)
             if not any(record.rdtype == rdatatype.NAPTR for record in answer.rrset):
                 raise exception.DNSException("No NAPTR records found")
-            answer = resolver.query("_sip._udp.%s" % self.probed_domain, rdatatype.SRV)
+            answer = resolver.resolve("_sip._udp.%s" % self.probed_domain, rdatatype.SRV)
             if not any(record.rdtype == rdatatype.SRV for record in answer.rrset):
                 raise exception.DNSException("No SRV records found")
         except (dns.resolver.Timeout, exception.DNSException):
@@ -586,7 +591,7 @@ class DNSManager(object, metaclass=Singleton):
         resolver.timeout = 2
         resolver.lifetime = 4
         try:
-            answer = resolver.query(self.probed_domain, rdatatype.NAPTR)
+            answer = resolver.resolve(self.probed_domain, rdatatype.NAPTR)
             if not any(record.rdtype == rdatatype.NAPTR for record in answer.rrset):
                 raise exception.DNSException("No NAPTR records found")
         except (dns.resolver.Timeout, exception.DNSException):
