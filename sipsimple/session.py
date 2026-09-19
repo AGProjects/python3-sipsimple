@@ -39,6 +39,11 @@ from sipsimple.threading.green import Command, run_in_green_thread
 from sipsimple.util import ISOTimestamp
 
 
+# Extra time allowed beyond a core transaction timeout for its final
+# notification to reach us before we give up waiting for it
+NOTIFICATION_GRACE_PERIOD = 10
+
+
 class InvitationDisconnectedError(Exception):
     def __init__(self, invitation, data):
         self.invitation = invitation
@@ -232,18 +237,31 @@ class ReferralHandler(object):
                                         RouteHeader(route.uri),
                                         account.credentials)
                     notification_center.add_observer(self, sender=referral)
+                    refer_tsx_timeout = limit(remaining_time, min=1, max=5)
                     try:
-                        referral.send_refer(timeout=limit(remaining_time, min=1, max=5))
+                        referral.send_refer(timeout=refer_tsx_timeout)
                     except SIPCoreError:
                         notification_center.remove_observer(self, sender=referral)
                         timeout = 5
                         raise ReferralError(error='Internal error')
                     self._referral = referral
                     try:
-                        while True:
-                            notification = self._channel.wait()
-                            if notification.name == 'SIPReferralDidStart':
-                                break
+                        # Guard against a lost final notification from the core (allow for the auth round trip)
+                        with api.timeout(2*refer_tsx_timeout + NOTIFICATION_GRACE_PERIOD):
+                            while True:
+                                notification = self._channel.wait()
+                                if notification.name == 'SIPReferralDidStart':
+                                    break
+                    except api.TimeoutError:
+                        notification_center.remove_observer(self, sender=referral)
+                        self._referral = None
+                        self._channel = coros.queue()  # drop anything the abandoned referral may still deliver
+                        try:
+                            referral.end(timeout=2)
+                        except SIPCoreError:
+                            pass
+                        # Try the next route
+                        continue
                     except SIPReferralDidFail as e:
                         notification_center.remove_observer(self, sender=referral)
                         self._referral = None
@@ -295,10 +313,13 @@ class ReferralHandler(object):
                     pass
                 else:
                     try:
-                        while True:
-                            notification = self._channel.wait()
-                            if notification.name == 'SIPReferralDidEnd':
-                                break
+                        with api.timeout(2 + NOTIFICATION_GRACE_PERIOD):
+                            while True:
+                                notification = self._channel.wait()
+                                if notification.name == 'SIPReferralDidEnd':
+                                    break
+                    except api.TimeoutError:
+                        self._channel = coros.queue()  # drop anything the abandoned referral may still deliver
                     except SIPReferralDidFail:
                         pass
                 finally:
@@ -487,8 +508,9 @@ class ConferenceHandler(object):
                                                 credentials=account.credentials,
                                                 refresh=refresh_interval)
                     notification_center.add_observer(self, sender=subscription)
+                    subscribe_tsx_timeout = limit(remaining_time, min=1, max=5)
                     try:
-                        subscription.subscribe(timeout=limit(remaining_time, min=1, max=5))
+                        subscription.subscribe(timeout=subscribe_tsx_timeout)
                     except SIPCoreError as e:
                         notification_center.remove_observer(self, sender=subscription)
                         timeout = 5
@@ -496,10 +518,22 @@ class ConferenceHandler(object):
                     self._subscription = subscription
 
                     try:
-                        while True:
-                            notification = self._data_channel.wait()
-                            if notification.sender is subscription:
-                                break
+                        # Guard against a lost final notification from the core (allow for the auth round trip)
+                        with api.timeout(2*subscribe_tsx_timeout + NOTIFICATION_GRACE_PERIOD):
+                            while True:
+                                notification = self._data_channel.wait()
+                                if notification.sender is subscription:
+                                    break
+                    except api.TimeoutError:
+                        notification_center.remove_observer(self, sender=subscription)
+                        self._subscription = None
+                        self._data_channel = coros.queue()  # drop anything the abandoned subscription may still deliver
+                        try:
+                            subscription.end(timeout=2)
+                        except SIPCoreError:
+                            pass
+                        # Try the next route
+                        continue
                     except SIPSubscriptionDidFail as e:
                         notification_center.remove_observer(self, sender=subscription)
                         self._subscription = None
@@ -566,10 +600,13 @@ class ConferenceHandler(object):
                     pass
                 else:
                     try:
-                        while True:
-                            notification = self._data_channel.wait()
-                            if notification.sender is self._subscription and notification.name == 'SIPSubscriptionDidEnd':
-                                break
+                        with api.timeout(2 + NOTIFICATION_GRACE_PERIOD):
+                            while True:
+                                notification = self._data_channel.wait()
+                                if notification.sender is self._subscription and notification.name == 'SIPSubscriptionDidEnd':
+                                    break
+                    except api.TimeoutError:
+                        self._data_channel = coros.queue()  # drop anything the abandoned subscription may still deliver
                     except SIPSubscriptionDidFail:
                         pass
                 finally:
