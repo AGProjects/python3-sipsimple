@@ -8,7 +8,6 @@ zope.interface
 requests
 gmpy2
 wheel
-gevent
 pytz
 certifi
 cryptography
