@@ -40,8 +40,26 @@ dns.resolver.socket = socket
 dns.query.socket = socket
 dns.query.select = select
 
-#TODO3: dnspython newer than 0.20 has a new API
-if ('_set_polling_backend' in dir(dns.query)):
+import dns.exception
+
+# dnspython 2.x waits for socket readiness in dns.query._wait_for() using a
+# real selectors.DefaultSelector (kqueue/epoll), which blocks the twisted
+# reactor thread for the full query timeout and starves every green thread
+# (registrations, session lookups, ...). Replace it with a green wait.
+def _green_wait_for(fd, readable, writable, _error, expiration):
+    if expiration is None:
+        timeout = None
+    else:
+        timeout = expiration - time()
+        if timeout <= 0.0:
+            raise dns.exception.Timeout
+    rlist, wlist, _ = select.select([fd] if readable else [], [fd] if writable else [], [], timeout)
+    if not rlist and not wlist:
+        raise dns.exception.Timeout
+
+if hasattr(dns.query, '_wait_for'):
+    dns.query._wait_for = _green_wait_for
+elif hasattr(dns.query, '_set_polling_backend'):  # old dnspython
     dns.query._set_polling_backend(dns.query._select_for)
 
 from application.notification import IObserver, NotificationCenter, NotificationData
