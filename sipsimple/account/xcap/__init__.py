@@ -12,13 +12,12 @@ import random
 import socket
 import weakref
 
-try:
-    import gevent
-except ImportError:
-    from xcaplib.green import XCAPClient
-    from sipsimple.threading.green import Worker
-else:
-    from xcaplib.client import XCAPClient
+# Always the green client: it does the HTTP(S) work in a worker thread while
+# the calling green thread waits. The gevent variant ran gevent's hub (and the
+# blocking TLS reads under it) on the twisted reactor thread, stalling SIP,
+# notifications and every other green thread for the length of each fetch.
+from xcaplib.green import XCAPClient
+from sipsimple.threading.green import Worker
 
 from io import StringIO
 from collections import OrderedDict
@@ -1953,10 +1952,10 @@ class XCAPManager(object):
     def _fetch_one_document(self, document, failures=None):
         """Fetch one document, turning a failure into a log line and a record.
 
-        These are spawned as greenlets whose result nobody inspects, so an
-        XCAPError escaping HERE achieves nothing except being reported by
-        gevent as an unhandled greenlet failure: a sixty-line traceback per
-        document, every time a network blip interrupts a fetch.
+        These run as parallel workers, so an XCAPError escaping HERE would
+        surface from whichever worker happens to be waited on first rather
+        than as one clean failure, and a network blip would produce a long
+        traceback per document.
 
         It must not be dropped either, though. _CH_fetch retries in 60 seconds
         when _fetch_documents raises, and swallowing the error outright removed
@@ -1975,18 +1974,14 @@ class XCAPManager(object):
 
     def _fetch_documents(self, documents):
         failures = []
+        workers = [Worker.spawn(self._fetch_one_document, document, failures) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
         try:
-            jobs = [gevent.spawn(self._fetch_one_document, document, failures) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
-            gevent.joinall(jobs, timeout=15)
-        except NameError:
-            workers = [Worker.spawn(self._fetch_one_document, document, failures) for document in (doc for doc in self.documents if doc.name in documents and doc.supported)]
-            try:
-                while workers:
-                    worker = workers.pop()
-                    worker.wait()
-            finally:
-                for worker in workers:
-                    worker.wait_ex()
+            while workers:
+                worker = workers.pop()
+                worker.wait()
+        finally:
+            for worker in workers:
+                worker.wait_ex()
         if failures:
             # One exception for the caller's retry; the rest are in the log.
             name, error = failures[0]
