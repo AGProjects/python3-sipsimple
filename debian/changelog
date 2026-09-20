@@ -1,3 +1,32 @@
+python3-sipsimple (5.6.0) unstable; urgency=medium
+
+  * Do not block the reactor thread while waiting for DNS replies with dnspython 2.x
+  * Add timeouts when waiting for conference and referral results from the SIP core
+  * Add timeouts when waiting for subscription from the SIP core
+  * Add timeouts when waiting for publication from the SIP core
+  * Add timeouts when waiting for registration results from the SIP core
+  * Always use the green XCAP client so fetches don't block the reactor
+  * Tag XCAPManager notifications caused by applying a server document
+  * Added screen sharing as video input source on Mac
+  * FrameBufferVideoRenderer: support multiple frame handlers
+  * Return zrtp_cipher as string
+  * Re-added AEC patches (AEC works again)
+  * Fix loop for update multiple accounts XCAP data
+  * Do not let one orphaned contact id abort the whole XCAP reload
+  * Do not lose a failed XCAP fetch: retry it, and keep the body that would not parse
+  * Allow overwriting generated PJSIP call id
+  * Added raw SDP passing to invitation
+  * Handle Provisional responses without to-tag
+  * Fix dealloc on exit crashes
+  * Catch xcap fetch exceptions
+  * Fix for generating user agent string
+  * Fix overwriting XCAP entries
+  * Fix application dependency for install scripts
+  * Update mac dependencies
+  * Remove gevent dependency
+
+ -- AG Projects <support@ag-projects.com>  Sat, 19 Sep 2026 14:32:37 +0200
+
 python3-sipsimple (5.5.0) unstable; urgency=medium
 
   * Added EndpointExtension to conference info payload
