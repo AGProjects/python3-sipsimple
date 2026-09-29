@@ -170,6 +170,23 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
             pass
         return ', '.join(info)
 
+    def _tls_peer_info(self, error, connector=None):
+        # Describe where the TLS connection that failed verification actually
+        # went: the server picked through DNS SRV (if any) and the IP address
+        # and port of the peer, as reported by python-gnutls
+        server = getattr(connector, 'remote_server', None)
+        address = getattr(error, 'peer_address', None)
+        parts = []
+        if server is not None:
+            parts.append('%s:%s' % server)
+        if address is not None:
+            parts.append('[%s]:%s' % address if ':' in address[0] else '%s:%s' % address)
+        if not parts:
+            return ''
+        if len(parts) == 2:
+            return ' at %s (%s)' % tuple(parts)
+        return ' at %s' % parts[0]
+
     def _log_tls_failure(self, reason, tls_info):
         # Send the full failure details to the MSRP log: they are too verbose
         # for the user interface, which only gets the short reason, while the
@@ -252,7 +269,8 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
             self.local_media = self._create_local_media(full_local_path)
         except (CertificateError, CertificateAuthorityError, CertificateExpiredError, CertificateSecurityError, CertificateRevokedError) as e:
             tls_info = self._tls_diagnostics()
-            reason = self._annotate_init_failure("%s for CN %s issued by %s" % (e.error, e.certificate.subject.CN, e.certificate.issuer.CN))
+            peer_info = self._tls_peer_info(e, getattr(self, 'msrp_connector', None))
+            reason = self._annotate_init_failure("%s for CN %s issued by %s%s" % (e.error, e.certificate.subject.CN, e.certificate.issuer.CN, peer_info))
             self._log_tls_failure(reason, tls_info)
             notification_center.post_notification('MediaStreamDidNotInitialize', sender=self, data=NotificationData(reason=reason, transport=self.transport, credentials=self.session.account.tls_credentials, tls_info=tls_info))
         except Exception as e:
@@ -306,7 +324,7 @@ class MSRPStreamBase(object, metaclass=MediaStreamType):
                 peer_cert_info = ' for CN %s issued by %s' % (e.certificate.subject.CN, e.certificate.issuer.CN)
             except Exception:
                 peer_cert_info = ''
-            self._failure_reason = "%s - %s%s" % (peer, e.error, peer_cert_info)
+            self._failure_reason = "%s - %s%s%s" % (peer, e.error, peer_cert_info, self._tls_peer_info(e, self.msrp_connector))
             self._log_tls_failure(self._failure_reason, tls_info)
             notification_center.post_notification('MediaStreamDidFail', sender=self, data=NotificationData(context=context, reason=self._failure_reason, transport=self.transport, credentials=self.session.account.tls_credentials, tls_info=tls_info))
         except Exception as e:
