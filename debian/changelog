@@ -6,6 +6,7 @@ python3-sipsimple (5.6.0) unstable; urgency=medium
   * Add timeouts when waiting for publication from the SIP core
   * Add timeouts when waiting for registration results from the SIP core
   * Always use the green XCAP client so fetches don't block the reactor
+  * Include the actual MSRP peer address in TLS failure reasons
   * Tag XCAPManager notifications caused by applying a server document
   * Added screen sharing as video input source on Mac
   * FrameBufferVideoRenderer: support multiple frame handlers
@@ -22,8 +23,7 @@ python3-sipsimple (5.6.0) unstable; urgency=medium
   * Fix for generating user agent string
   * Fix overwriting XCAP entries
   * Fix application dependency for install scripts
-  * Update mac dependencies
-  * Remove gevent dependency
+  * Update list of dependencies
 
  -- AG Projects <support@ag-projects.com>  Sat, 19 Sep 2026 14:32:37 +0200
 
