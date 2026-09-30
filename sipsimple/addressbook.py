@@ -560,7 +560,7 @@ class Group(SettingsState):
         for account in (account for account in account_manager.iter_accounts() if account.xcap.discovered and account is not originator_account):
             account.xcap_manager.remove_group(self.__xcapgroup__)
 
-        notification_center.post_notification('AddressbookGroupWasDeleted', sender=self)
+        notification_center.post_notification('AddressbookGroupWasDeleted', sender=self, data=NotificationData(originator=originator, remote=originator is not Local))
 
         try:
             configuration.save()
@@ -883,7 +883,7 @@ class Contact(SettingsState):
             for account in (account for account in xcap_accounts if account is not originator_account):
                 account.xcap_manager.remove_contact(self.__xcapcontact__)
 
-        notification_center.post_notification('AddressbookContactWasDeleted', sender=self)
+        notification_center.post_notification('AddressbookContactWasDeleted', sender=self, data=NotificationData(originator=originator, remote=originator is not Local))
 
         try:
             configuration.save()
@@ -1068,7 +1068,7 @@ class Policy(SettingsState):
         for account in (account for account in account_manager.iter_accounts() if account.xcap.discovered and account is not originator_account):
             account.xcap_manager.remove_policy(self.__xcappolicy__)
 
-        notification_center.post_notification('AddressbookPolicyWasDeleted', sender=self)
+        notification_center.post_notification('AddressbookPolicyWasDeleted', sender=self, data=NotificationData(originator=originator, remote=originator is not Local))
 
         try:
             configuration.save()
@@ -1234,7 +1234,7 @@ class AddressbookManager(object, metaclass=Singleton):
     def _NH_AddressbookContactWasDeleted(self, notification):
         contact = notification.sender
         del self.contacts[contact.id]
-        notification.center.post_notification('AddressbookManagerDidRemoveContact', sender=self, data=NotificationData(contact=contact))
+        notification.center.post_notification('AddressbookManagerDidRemoveContact', sender=self, data=NotificationData(contact=contact, originator=notification.data.originator, remote=notification.data.remote))
 
     def _NH_AddressbookGroupWasActivated(self, notification):
         group = notification.sender
@@ -1244,7 +1244,7 @@ class AddressbookManager(object, metaclass=Singleton):
     def _NH_AddressbookGroupWasDeleted(self, notification):
         group = notification.sender
         del self.groups[group.id]
-        notification.center.post_notification('AddressbookManagerDidRemoveGroup', sender=self, data=NotificationData(group=group))
+        notification.center.post_notification('AddressbookManagerDidRemoveGroup', sender=self, data=NotificationData(group=group, originator=notification.data.originator, remote=notification.data.remote))
 
     def _NH_AddressbookPolicyWasActivated(self, notification):
         policy = notification.sender
@@ -1254,7 +1254,7 @@ class AddressbookManager(object, metaclass=Singleton):
     def _NH_AddressbookPolicyWasDeleted(self, notification):
         policy = notification.sender
         del self.policies[policy.id]
-        notification.center.post_notification('AddressbookManagerDidRemovePolicy', sender=self, data=NotificationData(policy=policy))
+        notification.center.post_notification('AddressbookManagerDidRemovePolicy', sender=self, data=NotificationData(policy=policy, originator=notification.data.originator, remote=notification.data.remote))
 
     @run_in_thread('file-io')
     def _NH_SIPAccountDidDiscoverXCAPSupport(self, notification):
