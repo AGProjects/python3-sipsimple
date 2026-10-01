@@ -38,5 +38,5 @@ export CFLAGS="-I/opt/local/include"
 export LDFLAGS="-L/opt/local/lib"
 
 pip install --upgrade pip wheel setuptools
-pip install -r "$SCRIPT_DIR/python-requirements.txt"
-pip install --no-build-isolation -r "$SCRIPT_DIR/sipsimple-requirements.txt"
+pip install -r "$SCRIPT_DIR/requirements-python.txt"
+pip install --no-build-isolation -r "$SCRIPT_DIR/requirements-sipsimple.txt"

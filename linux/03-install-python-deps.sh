@@ -25,5 +25,5 @@ source "$SCRIPT_DIR/activate_venv.sh"
 # you've installed something custom under /usr/local.
 
 pip install --upgrade pip wheel setuptools
-pip install -r "$SCRIPT_DIR/python-requirements.txt"
-pip install --no-build-isolation -r "$SCRIPT_DIR/sipsimple-requirements.txt"
+pip install -r "$SCRIPT_DIR/requirements-python.txt"
+pip install --no-build-isolation -r "$SCRIPT_DIR/requirements-sipsimple.txt"
