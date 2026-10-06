@@ -1272,9 +1272,22 @@ class AddressbookManager(object, metaclass=Singleton):
         if notification.data.addressbook == self.__xcapaddressbook__:
             return
 
-        self.__xcapaddressbook__ = notification.data.addressbook
-
         xcap_manager = notification.sender
+
+        # A document posted while local changes are still on their way to the server
+        # predates them: the answer to the first of two saves arrives after the second
+        # was made. Applying it would undo the later change here until the answer to
+        # that one arrives (a contact leaving a group and coming back). The manager
+        # posts the document again once its journal has drained, so wait for that one.
+        # (A save made a moment before this handler runs may still be on its way to the
+        # journal through the twisted thread; that rare case still flickers once.)
+        pending = len(getattr(xcap_manager, 'journal', None) or ())
+        if pending:
+            log.info('Not applying the addressbook document of %s yet: %d local change%s still being sent' %
+                     (getattr(getattr(xcap_manager, 'account', None), 'id', '?'), pending, '' if pending == 1 else 's'))
+            return
+
+        self.__xcapaddressbook__ = notification.data.addressbook
         xcap_contacts = notification.data.addressbook.contacts
         xcap_groups = notification.data.addressbook.groups
         xcap_policies = notification.data.addressbook.policies
