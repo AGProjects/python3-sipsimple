@@ -171,7 +171,9 @@ class Registrar(object):
                     if self.account.nat_traversal.use_ice:
                         contact_header.parameters[b"+sip.ice"] = None
                     route_header = RouteHeader(route.uri)
-                    register_tsx_timeout = limit(remaining_time, min=1, max=10)
+                    # Share the remaining time among the routes left, so a route that does not
+                    # answer cannot use up the time the routes after it (e.g. TLS, last in NAPTR order) need
+                    register_tsx_timeout = limit(remaining_time/(len(routes)-i+1), min=3, max=10)
                     try:
                         self._registration.register(contact_header, route_header, timeout=register_tsx_timeout)
                     except SIPCoreError:
@@ -197,8 +199,10 @@ class Registrar(object):
                             # Authentication failed, so retry the registration in some time
                             raise RegistrationError('Authentication failed', retry_after=int(random.uniform(60, 120)))
                         elif e.data.code == 408:
-                            # Timeout
-                            raise RegistrationError('Request timeout', retry_after=int(random.uniform(15, 40)))
+                            # This route did not answer in time, try the next one
+                            if i == len(routes):
+                                raise RegistrationError('Request timeout', retry_after=int(random.uniform(15, 40)))
+                            continue
                         elif e.data.code == 423:
                             # Get the value of the Min-Expires header
                             if e.data.min_expires is not None and e.data.min_expires > self.account.sip.register_interval:
