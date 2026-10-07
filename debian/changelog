@@ -2,6 +2,8 @@ python3-sipsimple (5.6.0) unstable; urgency=medium
 
   * Do not block the reactor thread while waiting for DNS replies with dnspython 2.x
   * Tell observers whether a deleted contact, group or policy came from a remote document
+  * Try the next registrar route after a timeout
+  * Do not apply an addressbook document older than local changes
   * Add timeouts when waiting for conference and referral results from the SIP core
   * Add timeouts when waiting for subscription from the SIP core
   * Add timeouts when waiting for publication from the SIP core
@@ -26,7 +28,7 @@ python3-sipsimple (5.6.0) unstable; urgency=medium
   * Fix application dependency for install scripts
   * Update list of dependencies
 
- -- AG Projects <support@ag-projects.com>  Thu, 01 Oct 2026 15:14:56 +0200
+ -- AG Projects <support@ag-projects.com>  Wed, 07 Oct 2026 13:32:41 +0200
 
 python3-sipsimple (5.5.0) unstable; urgency=medium
 
