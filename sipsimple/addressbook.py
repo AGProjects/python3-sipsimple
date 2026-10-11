@@ -26,7 +26,7 @@ from sipsimple.configuration import AbstractSetting, RuntimeSetting, SettingsObj
 from sipsimple.payloads.addressbook import PolicyValue, ElementAttributes
 from sipsimple.payloads.datatypes import ID
 from sipsimple.payloads.resourcelists import ResourceListsDocument
-from sipsimple.threading import run_in_thread
+from sipsimple.threading import call_in_twisted_thread, run_in_thread
 
 
 def _remote_originated(method):
@@ -579,11 +579,11 @@ class Group(SettingsState):
         A CFGManagerSaveFailed notification is posted if saving to the
         persistent configuration storage fails.
         """
-        self._internal_save(originator=Local)
+        _local_change(self._internal_save)
 
     def delete(self):
         """Remove the group from the persistent storage."""
-        self._internal_delete(originator=Local)
+        _local_change(self._internal_delete)
 
     def clone(self, new_id=None):
         """Create a copy of this group and all its sub-settings."""
@@ -902,11 +902,11 @@ class Contact(SettingsState):
         storage or not. A CFGManagerSaveFailed notification is posted
         if saving to the persistent configuration storage fails.
         """
-        self._internal_save(originator=Local)
+        _local_change(self._internal_save)
 
     def delete(self):
         """Remove the contact from the persistent storage."""
-        self._internal_delete(originator=Local)
+        _local_change(self._internal_delete)
 
     def clone(self, new_id=None):
         """Create a copy of this contact and all its sub-settings."""
@@ -1087,11 +1087,11 @@ class Policy(SettingsState):
         storage or not. A CFGManagerSaveFailed notification is posted
         if saving to the persistent configuration storage fails.
         """
-        self._internal_save(originator=Local)
+        _local_change(self._internal_save)
 
     def delete(self):
         """Remove the policy from the persistent storage."""
-        self._internal_delete(originator=Local)
+        _local_change(self._internal_delete)
 
     def clone(self, new_id=None):
         """Create a copy of this policy and all its sub-settings."""
@@ -1121,6 +1121,17 @@ class PolicyExtension(object):
     """Base class for extensions of Policies"""
     def __new__(cls, *args, **kw):
         raise TypeError("PolicyExtension subclasses cannot be instantiated")
+
+
+def _local_change(method):
+    """Save or delete an object of the addressbook, marked as a local change on its way to the
+    server until its XCAP operations are in the journal (see AddressbookManager.local_changes)."""
+    manager = AddressbookManager()
+    manager._local_change_started()
+    try:
+        method(originator=Local)
+    finally:
+        manager._local_change_queued()
 
 
 @implementer(IObserver)
@@ -1155,6 +1166,14 @@ class AddressbookManager(object, metaclass=Singleton):
         # the two distinguishable. A counter rather than a flag: reloads for
         # two accounts overlap.
         self.applying_remote_data = 0
+        # Local saves and deletes not yet in the journal of the XCAP managers: counted from the
+        # call to save() or delete() until their operations, scheduled through the twisted
+        # thread, have been appended. A fetched document is not applied meanwhile: it predates
+        # them and would undo them here (and the save that follows would then send nothing).
+        self.local_changes = 0
+        self._local_changes_lock = Lock()
+        self._latest_documents = {}     # XCAP manager: the last XCAPManagerDidReloadData it posted
+        self._held_documents = {}       # XCAP manager: one not applied because of local changes
         notification_center = NotificationCenter()
         notification_center.add_observer(self, name='AddressbookContactWasActivated')
         notification_center.add_observer(self, name='AddressbookContactWasDeleted')
@@ -1164,6 +1183,32 @@ class AddressbookManager(object, metaclass=Singleton):
         notification_center.add_observer(self, name='AddressbookPolicyWasDeleted')
         notification_center.add_observer(self, name='SIPAccountDidDiscoverXCAPSupport')
         notification_center.add_observer(self, name='XCAPManagerDidReloadData')
+
+    def _local_change_started(self):
+        with self._local_changes_lock:
+            self.local_changes += 1
+
+    @run_in_thread('file-io')
+    def _local_change_queued(self):
+        # after _internal_save or _internal_delete, which run in this thread; their operations
+        # reach the journal through callFromThread, so this, sent the same way, comes after them
+        call_in_twisted_thread(self._local_change_done)
+
+    def _local_change_done(self):
+        with self._local_changes_lock:
+            self.local_changes = max(self.local_changes - 1, 0)
+            if self.local_changes:
+                return
+            held, self._held_documents = self._held_documents, {}
+        # A document held back is applied now, unless a newer one came since: when the local
+        # changes went to the server, the document that follows them supersedes it.
+        for notification in held.values():
+            self._apply_held_document(notification)
+
+    @run_in_thread('file-io')
+    def _apply_held_document(self, notification):
+        if self._latest_documents.get(notification.sender) is notification:
+            self._NH_XCAPManagerDidReloadData(notification)
 
     @execute_once
     def load(self):
@@ -1273,6 +1318,7 @@ class AddressbookManager(object, metaclass=Singleton):
             return
 
         xcap_manager = notification.sender
+        self._latest_documents[xcap_manager] = notification
 
         # A document posted while local changes are still on their way to the server
         # predates them: the answer to the first of two saves arrives after the second
@@ -1281,10 +1327,13 @@ class AddressbookManager(object, metaclass=Singleton):
         # posts the document again once its journal has drained, so wait for that one.
         # (A save made a moment before this handler runs may still be on its way to the
         # journal through the twisted thread; that rare case still flickers once.)
-        pending = len(getattr(xcap_manager, 'journal', None) or ())
+        pending = len(getattr(xcap_manager, 'journal', None) or ()) + self.local_changes
         if pending:
             log.info('Not applying the addressbook document of %s yet: %d local change%s still being sent' %
                      (getattr(getattr(xcap_manager, 'account', None), 'id', '?'), pending, '' if pending == 1 else 's'))
+            if self.local_changes:
+                with self._local_changes_lock:
+                    self._held_documents[xcap_manager] = notification
             return
 
         self.__xcapaddressbook__ = notification.data.addressbook
