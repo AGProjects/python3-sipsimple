@@ -308,10 +308,11 @@ class Publisher(object, metaclass=ABCMeta):
         self._publication_timer = None
         publishing = self.publishing
         self.publishing = False
-        if self._publication is not None:
+        publication = self._publication
+        if publication is not None:
             notification_center = NotificationCenter()
             if publishing:
-                self._publication.end(timeout=2)
+                publication.end(timeout=2)
                 try:
                     with api.timeout(2 + self.notification_grace_period):
                         while True:
@@ -324,8 +325,9 @@ class Publisher(object, metaclass=ABCMeta):
                     notification_center.post_notification(self.__nickname__ + 'PublicationDidNotEnd', sender=self)
                 else:
                     notification_center.post_notification(self.__nickname__ + 'PublicationDidEnd', sender=self)
-            notification_center.remove_observer(self, sender=self._publication)
-            self._publication = None
+            notification_center.discard_observer(self, sender=publication)
+            if self._publication is publication:
+                self._publication = None
         command.signal()
 
     def _CH_terminate(self, command):
