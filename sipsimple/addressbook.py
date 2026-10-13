@@ -198,7 +198,8 @@ class AddressbookKey(object):
 
 class MultiAccountTransaction(object):
     def __init__(self, accounts):
-        self.accounts = accounts
+        # an account being deleted has no xcap_manager any more (Account.delete): nothing to do for it
+        self.accounts = [account for account in accounts if account.xcap_manager is not None]
 
     def __enter__(self):
         for account in self.accounts:
@@ -486,7 +487,7 @@ class Group(SettingsState):
             originator_account = originator.account
             previous_xcapgroup = originator.xcap_object
 
-        xcap_accounts = [account for account in account_manager.get_accounts() if account.xcap.discovered]
+        xcap_accounts = [account for account in account_manager.get_accounts() if account.xcap.discovered and account.xcap_manager is not None]
 
         self.__xcapgroup__ = self.__toxcap__()
 
@@ -795,7 +796,7 @@ class Contact(SettingsState):
             originator_account = originator.account
             previous_xcapcontact = originator.xcap_object
 
-        xcap_accounts = [account for account in account_manager.get_accounts() if account.xcap.discovered]
+        xcap_accounts = [account for account in account_manager.get_accounts() if account.xcap.discovered and account.xcap_manager is not None]
 
         self.__xcapcontact__ = self.__toxcap__()
 
@@ -875,7 +876,7 @@ class Contact(SettingsState):
 
         configuration.delete(self.__key__)
 
-        xcap_accounts = [account for account in account_manager.get_accounts() if account.xcap.discovered]
+        xcap_accounts = [account for account in account_manager.get_accounts() if account.xcap.discovered and account.xcap_manager is not None]
         with MultiAccountTransaction(xcap_accounts):
             for group in (group for group in addressbook_manager.get_groups() if self.id in group.contacts):
                 group.contacts.remove(self)
@@ -1008,7 +1009,7 @@ class Policy(SettingsState):
             originator_account = originator.account
             previous_xcappolicy = originator.xcap_object
 
-        xcap_accounts = [account for account in account_manager.get_accounts() if account.xcap.discovered]
+        xcap_accounts = [account for account in account_manager.get_accounts() if account.xcap.discovered and account.xcap_manager is not None]
 
         self.__xcappolicy__ = self.__toxcap__()
 
@@ -1264,7 +1265,7 @@ class AddressbookManager(object, metaclass=Singleton):
     @classmethod
     def transaction(cls):
         account_manager = AccountManager()
-        xcap_accounts = [account for account in account_manager.get_accounts() if account.xcap.discovered]
+        xcap_accounts = [account for account in account_manager.get_accounts() if account.xcap.discovered and account.xcap_manager is not None]
         return MultiAccountTransaction(xcap_accounts)
 
     def handle_notification(self, notification):
@@ -1342,7 +1343,7 @@ class AddressbookManager(object, metaclass=Singleton):
         xcap_policies = notification.data.addressbook.policies
 
         account_manager = AccountManager()
-        xcap_accounts = [account for account in account_manager.get_accounts() if account.xcap.discovered]
+        xcap_accounts = [account for account in account_manager.get_accounts() if account.xcap.discovered and account.xcap_manager is not None]
 
         # temporary workaround to migrate contacts to the new format. to be removed later. -Dan
         if hasattr(self, '_AddressbookManager__old_data'):
@@ -1469,7 +1470,7 @@ class AddressbookManager(object, metaclass=Singleton):
 
     def __migrate_contacts(self, old_data):
         account_manager = AccountManager()
-        xcap_accounts = [account for account in account_manager.get_accounts() if account.xcap.discovered]
+        xcap_accounts = [account for account in account_manager.get_accounts() if account.xcap.discovered and account.xcap_manager is not None]
         with MultiAccountTransaction(xcap_accounts):
             # restore the old contacts and groups
             old_groups = old_data['groups']
