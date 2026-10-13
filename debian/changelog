@@ -1,6 +1,11 @@
 python3-sipsimple (5.6.1) unstable; urgency=medium
 
   * Don't apply a fetched addressbook document while local changes are on their way to the journal
+  * Added Linux virtual camera for My screen
+  * Addressbook race condition fix when delete account
+  * Allow change of video resolution mid-call without re-negotiating streams
+  * Get supported camera resolutions for Linux video devices
+  * Fix video aspect ratio in high resolutions
 
  -- Adrian Georgescu <ag@ag-projects.com>  Sun, 11 Oct 2026 13:16:00 -0300
 
