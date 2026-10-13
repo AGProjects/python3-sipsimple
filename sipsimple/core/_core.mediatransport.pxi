@@ -2406,6 +2406,47 @@ cdef class VideoTransport:
             with nogil:
                 pj_mutex_unlock(lock)
 
+    def set_encoder_size(self, int width, int height, object bitrate=None):
+        """Encode at width x height from now on, during the call (bitrate in
+        bits per second, None keeps the current one). Sends a keyframe at the
+        new size; the local video source is connected again so it is
+        converted to it."""
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjmedia_vid_stream *stream
+        cdef pjmedia_rect_size size
+        cdef unsigned int bps = int(bitrate or 0)
+        cdef int status
+
+        _get_ua()
+
+        if width < 16 or height < 16 or width % 2 or height % 2:
+            raise ValueError("invalid encoder size %dx%d" % (width, height))
+        size.w = width
+        size.h = height
+
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            stream = self._obj
+            if stream == NULL:
+                raise SIPCoreInvalidStateError("video stream is not started")
+            with nogil:
+                status = pjmedia_vid_stream_set_enc_size(stream, &size, bps, bps)
+            if status != 0:
+                raise PJSIPError("failed to change the encoder size", status)
+            local_video = self.local_video
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+        # the source converts to the port's size when it is connected
+        if local_video is not None:
+            producer = local_video.producer
+            if producer is not None:
+                local_video.producer = None
+                local_video.producer = producer
+
     def request_keyframe(self):
         cdef pj_mutex_t *lock = self._lock
         cdef pjmedia_vid_stream *stream

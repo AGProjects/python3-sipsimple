@@ -678,6 +678,7 @@ cdef extern from "pjmedia.h":
     int pjmedia_vid_stream_pause(pjmedia_vid_stream *stream, pjmedia_dir dir) nogil
     int pjmedia_vid_stream_resume(pjmedia_vid_stream *stream, pjmedia_dir dir) nogil
     int pjmedia_vid_stream_send_keyframe(pjmedia_vid_stream *stream) nogil
+    int pjmedia_vid_stream_set_enc_size(pjmedia_vid_stream *stream, pjmedia_rect_size *size, unsigned int avg_bps, unsigned int max_bps) nogil
     int pjmedia_vid_stream_send_rtcp_sdes(pjmedia_vid_stream *stream) nogil
     int pjmedia_vid_stream_send_rtcp_bye(pjmedia_vid_stream *stream) nogil
     int pjmedia_vid_stream_send_rtcp_pli(pjmedia_vid_stream *stream) nogil

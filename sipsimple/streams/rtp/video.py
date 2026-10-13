@@ -235,6 +235,17 @@ class VideoStream(RTPStream):
             self.notification_center.add_observer(self, sender=self._keyframe_timer)
         self._keyframe_timer.start(0.5, immediate=True, iterations=5)
 
+    def set_encoder_size(self, width, height, bitrate=None):
+        """Encode at width x height (bitrate in bits per second) from now on,
+        without renegotiating; the other side gets a keyframe at the new size.
+        Used to send a shared screen sharper than the camera. Returns False
+        when the stream is not established."""
+        with self._lock:
+            if self.state != 'ESTABLISHED' or self._transport is None:
+                return False
+            self._transport.set_encoder_size(width, height, bitrate)
+            return True
+
     def _pause(self):
         self._transport.pause()
 

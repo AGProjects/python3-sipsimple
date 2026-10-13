@@ -221,6 +221,13 @@ New 2.17-only support:
                                        elsewhere. Python side:
                                        sipsimple.core.screen_capture_info()
                                        and friends (_core.video.pxi).
+  53_vid_stream_set_enc_size.patch     2.17-only - pjmedia_vid_stream_set_enc_size():
+                                       change the encoding size/bitrate
+                                       during a call without renegotiation
+                                       (own encoder instance, swapped on the
+                                       encoding thread, keyframe forced).
+                                       Python side:
+                                       VideoStream.set_encoder_size().
 
 
 Dropped permanently

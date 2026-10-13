@@ -1,0 +1,266 @@
+# 53_vid_stream_set_enc_size.patch
+#
+# pjmedia_vid_stream_set_enc_size(): change the size (and bitrate) a video
+# stream encodes at during the call, without renegotiating. Used to send a
+# shared screen ("My screen", patches 32/52) at 1280x720 while camera video
+# stays at its configured size.
+#
+# The codec instance of a stream both encodes and decodes, on different
+# threads, and no video codec here implements modify(). So the encoding side
+# gets a codec instance of its own: set_enc_size() records the request and
+# gives the encoding port the new size at once (a source connected from then
+# on is converted to it); put_frame(), on the encoding thread, opens the new
+# encoder (direction ENCODING only, ignoring the remote fmtp limits: the
+# decoders we talk to, libwebrtc and FFmpeg, do not enforce the H.264 level),
+# switches to it, frees the previous resized one and forces a keyframe so
+# the other side's decoder follows. Frames of another size, still arriving
+# until the source is connected again, are skipped. The decoder is never
+# touched.
+#
+# Tested with H.264, VP8 and VP9 between two streams over a loop transport:
+# 640x480 -> 1280x720 -> 640x480, the decoder follows each change.
+--- pjsip_orig/pjmedia/include/pjmedia/vid_stream.h
++++ pjsip/pjmedia/include/pjmedia/vid_stream.h
+@@ -472,6 +472,31 @@
+ 
+ 
+ /**
++ * Change the size (and bitrate) the stream encodes at, during the call,
++ * without renegotiating: the encoding side gets a codec instance of its own,
++ * opened at the new size, and the next frame is a keyframe, so the other
++ * side's decoder follows. Used to send a shared screen sharper than a
++ * camera. The encoder is opened ignoring the remote fmtp limits (the H.264
++ * level), which the decoders we talk to do not enforce.
++ *
++ * The encoding port takes the new size at once: connect the source again
++ * so it is converted to it; frames of another size are skipped meanwhile.
++ *
++ * @param stream        The video media stream.
++ * @param size          The new size, even width and height.
++ * @param avg_bps       Average bitrate, 0 to keep the current one.
++ * @param max_bps       Maximum bitrate, 0 to keep the current one.
++ *
++ * @return              PJ_SUCCESS on success.
++ */
++PJ_DECL(pj_status_t)
++pjmedia_vid_stream_set_enc_size(pjmedia_vid_stream *stream,
++                                const pjmedia_rect_size *size,
++                                unsigned avg_bps,
++                                unsigned max_bps);
++
++
++/**
+  * @}
+  */
+ 
+--- pjsip_orig/pjmedia/src/pjmedia/vid_stream.c
++++ pjsip/pjmedia/src/pjmedia/vid_stream.c
+@@ -126,6 +126,16 @@
+                                                  keyframe. */
+ 
+     pjmedia_vid_codec       *codec;         /**< Codec instance being used. */
++
++    /* Encoder resized during the call (pjmedia_vid_stream_set_enc_size()):
++     * a codec instance of its own does the encoding, so the decoder in
++     * 'codec' is left alone. Swapped in on the encoding thread. */
++    pj_pool_t               *pool;          /**< Stream pool.               */
++    pjmedia_vid_codec       *enc_codec;     /**< Resized encoder, or NULL.  */
++    pj_bool_t                enc_resize_pending;
++    pjmedia_vid_codec_param  enc_resize_param;
++    unsigned                 enc_frame_bytes;/**< Expected input size after
++                                                 a resize, 0 before.        */
+     pj_uint32_t              last_dec_ts;   /**< Last decoded timestamp.    */
+     int                      last_dec_seq;  /**< Last decoded sequence.     */
+ 
+@@ -728,6 +738,54 @@
+ }
+ 
+ 
++/* Encoding thread: open an encoder at the new size and use it from now on. */
++static void apply_enc_resize(pjmedia_vid_stream *stream)
++{
++    pjmedia_stream_common *c_strm = &stream->base;
++    pjmedia_vid_codec_param param;
++    pjmedia_vid_codec *codec = NULL, *old;
++    pj_status_t status;
++
++    pj_grp_lock_acquire(c_strm->grp_lock);
++    param = stream->enc_resize_param;
++    stream->enc_resize_pending = PJ_FALSE;
++    pj_grp_lock_release(c_strm->grp_lock);
++
++    status = pjmedia_vid_codec_mgr_alloc_codec(stream->codec_mgr,
++                                               &stream->info.codec_info,
++                                               &codec);
++    if (status == PJ_SUCCESS)
++        status = pjmedia_vid_codec_init(codec, stream->pool);
++    if (status == PJ_SUCCESS)
++        status = pjmedia_vid_codec_open(codec, &param);
++    if (status != PJ_SUCCESS) {
++        PJ_PERROR(3, (c_strm->name.ptr, status,
++                      "Cannot open the encoder at %dx%d, keeping the current one",
++                      param.enc_fmt.det.vid.size.w, param.enc_fmt.det.vid.size.h));
++        if (codec)
++            pjmedia_vid_codec_mgr_dealloc_codec(stream->codec_mgr, codec);
++        return;
++    }
++
++    old = stream->enc_codec;
++    stream->enc_codec = codec;
++    if (old) {
++        pjmedia_vid_codec_close(old);
++        pjmedia_vid_codec_mgr_dealloc_codec(stream->codec_mgr, old);
++    }
++
++    /* The other side needs a keyframe to see the new size */
++    stream->force_keyframe = PJ_TRUE;
++    pj_bzero(&stream->last_keyframe_tx, sizeof(stream->last_keyframe_tx));
++
++    if (param.enc_fmt.det.vid.max_bps)
++        stream->info.rc_cfg.bandwidth = param.enc_fmt.det.vid.max_bps;
++
++    PJ_LOG(4, (c_strm->name.ptr, "Encoder now at %dx%d, %u kbps",
++               param.enc_fmt.det.vid.size.w, param.enc_fmt.det.vid.size.h,
++               param.enc_fmt.det.vid.avg_bps / 1000));
++}
++
+ static pj_status_t put_frame(pjmedia_port *port,
+                              pjmedia_frame *frame)
+ {
+@@ -748,6 +806,7 @@
+     pj_timestamp null_ts ={{0}};
+     send_entry *send_entry = NULL;
+     void *send_buf;
++    pjmedia_vid_codec *codec;
+ 
+ #if defined(PJMEDIA_STREAM_ENABLE_KA) && PJMEDIA_STREAM_ENABLE_KA != 0
+     /* If the interval since last sending packet is greater than
+@@ -801,6 +860,24 @@
+         return PJ_SUCCESS;
+     }
+ 
++    /* A new encoder size asked for: switch encoders here, on the encoding
++     * thread, between two frames. */
++    if (stream->enc_resize_pending)
++        apply_enc_resize(stream);
++    codec = stream->enc_codec ? stream->enc_codec : stream->codec;
++
++    /* After a resize, frames of the old size can still come until the
++     * source is connected again (and converted to the new size): the
++     * encoder must never read past what it was given. */
++    if (stream->enc_frame_bytes && frame->type == PJMEDIA_FRAME_TYPE_VIDEO &&
++        frame->size != stream->enc_frame_bytes)
++    {
++        pjmedia_rtp_encode_rtp(&channel->rtp, channel->pt, 1, 0,
++                               rtp_ts_len, (const void**)&rtphdr,
++                               &rtphdrlen);
++        return PJ_SUCCESS;
++    }
++
+     /* Init frame_out buffer. */
+     pj_bzero(&frame_out, sizeof(frame_out));
+     if (stream->info.rc_cfg.method == PJMEDIA_VID_STREAM_RC_SEND_THREAD) {
+@@ -845,7 +922,7 @@
+     }
+ 
+     /* Encode! */
+-    status = pjmedia_vid_codec_encode_begin(stream->codec, &enc_opt, frame,
++    status = pjmedia_vid_codec_encode_begin(codec, &enc_opt, frame,
+                                             channel->buf_size -
+                                                sizeof(pjmedia_rtp_hdr),
+                                             &frame_out,
+@@ -939,7 +1016,7 @@
+         frame_out.buf = ((char*)send_buf) + sizeof(pjmedia_rtp_hdr);
+ 
+         /* Encode more! */
+-        status = pjmedia_vid_codec_encode_more(stream->codec,
++        status = pjmedia_vid_codec_encode_more(codec,
+                                                channel->buf_size -
+                                                    sizeof(pjmedia_rtp_hdr),
+                                                &frame_out,
+@@ -1537,6 +1614,7 @@
+     PJ_ASSERT_RETURN(stream != NULL, PJ_ENOMEM);
+     c_strm = &stream->base;
+     c_strm->own_pool = own_pool;
++    stream->pool = pool;
+ 
+     /* Init stream/port name */
+     name.ptr = (char*) pj_pool_alloc(pool, M);
+@@ -2049,6 +2127,11 @@
+         pjmedia_vid_codec_mgr_dealloc_codec(stream->codec_mgr, stream->codec);
+         stream->codec = NULL;
+     }
++    if (stream->enc_codec) {
++        pjmedia_vid_codec_close(stream->enc_codec);
++        pjmedia_vid_codec_mgr_dealloc_codec(stream->codec_mgr, stream->enc_codec);
++        stream->enc_codec = NULL;
++    }
+ }
+ 
+ 
+@@ -2337,4 +2420,65 @@
+ }
+ 
+ 
++/*
++ * Change the size (and bitrate) the stream encodes at, during the call.
++ */
++PJ_DEF(pj_status_t) pjmedia_vid_stream_set_enc_size(pjmedia_vid_stream *stream,
++                                                    const pjmedia_rect_size *size,
++                                                    unsigned avg_bps,
++                                                    unsigned max_bps)
++{
++    pjmedia_stream_common *c_strm;
++    pjmedia_vid_codec_param *param;
++    const pjmedia_video_format_info *vfi;
++    pjmedia_video_apply_fmt_param vafp;
++    pjmedia_port_info *pi;
++
++    PJ_ASSERT_RETURN(stream && size, PJ_EINVAL);
++    PJ_ASSERT_RETURN(size->w >= 16 && size->h >= 16 && !(size->w & 1) &&
++                     !(size->h & 1), PJ_EINVAL);
++    c_strm = &stream->base;
++    if (!c_strm->enc || !stream->info.codec_param)
++        return PJ_EINVALIDOP;
++
++    pj_grp_lock_acquire(c_strm->grp_lock);
++
++    pi = &c_strm->enc->port.info;
++    vfi = pjmedia_get_video_format_info(NULL, pi->fmt.id);
++    pj_bzero(&vafp, sizeof(vafp));
++    vafp.size = *size;
++    if (!vfi || vfi->apply_fmt(vfi, &vafp) != PJ_SUCCESS) {
++        pj_grp_lock_release(c_strm->grp_lock);
++        return PJMEDIA_EBADFMT;
++    }
++
++    param = &stream->enc_resize_param;
++    pj_memcpy(param, stream->info.codec_param, sizeof(*param));
++    param->dir = PJMEDIA_DIR_ENCODING;      /* the decoder stays as it is */
++    param->enc_fmt.det.vid.size = *size;
++    if (avg_bps)
++        param->enc_fmt.det.vid.avg_bps = avg_bps;
++    if (max_bps)
++        param->enc_fmt.det.vid.max_bps = max_bps;
++    /* The size asked for, not what the remote's H.264 level allows: the
++     * decoders we talk to (libwebrtc, FFmpeg) do not enforce the level. */
++    param->ignore_fmtp = PJ_TRUE;
++    stream->enc_resize_pending = PJ_TRUE;
++
++    /* The port takes the new size now: a source connected from now on is
++     * converted to it. Frames of another size are skipped until then. */
++    pi->fmt.det.vid.size = *size;
++    if (avg_bps)
++        pi->fmt.det.vid.avg_bps = avg_bps;
++    if (max_bps)
++        pi->fmt.det.vid.max_bps = max_bps;
++    stream->info.codec_param->enc_fmt.det.vid.size = *size;
++    stream->enc_frame_bytes = (unsigned)vafp.framebytes;
++
++    pj_grp_lock_release(c_strm->grp_lock);
++
++    PJ_LOG(4, (c_strm->name.ptr, "Encoder size %dx%d requested", size->w, size->h));
++    return PJ_SUCCESS;
++}
++
+ #endif /* PJMEDIA_HAS_VIDEO */
