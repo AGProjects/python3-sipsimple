@@ -257,6 +257,33 @@ New 2.17-only support:
                                        in another format that has it and
                                        converts only the pixel format.
                                        Applies after 55.
+  57_avf_capture_keep_aspect.patch     2.17-only - macOS: 720p from the
+                                       camera was a 4:3 picture stretched
+                                       to 16:9: the session ran at
+                                       PresetHigh (4:3 on Continuity and
+                                       4:3 cameras) and the output filled
+                                       the requested size, and a camera
+                                       without a 16:9 format was opened at
+                                       its nearest size and stretched by
+                                       vid_port's converter. avf_dev also
+                                       lists 1920x1080 / 1280x720 / 640x480
+                                       for every camera in every pixel
+                                       format (built-in / Continuity
+                                       cameras list only 420v/420f, which
+                                       left them a lone 640x480 default)
+                                       so vid_port opens the exact size,
+                                       and sets an
+                                       activeFormat of the requested shape
+                                       (exact size, else the smallest
+                                       larger), so the output only scales
+                                       down, and sets it again with the
+                                       device locked across startRunning
+                                       (macOS reapplies the preset at start
+                                       otherwise). The output uses
+                                       AVVideoScalingModeResizeAspectFill,
+                                       so a camera without a format of that
+                                       shape is cropped, not stretched.
+                                       Applies after 32.
 
 
 Dropped permanently

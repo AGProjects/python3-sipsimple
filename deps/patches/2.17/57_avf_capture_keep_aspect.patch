@@ -1,0 +1,317 @@
+# 57_avf_capture_keep_aspect.patch
+#
+# macOS: 720p from the camera was a 4:3 picture stretched to 16:9, in the
+# local preview and at the other side.
+#
+# init_avf_stream() runs the session at AVCaptureSessionPresetHigh, which
+# captures in whatever format the camera prefers (4:3 on a Continuity camera,
+# 1920x1440, and on 4:3 webcams), and asks the video output for the requested
+# width and height, which it fills without keeping the picture's shape. 480p
+# (4:3) looked right, 720p (16:9) was stretched.
+#
+# The worst case was a camera without a 16:9 format at all (4:3 webcams, a
+# Continuity camera): avf_dev only listed the camera's own sizes, so
+# vid_port's find_closest_fmt() opened it at the nearest one (640x480,
+# 1920x1440) and its libswscale converter stretched that to 1280x720 before
+# anything here could keep the shape.
+#
+# avf_dev.m:
+#  - every camera also lists 1920x1080, 1280x720 and 640x480 in each pixel
+#    format of avf_fmts (native formats are capped to leave room), so
+#    vid_port opens it at exactly the requested size and only converts the
+#    pixel format; the output below produces any size at the right shape.
+#    Not only in the pixel formats the camera lists: built-in and Continuity
+#    cameras list only 420v / 420f, which match none of avf_fmts, so such a
+#    camera had nothing but the 640x480 BGRA default and 720p / 1080p were
+#    640x480 stretched by vid_port's converter.
+#  - before the output is configured, pick a device format of the requested
+#    shape: the requested size if the camera has it, otherwise the smallest
+#    larger one, preferring formats that reach the requested frame rate, then
+#    the requested pixel format. The output then only scales down.
+#  - start_avf() sets that format again with the device locked across
+#    startRunning: on macOS the session applies its preset again when it
+#    starts and replaces an activeFormat set while unlocked, so setting it
+#    only in init_avf_stream() was undone (the frame got the right size but
+#    the picture was still scaled from the preset's format).
+#  - the output's videoSettings carry AVVideoScalingModeResizeAspectFill, so
+#    whenever the capture format is of another shape (camera without a
+#    format of that shape, or the session changed it anyway) the picture is
+#    cropped to the requested shape instead of stretched.
+#  - logs the format the camera actually runs at ("Camera running at") and,
+#    once per start, the first frame AVFoundation delivers ("First camera
+#    frame") instead of a line for every frame of an unexpected size.
+# Applies after 32.
+--- pjsip_orig/pjmedia/src/pjmedia-videodev/avf_dev.m
++++ pjsip/pjmedia/src/pjmedia-videodev/avf_dev.m
+@@ -65,6 +65,19 @@
+     {PJMEDIA_FORMAT_UYVY, kCVPixelFormatType_422YpCbCr8},
+ };
+ 
++/* Sizes every camera offers on top of its own formats. The capture output
++ * delivers any size, cropped to its shape (see init_avf_stream()), so
++ * listing them lets vid_port open the camera at exactly the size asked for
++ * instead of at the nearest native one and stretching that with its
++ * converter: a camera without a 16:9 format (4:3 webcams, a Continuity
++ * camera's 1920x1440) was stretched at 720p and 1080p. */
++static const struct { unsigned w, h; } avf_cam_sizes[] =
++{
++    {1920, 1080}, {1280, 720}, {640, 480}
++};
++#define AVF_NATIVE_FMT_MAX  (PJMEDIA_VID_DEV_INFO_FMT_CNT - \
++                             PJ_ARRAY_SIZE(avf_fmts) * PJ_ARRAY_SIZE(avf_cam_sizes))
++
+ /* avf device info */
+ struct avf_dev_info
+ {
+@@ -138,6 +151,8 @@
+     AVCaptureDeviceInput		*dev_input;
+     AVCaptureVideoDataOutput	        *video_output;
+     AVFDelegate                         *delegate;
++    AVCaptureDeviceFormat               *cap_format;   /* retained, or nil */
++    pj_bool_t                           first_frame_logged;
+ 
+     /* Screen capture (ScreenCaptureKit), used when is_screen is set.
+      * SCK only produces a frame when the screen content changes, while
+@@ -481,7 +496,7 @@
+              * memory - e.g. a neighbouring video factory's op pointer, which
+              * later faults pjmedia_vid_dev_refresh() at drv->f->op (address
+              * 0x30).  Stop once the array is full. */
+-            if (di->info.fmt_cnt >= PJMEDIA_VID_DEV_INFO_FMT_CNT)
++            if (di->info.fmt_cnt >= AVF_NATIVE_FMT_MAX)
+                 break;
+ 
+             for (i = 0; i < PJ_ARRAY_SIZE(avf_fmts); i++) {
+@@ -490,7 +505,7 @@
+                     CMVideoDimensions dim = CMVideoFormatDescriptionGetDimensions(desc);
+                     if (dim.width < 640)
+                         continue;
+-                    if (di->info.fmt_cnt >= PJMEDIA_VID_DEV_INFO_FMT_CNT)
++                    if (di->info.fmt_cnt >= AVF_NATIVE_FMT_MAX)
+                         break;
+                     pjmedia_fourcc_name(avf_fmts[i].pjmedia_format, fmt_name);
+                     PJ_LOG(4, (THIS_FILE, "  detected resolution %dx%d (%s)", dim.width, dim.height, fmt_name));
+@@ -504,6 +519,51 @@
+             }
+         }
+ 
++        /* The standard sizes in every pixel format the output delivers.
++         * Not only in the formats the camera lists: the output converts
++         * from whatever the camera captures in, and built-in and
++         * Continuity cameras list only 420v / 420f, which match none of
++         * avf_fmts - such a camera was left with the 640x480 default
++         * below, so 720p and 1080p were 640x480 stretched by vid_port. */
++        {
++            unsigned native_cnt = di->info.fmt_cnt, k, j, m;
++
++            if (native_cnt == 0) {
++                PJ_LOG(4, (THIS_FILE, "  no format in a pixel format of "
++                           "its own, offering the standard sizes"));
++            }
++            for (k = 0; k < PJ_ARRAY_SIZE(avf_fmts); k++) {
++                for (j = 0; j < PJ_ARRAY_SIZE(avf_cam_sizes); j++) {
++                    pj_bool_t present = PJ_FALSE;
++
++                    for (m = 0; m < di->info.fmt_cnt; m++) {
++                        pjmedia_video_format_detail *vfd =
++                            pjmedia_format_get_video_format_detail(&di->info.fmt[m], PJ_TRUE);
++                        if (di->info.fmt[m].id == avf_fmts[k].pjmedia_format &&
++                            vfd->size.w == avf_cam_sizes[j].w &&
++                            vfd->size.h == avf_cam_sizes[j].h)
++                        {
++                            present = PJ_TRUE;
++                            break;
++                        }
++                    }
++                    if (present || di->info.fmt_cnt >= PJMEDIA_VID_DEV_INFO_FMT_CNT)
++                        continue;
++                    pjmedia_format_init_video(&di->info.fmt[di->info.fmt_cnt++],
++                                              avf_fmts[k].pjmedia_format,
++                                              avf_cam_sizes[j].w,
++                                              avf_cam_sizes[j].h,
++                                              DEFAULT_FPS, 1);
++                    PJ_LOG(4, (THIS_FILE, "  added resolution %dx%d (%c%c%c%c)",
++                               avf_cam_sizes[j].w, avf_cam_sizes[j].h,
++                               (char)(avf_fmts[k].pjmedia_format),
++                               (char)(avf_fmts[k].pjmedia_format >> 8),
++                               (char)(avf_fmts[k].pjmedia_format >> 16),
++                               (char)(avf_fmts[k].pjmedia_format >> 24)));
++                }
++            }
++        }
++
+         if (di->info.fmt_cnt == 0) {
+             PJ_LOG(4, (THIS_FILE, "  there are no compatible formats, using default"));
+             pjmedia_format *fmt = &di->info.fmt[di->info.fmt_cnt++];
+@@ -636,8 +696,22 @@
+     frame.buf = CVPixelBufferGetBaseAddress(img);
+     frame.size = CVPixelBufferGetBytesPerRow(img) * height;
+ 
+-    if (stream->size.w != width || stream->size.h != height) {
+-        PJ_LOG(4, (THIS_FILE, "AVF image size changed, before: %dx%d, after: %dx%d", stream->size.w, stream->size.h, width, height));
++    /* Once per start: what the camera actually delivers, against what
++     * was asked for and the format it runs in. */
++    if (!stream->first_frame_logged) {
++        AVCaptureDevice *dev = stream->dev_input ? [stream->dev_input device] : nil;
++        CMVideoDimensions adim = {0, 0};
++        char fcc[5] = {(char)(type >> 24), (char)(type >> 16), (char)(type >> 8), (char)type, 0};
++
++        if (dev)
++            adim = CMVideoFormatDescriptionGetDimensions([dev.activeFormat formatDescription]);
++        stream->first_frame_logged = PJ_TRUE;
++        PJ_LOG(4, (THIS_FILE, "First camera frame: %zux%zu %s, %zu bytes/row, "
++                   "requested %dx%d, camera format %dx%d%s", width, height, fcc,
++                   CVPixelBufferGetBytesPerRow(img), stream->size.w,
++                   stream->size.h, adim.width, adim.height,
++                   (stream->size.w != width || stream->size.h != height) ?
++                   " - SIZE MISMATCH" : ""));
+     }
+ 
+     if (stream->vid_cb.capture_cb) {
+@@ -1088,6 +1162,81 @@
+ 
+     [strm->cap_session addInput:strm->dev_input];
+ 
++    /* The output below scales the picture to the requested size without
++     * keeping its shape, and AVCaptureSessionPresetHigh picks whatever the
++     * camera prefers: a 4:3 format (a Continuity camera's 1920x1440, a 4:3
++     * webcam) was stretched to 16:9 at 720p. Capture in a format of the
++     * requested shape instead: the requested size if the camera has it,
++     * otherwise the smallest larger one, preferring formats that reach the
++     * requested frame rate. Setting activeFormat switches the session to
++     * AVCaptureSessionPresetInputPriority, so the preset does not undo it.
++     */
++    {
++        AVCaptureDeviceFormat *best = nil;
++        pj_bool_t best_exact = PJ_FALSE, best_fps_ok = PJ_FALSE;
++        int64_t best_area = 0;
++        double req_fps = vfd->fps.denum ? (double)vfd->fps.num / vfd->fps.denum : 0;
++
++        for (AVCaptureDeviceFormat *f in [videoDevice formats]) {
++            CMVideoDimensions dim =
++                CMVideoFormatDescriptionGetDimensions([f formatDescription]);
++            pj_bool_t exact, fps_ok = PJ_FALSE, better;
++            int64_t area;
++
++            if (dim.width <= 0 || dim.height <= 0 ||
++                (unsigned)dim.width < vfd->size.w ||
++                (int64_t)dim.width * vfd->size.h !=
++                (int64_t)dim.height * vfd->size.w)
++            {
++                continue;
++            }
++            for (AVFrameRateRange *range in [f videoSupportedFrameRateRanges]) {
++                if (range.maxFrameRate + 0.5 >= req_fps)
++                    fps_ok = PJ_TRUE;
++            }
++            exact = (unsigned)dim.width == vfd->size.w;
++            area = (int64_t)dim.width * dim.height;
++            if (!best)
++                better = PJ_TRUE;
++            else if (fps_ok != best_fps_ok)
++                better = fps_ok;
++            else if (exact != best_exact)
++                better = exact;
++            else if (area != best_area)
++                better = area < best_area;
++            else
++                better = CMFormatDescriptionGetMediaSubType([f formatDescription]) ==
++                         fi->avf_format;
++            if (better) {
++                best = f;
++                best_exact = exact;
++                best_fps_ok = fps_ok;
++                best_area = area;
++            }
++        }
++
++        if (best) {
++            NSError *lock_error = nil;
++
++            if ([videoDevice lockForConfiguration:&lock_error]) {
++                CMVideoDimensions dim =
++                    CMVideoFormatDescriptionGetDimensions([best formatDescription]);
++
++                videoDevice.activeFormat = best;
++                [videoDevice unlockForConfiguration];
++                strm->cap_format = [best retain];
++                PJ_LOG(4, (THIS_FILE, "Capturing at %dx%d for %dx%d",
++                           dim.width, dim.height, vfd->size.w, vfd->size.h));
++            } else {
++                PJ_LOG(3, (THIS_FILE, "Cannot configure the camera, the "
++                           "picture may not keep its shape"));
++            }
++        } else {
++            PJ_LOG(4, (THIS_FILE, "No %dx%d-shaped camera format, the picture "
++                       "is scaled from the preset", vfd->size.w, vfd->size.h));
++        }
++    }
++
+     strm->video_output = [[AVCaptureVideoDataOutput alloc] init];
+     if (!strm->video_output) {
+         strm->status = PJMEDIA_EVID_SYSERR;
+@@ -1099,7 +1248,11 @@
+     strm->video_output.alwaysDiscardsLateVideoFrames = YES;
+     /* The Apple provided documentation says the only supported key is kCVPixelBufferPixelFormatTypeKey,
+      * but it turns out kCVPixelBufferWidthKey and kCVPixelBufferHeightKey are also required. Thanks
+-     * Chromium, for figuring it out.*/
++     * Chromium, for figuring it out.
++     * AVVideoScalingModeResizeAspectFill: when the capture format is of
++     * another shape (no format of the requested shape, or the session
++     * changed it), crop to the requested shape instead of stretching. The
++     * default scales each axis on its own. */
+     strm->video_output.videoSettings =
+         [NSDictionary dictionaryWithObjectsAndKeys: @(fi->avf_format),
+                                                     kCVPixelBufferPixelFormatTypeKey,
+@@ -1107,6 +1260,8 @@
+                                                     kCVPixelBufferWidthKey,
+                                                     @(vfd->size.h),
+                                                     kCVPixelBufferHeightKey,
++                                                    AVVideoScalingModeResizeAspectFill,
++                                                    AVVideoScalingModeKey,
+                                                     nil];
+     strm->delegate = [[AVFDelegate alloc] init];
+     strm->delegate->stream = strm;
+@@ -1249,7 +1404,31 @@
+ 
+ static void start_avf(struct avf_stream *strm)
+ {
++    AVCaptureDevice *dev = strm->dev_input ? [strm->dev_input device] : nil;
++    pj_bool_t locked = PJ_FALSE;
++
++    /* On macOS the session applies its preset (High) again when it starts
++     * running and replaces the activeFormat chosen in init_avf_stream(),
++     * unless the device is locked for configuration across startRunning.
++     * Set the format again under the lock and release it once running. */
++    if (strm->cap_format && dev && [dev lockForConfiguration:NULL]) {
++        locked = PJ_TRUE;
++        if (dev.activeFormat != strm->cap_format)
++            dev.activeFormat = strm->cap_format;
++    }
++
++    strm->first_frame_logged = PJ_FALSE;
+     [strm->cap_session startRunning];
++
++    if (locked)
++        [dev unlockForConfiguration];
++
++    if (dev) {
++        CMVideoDimensions dim =
++            CMVideoFormatDescriptionGetDimensions([dev.activeFormat formatDescription]);
++        PJ_LOG(4, (THIS_FILE, "Camera running at %dx%d for %dx%d", dim.width,
++                   dim.height, strm->size.w, strm->size.h));
++    }
+ }
+ 
+ static void stop_avf(struct avf_stream *strm)
+@@ -1319,6 +1498,11 @@
+ 	strm->delegate = NULL;
+     }
+ 
++    if (strm->cap_format) {
++        [strm->cap_format release];
++        strm->cap_format = nil;
++    }
++
+     if (strm->dev_input) {
+ 	strm->dev_input = NULL;
+     }
