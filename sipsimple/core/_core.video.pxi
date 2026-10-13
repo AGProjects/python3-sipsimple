@@ -1136,3 +1136,86 @@ cdef int RemoteVideoStream_on_event(pjmedia_event *event, void *user_data) noexc
         result = RemoteVideoStream_on_event_impl(event, user_data)
     return result
 
+
+
+# Screen capture ("My screen" on Linux, through the desktop portal)
+
+_screen_capture_states = {PJMEDIA_SCREEN_DEV_UNAVAILABLE: 'unavailable',
+                          PJMEDIA_SCREEN_DEV_IDLE: 'idle',
+                          PJMEDIA_SCREEN_DEV_PENDING: 'pending',
+                          PJMEDIA_SCREEN_DEV_READY: 'ready',
+                          PJMEDIA_SCREEN_DEV_CAPTURING: 'capturing',
+                          PJMEDIA_SCREEN_DEV_DENIED: 'denied',
+                          PJMEDIA_SCREEN_DEV_FAILED: 'failed',
+                          PJMEDIA_SCREEN_DEV_ENDED: 'ended'}
+
+
+def screen_capture_info():
+    """Where the screen capture stands, as a dict:
+
+    state: 'unavailable' (no such device here), 'idle', 'pending' (asking the
+    desktop, the user may be looking at its picker), 'ready' (a monitor was
+    picked: select the device now), 'capturing', 'denied' (the user
+    cancelled the picker), 'failed', 'ended' (sharing was stopped from the
+    desktop). Selecting the device while it is not ready falls back to a
+    camera and asks nothing: request_screen_capture() asks.
+
+    position, size: where the shared monitor is, in the desktop's logical
+    coordinates (position None when the desktop does not say); source_size:
+    the size of the frames captured. All None unless ready or capturing.
+    """
+    cdef pjmedia_screen_dev_info info
+    _register_screen_capture_thread()
+    with nogil:
+        pjmedia_screen_dev_get_info(&info)
+    active = info.state in (PJMEDIA_SCREEN_DEV_READY, PJMEDIA_SCREEN_DEV_CAPTURING)
+    return dict(state=_screen_capture_states.get(info.state, 'unavailable'),
+                position=(info.x, info.y) if active and info.has_position else None,
+                size=(info.width, info.height) if active and info.width > 0 and info.height > 0 else None,
+                source_size=(info.src_width, info.src_height) if active and info.src_width and info.src_height else None)
+
+
+def screen_capture_restore_token():
+    """The token that lets the next capture skip the desktop's picker, or None.
+    The desktop hands out a new one with every capture: save it after each."""
+    cdef char buf[512]
+    cdef unsigned int length
+    with nogil:
+        length = pjmedia_screen_dev_get_restore_token(buf, sizeof(buf))
+    if length == 0 or length >= sizeof(buf):
+        return None
+    return (<bytes>buf[:length]).decode('utf-8', 'replace')
+
+
+def set_screen_capture_restore_token(token):
+    cdef bytes data = (token or '').encode('utf-8')
+    cdef const char *c_token = data
+    with nogil:
+        pjmedia_screen_dev_set_restore_token(c_token)
+
+
+cdef _register_screen_capture_thread():
+    # these log through pjlib, which must know the calling thread
+    try:
+        _get_ua()
+    except SIPCoreError:
+        pass
+
+
+def request_screen_capture():
+    """Ask the desktop for a monitor to share. Returns at once; the state goes
+    to 'pending', then 'ready' (or 'denied'/'failed'). False when there is no
+    screen capture here or it is busy."""
+    cdef int status
+    _register_screen_capture_thread()
+    with nogil:
+        status = pjmedia_screen_dev_request()
+    return status == 0
+
+
+def reset_screen_capture():
+    """Forget a denied/failed/ended outcome, and close a screen that was
+    picked but not opened, or stop asking the desktop."""
+    _register_screen_capture_thread()
+    with nogil:
+        pjmedia_screen_dev_reset()

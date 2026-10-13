@@ -1008,6 +1008,31 @@ cdef extern from "pjmedia_videodev.h":
     ctypedef void (*pjmedia_vid_dev_fb_frame_cb)(pjmedia_frame_ptr_const frame, pjmedia_rect_size size, void *user_data)
     int pjmedia_vid_dev_fb_set_callback(pjmedia_vid_dev_stream *strm, pjmedia_vid_dev_fb_frame_cb cb, void *user_data)
 
+cdef extern from "pjmedia-videodev/screen_dev.h":
+    ctypedef enum pjmedia_screen_dev_state:
+        PJMEDIA_SCREEN_DEV_UNAVAILABLE
+        PJMEDIA_SCREEN_DEV_IDLE
+        PJMEDIA_SCREEN_DEV_PENDING
+        PJMEDIA_SCREEN_DEV_READY
+        PJMEDIA_SCREEN_DEV_CAPTURING
+        PJMEDIA_SCREEN_DEV_DENIED
+        PJMEDIA_SCREEN_DEV_FAILED
+        PJMEDIA_SCREEN_DEV_ENDED
+    ctypedef struct pjmedia_screen_dev_info:
+        pjmedia_screen_dev_state state
+        int has_position
+        int x
+        int y
+        int width
+        int height
+        unsigned int src_width
+        unsigned int src_height
+    void pjmedia_screen_dev_get_info(pjmedia_screen_dev_info *info) nogil
+    void pjmedia_screen_dev_set_restore_token(const char *token) nogil
+    unsigned int pjmedia_screen_dev_get_restore_token(char *buf, unsigned int size) nogil
+    void pjmedia_screen_dev_reset() nogil
+    int pjmedia_screen_dev_request() nogil
+
 cdef extern from "pjmedia-codec.h":
 
     # codecs

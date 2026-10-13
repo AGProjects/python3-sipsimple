@@ -84,6 +84,33 @@ from distutils.errors import DistutilsError
 logging.basicConfig(level=logging.DEBUG, format="%(message)s")
 log = logging.getLogger(__name__)
 
+
+# Linux screen capture ("My screen" in the camera list): the xdg-desktop-portal
+# ScreenCast interface through GIO, the frames through libpipewire. Built when
+# pkg-config finds both (and FFmpeg's libswscale is in, for the scaling); set
+# SIPSIMPLE_DISABLE_SCREEN_CAPTURE=1 to leave it out.
+SCREEN_CAPTURE_PACKAGES = ('libpipewire-0.3', 'gio-2.0', 'gio-unix-2.0')
+
+
+def _pkg_config(*args):
+    try:
+        return subprocess.run(['pkg-config'] + list(args), check=True, capture_output=True, text=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def linux_screen_capture_flags():
+    """(cflags, libs) for the screen capture device, None when it is not built."""
+    if sys_platform != 'linux':
+        return None
+    if os.environ.get('SIPSIMPLE_DISABLE_SCREEN_CAPTURE', '0') not in ('0', '', 'false', 'False'):
+        return None
+    cflags = _pkg_config('--cflags', *SCREEN_CAPTURE_PACKAGES)
+    libs = _pkg_config('--libs', *SCREEN_CAPTURE_PACKAGES)
+    if cflags is None or libs is None:
+        return None
+    return cflags, libs
+
 from Cython import __version__ as cython_version
 from Cython.Distutils import build_ext
 
@@ -279,6 +306,14 @@ class PJSIP_build_ext(build_ext):
                      "to a prefix containing include/bcg729/encoder.h.")
         self._bcg729_path = bcg729_path
 
+        screen_capture = linux_screen_capture_flags()
+        if screen_capture is not None:
+            log.info("Found PipeWire and GIO; enabling screen capture")
+            extra_config.append("#define PJMEDIA_VIDEO_DEV_HAS_SCREEN 1")
+        elif sys_platform == "linux":
+            log.info("PipeWire / GIO development files not found; screen capture will be disabled. "
+                     "Install libpipewire-0.3-dev and libglib2.0-dev.")
+
         path = os.path.join(self.build_dir, "pjlib", "include", "pj", "config_site.h")
         log.info("Configuring PJSIP in %s" % path)
         with open(path, "w") as f:
@@ -293,6 +328,9 @@ class PJSIP_build_ext(build_ext):
             cflags += " -O2"
         env = os.environ.copy()
         env['CFLAGS'] = ' '.join(x for x in (cflags, env.get('CFLAGS', None)) if x)
+        if screen_capture is not None:
+            env['CFLAGS'] = ' '.join((env['CFLAGS'], screen_capture[0]))
+            env['LIBS'] = ' '.join(x for x in (env.get('LIBS', None), screen_capture[1]) if x)
         if sys_platform == "win32":
             cmd = ["bash", "configure"]
         else:
@@ -384,6 +422,19 @@ class PJSIP_build_ext(build_ext):
         extension.define_macros.append(("PJ_SVN_REVISION", open(os.path.join(self.build_dir, "base_rev"), "r").read().strip()))
         #extension.define_macros.append(("__PYX_FORCE_INIT_THREADS", 1))
         extension.extra_compile_args.append("-Wno-unused-function")    # silence warning
+
+        if sys_platform == "linux":
+            # The screen capture device needs these; a build tree configured
+            # before it existed has them nowhere else.
+            config_site = os.path.join(self.build_dir, "pjlib", "include", "pj", "config_site.h")
+            screen_capture = linux_screen_capture_flags()
+            if screen_capture is not None and os.path.exists(config_site) and "#define PJMEDIA_VIDEO_DEV_HAS_SCREEN 1\n" in open(config_site).readlines():
+                for library in self.get_opts_from_string(screen_capture[1], "-l"):
+                    if library not in extension.libraries:
+                        extension.libraries.append(library)
+                for directory in self.get_opts_from_string(screen_capture[1], "-L"):
+                    if directory not in extension.library_dirs:
+                        extension.library_dirs.append(directory)
 
         if sys_platform == "darwin":
             extension.define_macros.append(("MACOSX_DEPLOYMENT_TARGET", min_osx_version))

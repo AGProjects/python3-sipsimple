@@ -210,6 +210,17 @@ New 2.17-only support:
                                        / standard WebRTC, unlocking
                                        720p negotiation on Mac -> Sylk
                                        Mobile H.264 calls.
+  52_linux_screen_capture.patch        2.17-only - "My screen" capture
+                                       device on Linux (screen_dev.c):
+                                       xdg-desktop-portal ScreenCast over
+                                       GDBus + PipeWire, letterboxed I420
+                                       via libswscale, the Linux side of
+                                       patch 32. Built when setup_pjsip.py
+                                       finds libpipewire-0.3 and GIO
+                                       (PJMEDIA_VIDEO_DEV_HAS_SCREEN); stubs
+                                       elsewhere. Python side:
+                                       sipsimple.core.screen_capture_info()
+                                       and friends (_core.video.pxi).
 
 
 Dropped permanently

@@ -1,0 +1,1959 @@
+# 52_linux_screen_capture.patch
+#
+# Screen sharing as a video capture device on Linux, the counterpart of
+# patch 32 (macOS): "My screen" is listed after the cameras, and picking it
+# as the camera sends a monitor instead of camera video. Nothing changes
+# above pjmedia; the call is an ordinary video call.
+#
+# Capture goes through the xdg-desktop-portal ScreenCast interface (GIO /
+# GDBus) and PipeWire, the only way that works on Wayland; GNOME and KDE
+# also offer it on X11 sessions. The handshake (CreateSession,
+# SelectSources, Start, OpenPipeWireRemote) runs on a thread of its own,
+# started by pjmedia_screen_dev_request(), because Start shows the desktop's
+# picker; the application opens the device once pjmedia_screen_dev_get_info()
+# says READY. Opening it at any other time fails with PJMEDIA_EVID_NOTREADY
+# (the SDK falls back to a camera) and shows nothing, so a "My screen" left
+# in the settings does not pop the picker up at start. With a restore token
+# (ScreenCast v4, persist_mode 2) the picker is skipped. When sharing is
+# stopped from the desktop (its indicator), the state goes to ENDED.
+#
+# Only monitors are offered (not windows) so a remote pointer lands on a
+# known place, and the cursor is embedded in the frames when the portal can.
+#
+# As on macOS, PipeWire delivers a frame only on damage: the newest buffer
+# is held and a pjmedia clock at the configured rate converts it (libswscale,
+# letterboxed I420 at the requested size) and hands it to pjmedia, which
+# keeps RTP timing right and serves keyframe requests on a static screen.
+# Shared memory buffers only (MemFd/MemPtr), no DMA-BUF import. The
+# PipeWire thread registers with pjlib before it logs.
+#
+# Built when PJMEDIA_VIDEO_DEV_HAS_SCREEN=1 (setup_pjsip.py sets it on Linux
+# when pkg-config finds libpipewire-0.3, gio-2.0 and gio-unix-2.0) and
+# FFmpeg's libswscale is in. screen_dev.c is compiled on every platform:
+# without the device it only defines the pjmedia_screen_dev_* functions as
+# stubs, which the Cython core calls unconditionally.
+--- pjsip_orig/pjmedia/include/pjmedia-videodev/config.h
++++ pjsip/pjmedia/include/pjmedia-videodev/config.h
+@@ -223,6 +223,18 @@
+ 
+ 
+ /**
++ * Linux screen capture ("My screen") through the xdg-desktop-portal
++ * ScreenCast interface and PipeWire. Needs libpipewire-0.3, GIO and
++ * libswscale.
++ *
++ * Default: 0
++ */
++#ifndef PJMEDIA_VIDEO_DEV_HAS_SCREEN
++#   define PJMEDIA_VIDEO_DEV_HAS_SCREEN         0
++#endif
++
++
++/**
+  * Enable support for AVI player virtual capture device.
+  *
+  * Default: 1
+--- pjsip_orig/pjmedia/include/pjmedia_videodev.h
++++ pjsip/pjmedia/include/pjmedia_videodev.h
+@@ -27,5 +27,6 @@
+ #include <pjmedia-videodev/videodev_imp.h>
+ #include <pjmedia-videodev/avi_dev.h>
+ #include <pjmedia-videodev/fb_dev.h>
++#include <pjmedia-videodev/screen_dev.h>
+ 
+ #endif  /* __PJMEDIA_VIDEODEV_H__ */
+--- pjsip_orig/pjmedia/src/pjmedia-videodev/videodev.c
++++ pjsip/pjmedia/src/pjmedia-videodev/videodev.c
+@@ -66,6 +66,10 @@
+ pjmedia_vid_dev_factory* pjmedia_opengl_factory(pj_pool_factory *pf);
+ #endif
+ 
++#if PJMEDIA_VIDEO_DEV_HAS_SCREEN && defined(PJMEDIA_HAS_LIBSWSCALE) && PJMEDIA_HAS_LIBSWSCALE
++pjmedia_vid_dev_factory* pjmedia_screen_factory(pj_pool_factory *pf);
++#endif
++
+ #if PJMEDIA_VIDEO_DEV_HAS_FB
+ pjmedia_vid_dev_factory* pjmedia_fb_factory(pj_pool_factory *pf);
+ #endif
+@@ -150,6 +154,10 @@
+ #if PJMEDIA_VIDEO_DEV_HAS_ANDROID
+     vid_subsys->drv[vid_subsys->drv_cnt++].create = &pjmedia_and_factory;
+ #endif
++#if PJMEDIA_VIDEO_DEV_HAS_SCREEN && defined(PJMEDIA_HAS_LIBSWSCALE) && PJMEDIA_HAS_LIBSWSCALE
++    /* After the cameras, so the default capturer is a camera */
++    vid_subsys->drv[vid_subsys->drv_cnt++].create = &pjmedia_screen_factory;
++#endif
+ #if PJMEDIA_VIDEO_DEV_HAS_CBAR_SRC
+     /* Better put colorbar at the last, so the default capturer will be
+      * a real capturer, if any.
+--- pjsip_orig/pjmedia/build/Makefile
++++ pjsip/pjmedia/build/Makefile
+@@ -107,7 +107,7 @@
+ export PJMEDIA_VIDEODEV_SRCDIR = ../src/pjmedia-videodev
+ export PJMEDIA_VIDEODEV_OBJS += videodev.o errno.o avi_dev.o ffmpeg_dev.o \
+ 				colorbar_dev.o v4l2_dev.o opengl_dev.o \
+-				fb_dev.o null_dev.o \
++				fb_dev.o null_dev.o screen_dev.o \
+ 				util.o
+ ifneq ($(findstring darwin,$(TARGET_NAME)),)
+ export PJMEDIA_VIDEODEV_OBJS += avf_dev.o
+--- pjsip_orig/pjmedia/include/pjmedia-videodev/screen_dev.h
++++ pjsip/pjmedia/include/pjmedia-videodev/screen_dev.h
+@@ -0,0 +1,75 @@
++/*
++ * Copyright (C) 2026 AG Projects
++ *
++ * "My screen": the desktop as a video capture device on Linux, through the
++ * xdg-desktop-portal ScreenCast interface and PipeWire. See screen_dev.c.
++ *
++ * The functions below are always defined; where the device is not built
++ * (other platforms, or no PipeWire/GIO at build time) they report
++ * PJMEDIA_SCREEN_DEV_UNAVAILABLE and do nothing.
++ */
++#ifndef __PJMEDIA_VIDEODEV_SCREEN_DEV_H__
++#define __PJMEDIA_VIDEODEV_SCREEN_DEV_H__
++
++#include <pj/types.h>
++
++PJ_BEGIN_DECL
++
++/* Name of the capture device, as on macOS. */
++#define PJMEDIA_SCREEN_DEV_NAME         "My screen"
++
++/* Where the portal handshake stands. */
++typedef enum pjmedia_screen_dev_state
++{
++    PJMEDIA_SCREEN_DEV_UNAVAILABLE = 0, /* not built, or no ScreenCast portal */
++    PJMEDIA_SCREEN_DEV_IDLE,            /* nothing going on                  */
++    PJMEDIA_SCREEN_DEV_PENDING,         /* asking the portal, the user may be
++                                           looking at the picker             */
++    PJMEDIA_SCREEN_DEV_READY,           /* a monitor was picked: open the
++                                           device now (within 30 seconds)    */
++    PJMEDIA_SCREEN_DEV_CAPTURING,       /* a capture stream uses it          */
++    PJMEDIA_SCREEN_DEV_DENIED,          /* the user cancelled the picker     */
++    PJMEDIA_SCREEN_DEV_FAILED,          /* the portal or PipeWire failed     */
++    PJMEDIA_SCREEN_DEV_ENDED            /* sharing was stopped outside the
++                                           application (desktop indicator)   */
++} pjmedia_screen_dev_state;
++
++/* What is being shared. Position and size are those the portal reports for
++ * the monitor, in the compositor's logical coordinates; has_position is
++ * false when the portal does not say. src_width/src_height are the size of
++ * the frames PipeWire delivers, 0 until the first one. */
++typedef struct pjmedia_screen_dev_info
++{
++    pjmedia_screen_dev_state    state;
++    pj_bool_t                   has_position;
++    int                         x;
++    int                         y;
++    int                         width;
++    int                         height;
++    unsigned                    src_width;
++    unsigned                    src_height;
++} pjmedia_screen_dev_info;
++
++PJ_DECL(void) pjmedia_screen_dev_get_info(pjmedia_screen_dev_info *info);
++
++/* The portal restore token (ScreenCast version 4 and later). Set the one
++ * saved from a previous run before pjmedia_screen_dev_request(), so the
++ * picker is skipped; read it back after a capture started, the portal hands out a new
++ * one every time. get copies at most size-1 bytes and returns the length of
++ * the token, 0 when there is none. */
++PJ_DECL(void) pjmedia_screen_dev_set_restore_token(const char *token);
++PJ_DECL(unsigned) pjmedia_screen_dev_get_restore_token(char *buf, unsigned size);
++
++/* Ask the desktop for a monitor to share (shows its picker unless a
++ * restore token lets it skip it). Returns at once; watch the state go from
++ * PENDING to READY, then open the device. PJ_SUCCESS also when already
++ * PENDING or READY. */
++PJ_DECL(pj_status_t) pjmedia_screen_dev_request(void);
++
++/* Forget a DENIED/FAILED/ENDED outcome (back to IDLE) and, if a portal
++ * session is waiting unused (READY), close it. */
++PJ_DECL(void) pjmedia_screen_dev_reset(void);
++
++PJ_END_DECL
++
++#endif  /* __PJMEDIA_VIDEODEV_SCREEN_DEV_H__ */
+--- pjsip_orig/pjmedia/src/pjmedia-videodev/screen_dev.c
++++ pjsip/pjmedia/src/pjmedia-videodev/screen_dev.c
+@@ -0,0 +1,1779 @@
++/*
++ * Copyright (C) 2026 AG Projects
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * "My screen": the desktop as a video capture device on Linux.
++ *
++ * Picking "My screen" as the camera sends a monitor instead of the camera.
++ * Nothing changes above pjmedia: the call is an ordinary video call.
++ *
++ * Capture goes through the xdg-desktop-portal ScreenCast interface, the only
++ * way that works on Wayland (GNOME and KDE also offer it on X11 sessions):
++ *
++ *   CreateSession -> SelectSources -> Start -> OpenPipeWireRemote
++ *
++ * gives a PipeWire remote and a node, which is consumed with libpipewire in
++ * shared memory buffers (no DMA-BUF, no GPU import).
++ *
++ Start shows the portal's picker, which can take as long as the user
++ * likes, so the application asks for the screen with
++ * pjmedia_screen_dev_request() and the handshake runs on a thread of its
++ * own; once pjmedia_screen_dev_get_info() says READY the application opens
++ * the device. Opening it at any other time fails with PJMEDIA_EVID_NOTREADY
++ * (the application falls back to a camera) and never shows anything: a
++ * "My screen" left in the settings does not pop a picker up at start. With
++ * a restore token from an earlier capture (ScreenCast version 4,
++ * persist_mode 2) the portal skips the picker and READY comes at once.
++ *
++ * Only monitors are offered, not windows: a remote pointer has to land on a
++ * known place of the screen. The portal draws the mouse cursor into the
++ * frames when it can.
++ *
++ * PipeWire delivers a frame only when the screen changes, while the RTP
++ * packetizer advances the timestamp by a fixed amount per frame. The newest
++ * PipeWire buffer is therefore only held, and a clock at the configured
++ * frame rate converts it and hands it to pjmedia: timing stays right and a
++ * keyframe request is served on a static screen too. Output is I420 at the
++ * requested size, the monitor letterboxed into it (libswscale).
++ */
++#include <pjmedia-videodev/videodev_imp.h>
++#include <pjmedia-videodev/screen_dev.h>
++#include <pjmedia/clock.h>
++#include <pj/assert.h>
++#include <pj/errno.h>
++#include <pj/log.h>
++#include <pj/os.h>
++#include <pj/pool.h>
++#include <pj/string.h>
++
++#if defined(PJMEDIA_HAS_VIDEO) && PJMEDIA_HAS_VIDEO != 0 && \
++    defined(PJMEDIA_VIDEO_DEV_HAS_SCREEN) && PJMEDIA_VIDEO_DEV_HAS_SCREEN != 0 && \
++    defined(PJMEDIA_HAS_LIBSWSCALE) && PJMEDIA_HAS_LIBSWSCALE != 0
++
++#include <errno.h>
++#include <fcntl.h>
++#include <pthread.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <time.h>
++#include <unistd.h>
++
++#include <gio/gio.h>
++#include <gio/gunixfdlist.h>
++
++#include <pipewire/pipewire.h>
++#include <spa/param/video/format-utils.h>
++#include <spa/param/props.h>
++#include <spa/utils/result.h>
++
++#include <libavutil/pixfmt.h>
++#include <libswscale/swscale.h>
++
++#define THIS_FILE               "screen_dev.c"
++#define DEFAULT_CLOCK_RATE      90000
++#define DEFAULT_WIDTH           1280
++#define DEFAULT_HEIGHT          720
++#define DEFAULT_FPS             15
++
++#define PORTAL_BUS              "org.freedesktop.portal.Desktop"
++#define PORTAL_PATH             "/org/freedesktop/portal/desktop"
++#define SCREENCAST_IFACE        "org.freedesktop.portal.ScreenCast"
++#define REQUEST_IFACE           "org.freedesktop.portal.Request"
++#define SESSION_IFACE           "org.freedesktop.portal.Session"
++
++#define SOURCE_MONITOR          1u
++#define CURSOR_HIDDEN           1u
++#define CURSOR_EMBEDDED         2u
++#define PERSIST_UNTIL_REVOKED   2u
++
++#define PROBE_TIMEOUT_MS        1500    /* is there a ScreenCast portal     */
++#define CALL_TIMEOUT_MS         10000   /* one D-Bus method call            */
++#define PICKER_TIMEOUT_S        120     /* the user looking at the picker   */
++#define READY_TTL_S             30      /* READY session nobody opened      */
++#define REOPEN_TTL_S            5       /* session kept after a stream closed */
++
++typedef enum { REQ_OK, REQ_CANCELLED_BY_USER, REQ_FAILED, REQ_ABORTED } req_result;
++
++
++/****************************************************************************
++ * The portal session, one for the whole process
++ */
++
++static struct portal
++{
++    pthread_mutex_t             lock;
++    pthread_cond_t              cond;
++
++    pjmedia_screen_dev_state    state;
++    pj_bool_t                   probed;
++    pj_bool_t                   available;
++    unsigned                    version;
++    unsigned                    cursor_modes;
++
++    pj_bool_t                   worker_running;
++    pj_bool_t                   cancel;         /* stop the handshake        */
++    pj_bool_t                   claimed;        /* a stream took READY       */
++    gint64                      ready_deadline; /* READY unclaimed until     */
++    GCancellable               *cancellable;    /* the handshake's D-Bus calls */
++    char                       *request_path;   /* request in flight         */
++    char                       *session_handle; /* open portal session       */
++
++    int                         fd;             /* PipeWire remote (READY)   */
++    uint32_t                    node_id;
++    pj_bool_t                   has_position;
++    int                         x, y, width, height;
++    unsigned                    src_width, src_height;
++
++    char                        token[512];
++} P = {
++    .lock = PTHREAD_MUTEX_INITIALIZER,
++    .cond = PTHREAD_COND_INITIALIZER,
++    .state = PJMEDIA_SCREEN_DEV_UNAVAILABLE,
++    .fd = -1,
++};
++
++static unsigned token_counter;
++
++
++/* Only talk to a session bus that is there: without one GIO may try to
++ * autolaunch a bus through X11, which is not something to do at start. */
++static pj_bool_t session_bus_present(void)
++{
++    const char *address = getenv("DBUS_SESSION_BUS_ADDRESS");
++    const char *runtime_dir = getenv("XDG_RUNTIME_DIR");
++    char path[512];
++    struct stat st;
++
++    if (address && *address)
++        return PJ_TRUE;
++    if (!runtime_dir || !*runtime_dir)
++        return PJ_FALSE;
++    pj_ansi_snprintf(path, sizeof(path), "%s/bus", runtime_dir);
++    return stat(path, &st) == 0 && S_ISSOCK(st.st_mode);
++}
++
++/* The session bus, a new reference. One connection is kept for the life of
++ * the process: GIO's shared connection goes away with its last reference,
++ * and an asynchronous Close sent on it just before would be lost. */
++static GDBusConnection *session_bus(void)
++{
++    static pthread_mutex_t bus_lock = PTHREAD_MUTEX_INITIALIZER;
++    static GDBusConnection *bus = NULL;
++    GError *error = NULL;
++    GDBusConnection *conn = NULL;
++
++    if (!session_bus_present())
++        return NULL;
++    pthread_mutex_lock(&bus_lock);
++    if (!bus) {
++        bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
++        if (!bus) {
++            PJ_LOG(4, (THIS_FILE, "No session bus: %s", error ? error->message : "?"));
++            g_clear_error(&error);
++        }
++    }
++    if (bus)
++        conn = g_object_ref(bus);
++    pthread_mutex_unlock(&bus_lock);
++    return conn;
++}
++
++static GVariant *portal_property(GDBusConnection *conn, const char *name)
++{
++    GError *error = NULL;
++    GVariant *reply, *value = NULL;
++
++    reply = g_dbus_connection_call_sync(conn, PORTAL_BUS, PORTAL_PATH,
++                                        "org.freedesktop.DBus.Properties", "Get",
++                                        g_variant_new("(ss)", SCREENCAST_IFACE, name),
++                                        G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NONE,
++                                        PROBE_TIMEOUT_MS, NULL, &error);
++    if (!reply) {
++        PJ_LOG(5, (THIS_FILE, "ScreenCast portal property %s: %s", name,
++                   error ? error->message : "?"));
++        g_clear_error(&error);
++        return NULL;
++    }
++    g_variant_get(reply, "(v)", &value);
++    g_variant_unref(reply);
++    return value;
++}
++
++/* Is there a ScreenCast portal that can capture a monitor? Asked when the
++ * device list is built. */
++static void portal_probe(void)
++{
++    GDBusConnection *conn = session_bus();
++    GVariant *value;
++    unsigned version = 0, source_types = 0, cursor_modes = 0;
++
++    if (conn) {
++        if ((value = portal_property(conn, "version")) != NULL) {
++            if (g_variant_is_of_type(value, G_VARIANT_TYPE_UINT32))
++                version = g_variant_get_uint32(value);
++            g_variant_unref(value);
++        }
++        if (version && (value = portal_property(conn, "AvailableSourceTypes")) != NULL) {
++            if (g_variant_is_of_type(value, G_VARIANT_TYPE_UINT32))
++                source_types = g_variant_get_uint32(value);
++            g_variant_unref(value);
++        }
++        if (version >= 2 && (value = portal_property(conn, "AvailableCursorModes")) != NULL) {
++            if (g_variant_is_of_type(value, G_VARIANT_TYPE_UINT32))
++                cursor_modes = g_variant_get_uint32(value);
++            g_variant_unref(value);
++        }
++        g_object_unref(conn);
++    }
++
++    pthread_mutex_lock(&P.lock);
++    P.probed = PJ_TRUE;
++    if (P.worker_running || P.session_handle) {
++        /* in use: a slow answer now (the portal being started, say) must not
++         * take the device away from under it */
++        pthread_mutex_unlock(&P.lock);
++        return;
++    }
++    P.version = version;
++    P.cursor_modes = cursor_modes;
++    P.available = version >= 1 && (source_types & SOURCE_MONITOR) != 0;
++    if (!P.available)
++        P.state = PJMEDIA_SCREEN_DEV_UNAVAILABLE;
++    else if (P.state == PJMEDIA_SCREEN_DEV_UNAVAILABLE)
++        P.state = PJMEDIA_SCREEN_DEV_IDLE;
++    pthread_mutex_unlock(&P.lock);
++
++    if (version)
++        PJ_LOG(4, (THIS_FILE, "ScreenCast portal version %u, source types 0x%x, cursor modes 0x%x%s",
++                   version, source_types, cursor_modes,
++                   (source_types & SOURCE_MONITOR) ? "" : ": cannot capture a monitor"));
++    else
++        PJ_LOG(4, (THIS_FILE, "No ScreenCast portal, screen capture is not available"));
++}
++
++static char *new_token(void)
++{
++    unsigned n = __atomic_add_fetch(&token_counter, 1, __ATOMIC_RELAXED);
++    return g_strdup_printf("blink%u_%u", (unsigned)getpid(), n);
++}
++
++/* /org/freedesktop/portal/desktop/request/SENDER/TOKEN, SENDER being our
++ * unique bus name without the colon and with the dots made underscores. */
++static char *request_path_for(GDBusConnection *conn, const char *token)
++{
++    char *sender = g_strdup(g_dbus_connection_get_unique_name(conn) + 1);
++    char *p, *path;
++
++    for (p = sender; *p; p++) {
++        if (*p == '.')
++            *p = '_';
++    }
++    path = g_strdup_printf("%s/request/%s/%s", PORTAL_PATH, sender, token);
++    g_free(sender);
++    return path;
++}
++
++/* Fire and forget: nobody waits for a Close (not the GUI, not a cancel) */
++static void close_object(GDBusConnection *conn, const char *path, const char *iface)
++{
++    g_dbus_connection_call(conn, PORTAL_BUS, path, iface, "Close", NULL, NULL,
++                           G_DBUS_CALL_FLAGS_NO_AUTO_START, 2000, NULL, NULL, NULL);
++}
++
++static GCancellable *handshake_cancellable(void)
++{
++    GCancellable *cancellable;
++    pthread_mutex_lock(&P.lock);
++    cancellable = P.cancellable ? g_object_ref(P.cancellable) : NULL;
++    pthread_mutex_unlock(&P.lock);
++    return cancellable;
++}
++
++static pj_bool_t cancelled(void)
++{
++    pj_bool_t result;
++    pthread_mutex_lock(&P.lock);
++    result = P.cancel;
++    pthread_mutex_unlock(&P.lock);
++    return result;
++}
++
++struct response
++{
++    pj_bool_t   done;
++    guint32     code;
++    GVariant   *results;
++};
++
++static void on_response(GDBusConnection *conn, const gchar *sender, const gchar *path,
++                        const gchar *iface, const gchar *signal, GVariant *params,
++                        gpointer user_data)
++{
++    struct response *r = (struct response *)user_data;
++
++    PJ_UNUSED_ARG(conn);
++    PJ_UNUSED_ARG(sender);
++    PJ_UNUSED_ARG(path);
++    PJ_UNUSED_ARG(iface);
++    PJ_UNUSED_ARG(signal);
++
++    if (r->done)
++        return;
++    g_variant_get(params, "(u@a{sv})", &r->code, &r->results);
++    r->done = PJ_TRUE;
++}
++
++static guint subscribe_response(GDBusConnection *conn, const char *path, struct response *r)
++{
++    return g_dbus_connection_signal_subscribe(conn, PORTAL_BUS, REQUEST_IFACE, "Response",
++                                              path, NULL, G_DBUS_SIGNAL_FLAGS_NONE,
++                                              on_response, r, NULL);
++}
++
++/* Call a ScreenCast method that answers through a Request object and wait
++ * for the Response. args must carry options with handle_token = token. */
++static req_result portal_request(GDBusConnection *conn, GMainContext *ctx,
++                                 const char *method, GVariant *args,
++                                 const char *token, int timeout_s,
++                                 GVariant **results)
++{
++    struct response r = { PJ_FALSE, 0, NULL };
++    GError *error = NULL;
++    GVariant *reply;
++    const char *handle = NULL;
++    char *path = request_path_for(conn, token);
++    guint subscription = subscribe_response(conn, path, &r);
++    gint64 deadline;
++    req_result result;
++    GCancellable *cancellable = handshake_cancellable();
++
++    *results = NULL;
++
++    reply = g_dbus_connection_call_sync(conn, PORTAL_BUS, PORTAL_PATH, SCREENCAST_IFACE,
++                                        method, args, G_VARIANT_TYPE("(o)"),
++                                        G_DBUS_CALL_FLAGS_NONE, CALL_TIMEOUT_MS,
++                                        cancellable, &error);
++    if (cancellable)
++        g_object_unref(cancellable);
++    if (!reply) {
++        PJ_LOG(3, (THIS_FILE, "ScreenCast.%s failed: %s", method, error ? error->message : "?"));
++        g_clear_error(&error);
++        g_dbus_connection_signal_unsubscribe(conn, subscription);
++        g_free(path);
++        return REQ_FAILED;
++    }
++
++    g_variant_get(reply, "(&o)", &handle);
++    if (strcmp(handle, path) != 0) {
++        /* A portal from before handle_token: listen where it says */
++        g_dbus_connection_signal_unsubscribe(conn, subscription);
++        g_free(path);
++        path = g_strdup(handle);
++        subscription = subscribe_response(conn, path, &r);
++    }
++    g_variant_unref(reply);
++
++    pthread_mutex_lock(&P.lock);
++    g_free(P.request_path);
++    P.request_path = g_strdup(path);
++    pthread_mutex_unlock(&P.lock);
++
++    deadline = g_get_monotonic_time() + (gint64)timeout_s * G_USEC_PER_SEC;
++    while (!r.done) {
++        if (cancelled() || g_get_monotonic_time() >= deadline) {
++            close_object(conn, path, REQUEST_IFACE);   /* takes the picker away */
++            break;
++        }
++        g_main_context_iteration(ctx, TRUE);
++    }
++
++    pthread_mutex_lock(&P.lock);
++    g_free(P.request_path);
++    P.request_path = NULL;
++    pthread_mutex_unlock(&P.lock);
++
++    g_dbus_connection_signal_unsubscribe(conn, subscription);
++    g_free(path);
++
++    if (!r.done) {
++        PJ_LOG(3, (THIS_FILE, "ScreenCast.%s: %s", method,
++                   cancelled() ? "cancelled" : "no answer, giving up"));
++        return REQ_ABORTED;
++    }
++
++    if (r.code == 0) {
++        *results = r.results;
++        return REQ_OK;
++    }
++    result = r.code == 1 ? REQ_CANCELLED_BY_USER : REQ_FAILED;
++    PJ_LOG(3, (THIS_FILE, "ScreenCast.%s: %s", method,
++               r.code == 1 ? "cancelled by the user" : "refused"));
++    if (r.results)
++        g_variant_unref(r.results);
++    return result;
++}
++
++static void add_option(GVariantBuilder *builder, const char *key, GVariant *value)
++{
++    g_variant_builder_add(builder, "{sv}", key, value);
++}
++
++static gboolean wake_up(gpointer data)
++{
++    PJ_UNUSED_ARG(data);
++    return G_SOURCE_CONTINUE;
++}
++
++/* A PipeWire remote for an open session, -1 on failure. Can be asked again
++ * for the same session: every capture stream needs its own. */
++static int open_remote(GDBusConnection *conn, const char *session, GCancellable *cancellable)
++{
++    GVariantBuilder options;
++    GUnixFDList *fds = NULL;
++    GError *error = NULL;
++    GVariant *reply;
++    gint32 fd_index = -1;
++    int fd = -1;
++
++    g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
++    reply = g_dbus_connection_call_with_unix_fd_list_sync(conn, PORTAL_BUS, PORTAL_PATH,
++                                                          SCREENCAST_IFACE, "OpenPipeWireRemote",
++                                                          g_variant_new("(oa{sv})", session, &options),
++                                                          G_VARIANT_TYPE("(h)"),
++                                                          G_DBUS_CALL_FLAGS_NONE, CALL_TIMEOUT_MS,
++                                                          NULL, &fds, cancellable, &error);
++    if (!reply) {
++        PJ_LOG(3, (THIS_FILE, "ScreenCast.OpenPipeWireRemote failed: %s", error ? error->message : "?"));
++        g_clear_error(&error);
++        return -1;
++    }
++    g_variant_get(reply, "(h)", &fd_index);
++    if (fds)
++        fd = g_unix_fd_list_get(fds, fd_index, &error);
++    if (fd < 0) {
++        PJ_LOG(3, (THIS_FILE, "No PipeWire remote from the portal: %s", error ? error->message : "?"));
++        g_clear_error(&error);
++    }
++    if (fds)
++        g_object_unref(fds);
++    g_variant_unref(reply);
++    return fd;
++}
++
++/* The handshake. Runs on the worker thread. Leaves P in READY, DENIED or
++ * FAILED (or IDLE when cancelled). */
++static void portal_handshake(void)
++{
++    GDBusConnection *conn = NULL;
++    GMainContext *ctx;
++    GSource *wake;
++    GVariantBuilder options;
++    GVariant *results = NULL, *value, *streams = NULL, *props = NULL;
++    char *token = NULL, *session_token = NULL, *session = NULL;
++    char restore_token[sizeof(P.token)];
++    const char *new_restore_token = NULL;
++    unsigned version, cursor_modes;
++    guint32 node_id = 0;
++    int fd = -1, x = 0, y = 0, width = 0, height = 0;
++    pj_bool_t has_position = PJ_FALSE;
++    pjmedia_screen_dev_state outcome = PJMEDIA_SCREEN_DEV_FAILED;
++    req_result rr = REQ_FAILED;
++
++    pthread_mutex_lock(&P.lock);
++    version = P.version;
++    cursor_modes = P.cursor_modes;
++    pj_ansi_strxcpy(restore_token, P.token, sizeof(restore_token));
++    pthread_mutex_unlock(&P.lock);
++
++    ctx = g_main_context_new();
++    g_main_context_push_thread_default(ctx);
++    /* wake the waits up regularly to look at the cancel flag */
++    wake = g_timeout_source_new(200);
++    g_source_set_callback(wake, wake_up, NULL, NULL);
++    g_source_attach(wake, ctx);
++
++    conn = session_bus();
++    if (!conn)
++        goto failed;
++
++    /* CreateSession */
++    token = new_token();
++    session_token = new_token();
++    g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
++    add_option(&options, "handle_token", g_variant_new_string(token));
++    add_option(&options, "session_handle_token", g_variant_new_string(session_token));
++    rr = portal_request(conn, ctx, "CreateSession", g_variant_new("(a{sv})", &options),
++                        token, 10, &results);
++    g_free(token);
++    token = NULL;
++    if (rr != REQ_OK)
++        goto failed;
++    value = g_variant_lookup_value(results, "session_handle", NULL);
++    if (value && (g_variant_is_of_type(value, G_VARIANT_TYPE_STRING) ||
++                  g_variant_is_of_type(value, G_VARIANT_TYPE_OBJECT_PATH)))
++        session = g_strdup(g_variant_get_string(value, NULL));
++    if (value)
++        g_variant_unref(value);
++    g_variant_unref(results);
++    results = NULL;
++    if (!session) {
++        PJ_LOG(3, (THIS_FILE, "ScreenCast.CreateSession gave no session"));
++        goto failed;
++    }
++
++    pthread_mutex_lock(&P.lock);
++    g_free(P.session_handle);
++    P.session_handle = g_strdup(session);
++    pthread_mutex_unlock(&P.lock);
++
++    /* SelectSources: one monitor, the cursor in the picture, remembered */
++    token = new_token();
++    g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
++    add_option(&options, "handle_token", g_variant_new_string(token));
++    add_option(&options, "types", g_variant_new_uint32(SOURCE_MONITOR));
++    add_option(&options, "multiple", g_variant_new_boolean(FALSE));
++    if (cursor_modes & CURSOR_EMBEDDED)
++        add_option(&options, "cursor_mode", g_variant_new_uint32(CURSOR_EMBEDDED));
++    if (version >= 4) {
++        add_option(&options, "persist_mode", g_variant_new_uint32(PERSIST_UNTIL_REVOKED));
++        if (restore_token[0])
++            add_option(&options, "restore_token", g_variant_new_string(restore_token));
++    }
++    rr = portal_request(conn, ctx, "SelectSources",
++                        g_variant_new("(oa{sv})", session, &options), token, 10, &results);
++    g_free(token);
++    token = NULL;
++    if (results) {
++        g_variant_unref(results);
++        results = NULL;
++    }
++    if (rr != REQ_OK)
++        goto failed;
++
++    /* Start: this is where the picker shows, unless the token restores */
++    PJ_LOG(4, (THIS_FILE, "Asking the portal which monitor to share%s",
++               restore_token[0] ? " (with a restore token)" : ""));
++    token = new_token();
++    g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
++    add_option(&options, "handle_token", g_variant_new_string(token));
++    rr = portal_request(conn, ctx, "Start",
++                        g_variant_new("(osa{sv})", session, "", &options),
++                        token, PICKER_TIMEOUT_S, &results);
++    g_free(token);
++    token = NULL;
++    if (rr != REQ_OK)
++        goto failed;
++
++    streams = g_variant_lookup_value(results, "streams", G_VARIANT_TYPE("a(ua{sv})"));
++    if (!streams || g_variant_n_children(streams) < 1) {
++        PJ_LOG(3, (THIS_FILE, "ScreenCast.Start gave no stream"));
++        goto failed;
++    }
++    g_variant_get_child(streams, 0, "(u@a{sv})", &node_id, &props);
++    if (g_variant_lookup(props, "position", "(ii)", &x, &y))
++        has_position = PJ_TRUE;
++    if (!g_variant_lookup(props, "size", "(ii)", &width, &height))
++        width = height = 0;
++    g_variant_lookup(results, "restore_token", "&s", &new_restore_token);
++
++    /* OpenPipeWireRemote */
++    {
++        GCancellable *cancellable = handshake_cancellable();
++        fd = open_remote(conn, session, cancellable);
++        if (cancellable)
++            g_object_unref(cancellable);
++    }
++    if (fd < 0)
++        goto failed;
++
++    PJ_LOG(4, (THIS_FILE, "Sharing PipeWire node %u, monitor %dx%d%s", node_id, width, height,
++               has_position ? "" : " (no position)"));
++
++    pthread_mutex_lock(&P.lock);
++    if (P.cancel) {
++        pthread_mutex_unlock(&P.lock);
++        close(fd);
++        fd = -1;
++        goto failed;
++    }
++    if (P.fd >= 0)
++        close(P.fd);
++    P.fd = fd;
++    P.node_id = node_id;
++    P.has_position = has_position;
++    P.x = x;
++    P.y = y;
++    P.width = width;
++    P.height = height;
++    P.src_width = P.src_height = 0;
++    if (new_restore_token)
++        pj_ansi_strxcpy(P.token, new_restore_token, sizeof(P.token));
++    else if (restore_token[0] && version >= 4)
++        P.token[0] = '\0';      /* used up and not renewed */
++    P.claimed = PJ_FALSE;
++    P.ready_deadline = g_get_monotonic_time() + (gint64)READY_TTL_S * G_USEC_PER_SEC;
++    P.state = PJMEDIA_SCREEN_DEV_READY;
++    pthread_cond_broadcast(&P.cond);
++    pthread_mutex_unlock(&P.lock);
++    fd = -1;
++    goto done;
++
++failed:
++    if (rr == REQ_CANCELLED_BY_USER)
++        outcome = PJMEDIA_SCREEN_DEV_DENIED;
++    else if (rr == REQ_ABORTED && cancelled())
++        outcome = PJMEDIA_SCREEN_DEV_IDLE;
++    if (restore_token[0] && rr != REQ_ABORTED) {
++        /* do not try that token again */
++        pthread_mutex_lock(&P.lock);
++        if (strcmp(P.token, restore_token) == 0)
++            P.token[0] = '\0';
++        pthread_mutex_unlock(&P.lock);
++    }
++    pthread_mutex_lock(&P.lock);
++    g_free(P.session_handle);
++    P.session_handle = NULL;
++    P.state = outcome;
++    pthread_cond_broadcast(&P.cond);
++    pthread_mutex_unlock(&P.lock);
++    if (session && conn)
++        close_object(conn, session, SESSION_IFACE);
++
++done:
++    if (fd >= 0)
++        close(fd);
++    if (props)
++        g_variant_unref(props);
++    if (streams)
++        g_variant_unref(streams);
++    if (results)
++        g_variant_unref(results);
++    g_free(session_token);
++    g_free(session);
++    if (conn)
++        g_object_unref(conn);
++    g_source_destroy(wake);
++    g_source_unref(wake);
++    g_main_context_pop_thread_default(ctx);
++    g_main_context_unref(ctx);
++}
++
++/* Close a portal session (asynchronously). */
++static void close_session(char *session)
++{
++    GDBusConnection *conn;
++
++    if (!session)
++        return;
++    if ((conn = session_bus()) != NULL) {
++        close_object(conn, session, SESSION_IFACE);
++        g_object_unref(conn);
++    }
++    PJ_LOG(4, (THIS_FILE, "Screen sharing session closed"));
++    g_free(session);
++}
++
++/* A READY session nobody claimed in time stops: the desktop shows that the
++ * screen is being shared for as long as it is open. P.lock held; returns the
++ * session to close (without the lock) or NULL. */
++static char *expire_locked(void)
++{
++    char *session = NULL;
++
++    if (P.state == PJMEDIA_SCREEN_DEV_READY && !P.claimed &&
++        g_get_monotonic_time() >= P.ready_deadline)
++    {
++        PJ_LOG(4, (THIS_FILE, "Nobody used the shared screen, closing it"));
++        P.state = PJMEDIA_SCREEN_DEV_IDLE;
++        session = P.session_handle;
++        P.session_handle = NULL;
++        if (P.fd >= 0) {
++            close(P.fd);
++            P.fd = -1;
++        }
++        pthread_cond_broadcast(&P.cond);
++    }
++    return session;
++}
++
++static void *portal_worker(void *arg)
++{
++    pj_thread_desc desc;
++    pj_thread_t *thread;
++
++    PJ_UNUSED_ARG(arg);
++
++    pj_bzero(desc, sizeof(desc));
++    pj_thread_register("screen_portal", desc, &thread);
++
++    portal_handshake();
++
++    pthread_mutex_lock(&P.lock);
++    P.worker_running = PJ_FALSE;
++    P.cancel = PJ_FALSE;
++    pthread_cond_broadcast(&P.cond);
++    pthread_mutex_unlock(&P.lock);
++    return NULL;
++}
++
++/* Start the handshake unless one runs or a session is ready. P.lock held. */
++static void portal_start_locked(void)
++{
++    pthread_t thread;
++    pthread_attr_t attr;
++
++    if (!P.available || P.worker_running)
++        return;
++    if (P.state == PJMEDIA_SCREEN_DEV_READY || P.state == PJMEDIA_SCREEN_DEV_CAPTURING)
++        return;
++
++    P.state = PJMEDIA_SCREEN_DEV_PENDING;
++    P.cancel = PJ_FALSE;
++    P.claimed = PJ_FALSE;
++    P.worker_running = PJ_TRUE;
++    if (P.cancellable)
++        g_object_unref(P.cancellable);
++    P.cancellable = g_cancellable_new();
++
++    pthread_attr_init(&attr);
++    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
++    if (pthread_create(&thread, &attr, portal_worker, NULL) != 0) {
++        PJ_LOG(3, (THIS_FILE, "Cannot start the screen sharing thread"));
++        P.worker_running = PJ_FALSE;
++        P.state = PJMEDIA_SCREEN_DEV_FAILED;
++    }
++    pthread_attr_destroy(&attr);
++}
++
++/* Ask a running handshake to stop. P.lock held. */
++static void portal_cancel_locked(void)
++{
++    if (!P.worker_running)
++        return;
++    P.cancel = PJ_TRUE;
++    if (P.cancellable)
++        g_cancellable_cancel(P.cancellable);
++    pthread_cond_broadcast(&P.cond);
++}
++
++/* Stop a running handshake and wait (a little) for its thread. */
++static void portal_cancel(void)
++{
++    struct timespec until;
++
++    clock_gettime(CLOCK_REALTIME, &until);
++    until.tv_sec += 3;
++    pthread_mutex_lock(&P.lock);
++    portal_cancel_locked();
++    while (P.worker_running) {
++        if (pthread_cond_timedwait(&P.cond, &P.lock, &until) == ETIMEDOUT)
++            break;
++    }
++    pthread_mutex_unlock(&P.lock);
++}
++
++/* A capture stream wants the shared monitor: PJ_SUCCESS with a PipeWire
++ * remote, the node and a copy of the session handle when READY (the stream
++ * owns them from now on), PJMEDIA_EVID_NOTREADY otherwise. Opening the device
++ * never asks the user: the application does that with
++ * pjmedia_screen_dev_request(). */
++static pj_status_t portal_claim(int *fd, uint32_t *node_id, char **session)
++{
++    char *expired, *handle = NULL;
++    GDBusConnection *conn;
++    int new_fd = -1;
++
++    pthread_mutex_lock(&P.lock);
++    expired = expire_locked();
++    if (!P.available || P.state != PJMEDIA_SCREEN_DEV_READY || P.claimed || !P.session_handle) {
++        pj_status_t status = P.available ? PJMEDIA_EVID_NOTREADY : PJMEDIA_EVID_INVDEV;
++        pthread_mutex_unlock(&P.lock);
++        close_session(expired);
++        return status;
++    }
++    P.claimed = PJ_TRUE;        /* nobody else takes it while we get a remote */
++    if (P.fd >= 0) {
++        new_fd = P.fd;
++        P.fd = -1;
++    }
++    handle = g_strdup(P.session_handle);
++    pthread_mutex_unlock(&P.lock);
++
++    if (new_fd < 0) {
++        /* reopened after a capture stream closed: a new remote, same session */
++        if ((conn = session_bus()) != NULL) {
++            new_fd = open_remote(conn, handle, NULL);
++            g_object_unref(conn);
++        }
++    }
++
++    pthread_mutex_lock(&P.lock);
++    if (new_fd < 0 || P.state != PJMEDIA_SCREEN_DEV_READY || !P.session_handle ||
++        strcmp(P.session_handle, handle) != 0)
++    {
++        if (P.state == PJMEDIA_SCREEN_DEV_READY && P.session_handle && strcmp(P.session_handle, handle) == 0)
++            P.claimed = PJ_FALSE;
++        pthread_mutex_unlock(&P.lock);
++        if (new_fd >= 0)
++            close(new_fd);
++        g_free(handle);
++        return PJMEDIA_EVID_NOTREADY;
++    }
++    P.state = PJMEDIA_SCREEN_DEV_CAPTURING;
++    *fd = new_fd;
++    *node_id = P.node_id;
++    *session = handle;
++    pthread_cond_broadcast(&P.cond);
++    pthread_mutex_unlock(&P.lock);
++    return PJ_SUCCESS;
++}
++
++/* The stream that claimed session is gone. When it closed normally and the
++ * session is still the current one, the session stays open a few seconds
++ * (READY): the SDK closes and reopens the device for a new size, frame rate
++ * or device list, and that must not ask the user again. Otherwise (failed,
++ * ended from the desktop, or a newer session meanwhile) it is closed;
++ * failed makes the state FAILED. Takes session. */
++static void portal_release(char *session, pj_bool_t failed)
++{
++    char *to_close = NULL;
++
++    pthread_mutex_lock(&P.lock);
++    P.src_width = P.src_height = 0;
++    if (session && P.session_handle && strcmp(P.session_handle, session) == 0) {
++        if (P.state == PJMEDIA_SCREEN_DEV_CAPTURING && !failed) {
++            P.state = PJMEDIA_SCREEN_DEV_READY;
++            P.claimed = PJ_FALSE;
++            P.ready_deadline = g_get_monotonic_time() + (gint64)REOPEN_TTL_S * G_USEC_PER_SEC;
++        } else {
++            if (P.state == PJMEDIA_SCREEN_DEV_CAPTURING || P.state == PJMEDIA_SCREEN_DEV_READY)
++                P.state = failed ? PJMEDIA_SCREEN_DEV_FAILED : PJMEDIA_SCREEN_DEV_IDLE;
++            to_close = P.session_handle;
++            P.session_handle = NULL;
++            P.claimed = PJ_FALSE;
++        }
++        g_free(session);
++    } else {
++        to_close = session;     /* ours, not the current one any more */
++    }
++    pthread_cond_broadcast(&P.cond);
++    pthread_mutex_unlock(&P.lock);
++    close_session(to_close);
++}
++
++PJ_DEF(pj_status_t) pjmedia_screen_dev_request(void)
++{
++    pj_status_t status = PJ_SUCCESS;
++    char *expired;
++
++    pthread_mutex_lock(&P.lock);
++    expired = expire_locked();
++    if (!P.available) {
++        status = PJMEDIA_EVID_INVDEV;
++    } else if (P.state == PJMEDIA_SCREEN_DEV_CAPTURING || (P.worker_running && P.cancel)) {
++        status = PJ_EBUSY;      /* capturing, or the last handshake is still stopping */
++    } else {
++        portal_start_locked();      /* nothing to do when pending or ready */
++        if (P.state == PJMEDIA_SCREEN_DEV_FAILED && !P.worker_running)
++            status = PJMEDIA_EVID_SYSERR;
++    }
++    pthread_mutex_unlock(&P.lock);
++    close_session(expired);
++    return status;
++}
++
++PJ_DEF(void) pjmedia_screen_dev_get_info(pjmedia_screen_dev_info *info)
++{
++    char *expired;
++
++    pj_bzero(info, sizeof(*info));
++    pthread_mutex_lock(&P.lock);
++    expired = expire_locked();
++    info->state = P.state;
++    if (P.state == PJMEDIA_SCREEN_DEV_READY || P.state == PJMEDIA_SCREEN_DEV_CAPTURING) {
++        info->has_position = P.has_position;
++        info->x = P.x;
++        info->y = P.y;
++        info->width = P.width;
++        info->height = P.height;
++        info->src_width = P.src_width;
++        info->src_height = P.src_height;
++    }
++    pthread_mutex_unlock(&P.lock);
++    close_session(expired);
++}
++
++PJ_DEF(void) pjmedia_screen_dev_set_restore_token(const char *token)
++{
++    pthread_mutex_lock(&P.lock);
++    pj_ansi_strxcpy(P.token, token ? token : "", sizeof(P.token));
++    pthread_mutex_unlock(&P.lock);
++}
++
++PJ_DEF(unsigned) pjmedia_screen_dev_get_restore_token(char *buf, unsigned size)
++{
++    unsigned length;
++
++    pthread_mutex_lock(&P.lock);
++    length = (unsigned)strlen(P.token);
++    if (buf && size)
++        pj_ansi_strxcpy(buf, P.token, size);
++    pthread_mutex_unlock(&P.lock);
++    return length;
++}
++
++PJ_DEF(void) pjmedia_screen_dev_reset(void)
++{
++    char *to_close = NULL;
++
++    pthread_mutex_lock(&P.lock);
++    switch (P.state) {
++    case PJMEDIA_SCREEN_DEV_PENDING:
++        portal_cancel_locked();     /* takes the picker away; ends IDLE */
++        break;
++    case PJMEDIA_SCREEN_DEV_DENIED:
++    case PJMEDIA_SCREEN_DEV_FAILED:
++    case PJMEDIA_SCREEN_DEV_ENDED:
++        /* an ENDED session still held by a stream is closed by that stream */
++        P.state = P.available ? PJMEDIA_SCREEN_DEV_IDLE : PJMEDIA_SCREEN_DEV_UNAVAILABLE;
++        break;
++    case PJMEDIA_SCREEN_DEV_READY:
++        if (!P.claimed) {
++            P.state = PJMEDIA_SCREEN_DEV_IDLE;
++            to_close = P.session_handle;
++            P.session_handle = NULL;
++            if (P.fd >= 0) {
++                close(P.fd);
++                P.fd = -1;
++            }
++        }
++        break;
++    default:
++        break;
++    }
++    pthread_cond_broadcast(&P.cond);
++    pthread_mutex_unlock(&P.lock);
++
++    close_session(to_close);
++}
++
++
++/****************************************************************************
++ * The device
++ */
++
++struct screen_factory
++{
++    pjmedia_vid_dev_factory      base;
++    pj_pool_t                   *pool;
++    pj_pool_factory             *pf;
++
++    unsigned                     dev_count;
++    pjmedia_vid_dev_info         info;
++};
++
++struct screen_stream
++{
++    pjmedia_vid_dev_stream       base;
++    pjmedia_vid_dev_param        param;
++    pj_pool_t                   *pool;
++
++    pjmedia_vid_dev_cb           vid_cb;
++    void                        *user_data;
++
++    pjmedia_rect_size            size;
++    pj_size_t                    frame_bytes;
++    pj_timestamp                 ts;
++    unsigned                     ts_inc;
++    pjmedia_clock               *clock;
++
++    /* PipeWire, on its own thread loop */
++    struct pw_thread_loop       *loop;
++    struct pw_context           *context;
++    struct pw_core              *core;
++    struct pw_stream            *stream;
++    struct spa_hook              core_listener;
++    struct spa_hook              stream_listener;
++    char                        *session;           /* portal session (owned) */
++    pj_bool_t                    streaming;
++    pj_bool_t                    closing;
++    pj_thread_desc               pw_thread_desc;    /* pjlib registration of */
++    pj_thread_t                 *pw_thread;         /* the PipeWire thread   */
++
++    /* The newest PipeWire buffer, held until a newer one arrives. Set on
++     * the PipeWire thread, read on the clock thread, under frame_lock. */
++    pthread_mutex_t              frame_lock;
++    struct spa_video_info_raw    format;
++    pj_bool_t                    have_format;
++    struct pw_buffer            *held;
++    pj_bool_t                    held_new;
++
++    /* Conversion, on the clock thread */
++    struct SwsContext           *sws;
++    unsigned                     src_w, src_h;
++    enum AVPixelFormat           src_fmt;
++    unsigned                     fit_x, fit_y, fit_w, fit_h;
++    pj_uint8_t                  *out;
++    pj_bool_t                    out_ready;
++};
++
++static const struct { unsigned w, h; } screen_sizes[] = {
++    {1280, 720}, {1920, 1080}, {960, 540}, {640, 360},
++    {2560, 1440}, {640, 480}, {1024, 768}, {352, 288}, {320, 240}
++};
++
++static pj_status_t screen_factory_init(pjmedia_vid_dev_factory *f);
++static pj_status_t screen_factory_destroy(pjmedia_vid_dev_factory *f);
++static pj_status_t screen_factory_refresh(pjmedia_vid_dev_factory *f);
++static unsigned    screen_factory_get_dev_count(pjmedia_vid_dev_factory *f);
++static pj_status_t screen_factory_get_dev_info(pjmedia_vid_dev_factory *f,
++                                               unsigned index,
++                                               pjmedia_vid_dev_info *info);
++static pj_status_t screen_factory_default_param(pj_pool_t *pool,
++                                                pjmedia_vid_dev_factory *f,
++                                                unsigned index,
++                                                pjmedia_vid_dev_param *param);
++static pj_status_t screen_factory_create_stream(pjmedia_vid_dev_factory *f,
++                                                pjmedia_vid_dev_param *param,
++                                                const pjmedia_vid_dev_cb *cb,
++                                                void *user_data,
++                                                pjmedia_vid_dev_stream **p_vid_strm);
++
++static pj_status_t screen_stream_get_param(pjmedia_vid_dev_stream *strm,
++                                           pjmedia_vid_dev_param *param);
++static pj_status_t screen_stream_get_cap(pjmedia_vid_dev_stream *strm,
++                                         pjmedia_vid_dev_cap cap,
++                                         void *value);
++static pj_status_t screen_stream_set_cap(pjmedia_vid_dev_stream *strm,
++                                         pjmedia_vid_dev_cap cap,
++                                         const void *value);
++static pj_status_t screen_stream_start(pjmedia_vid_dev_stream *strm);
++static pj_status_t screen_stream_stop(pjmedia_vid_dev_stream *strm);
++static pj_status_t screen_stream_destroy(pjmedia_vid_dev_stream *strm);
++
++static pjmedia_vid_dev_factory_op factory_op =
++{
++    &screen_factory_init,
++    &screen_factory_destroy,
++    &screen_factory_get_dev_count,
++    &screen_factory_get_dev_info,
++    &screen_factory_default_param,
++    &screen_factory_create_stream,
++    &screen_factory_refresh
++};
++
++static pjmedia_vid_dev_stream_op stream_op =
++{
++    &screen_stream_get_param,
++    &screen_stream_get_cap,
++    &screen_stream_set_cap,
++    &screen_stream_start,
++    NULL,
++    NULL,
++    &screen_stream_stop,
++    &screen_stream_destroy
++};
++
++
++pjmedia_vid_dev_factory* pjmedia_screen_factory(pj_pool_factory *pf)
++{
++    struct screen_factory *f;
++    pj_pool_t *pool;
++
++    pool = pj_pool_create(pf, "screen video", 1000, 1000, NULL);
++    f = PJ_POOL_ZALLOC_T(pool, struct screen_factory);
++    f->pf = pf;
++    f->pool = pool;
++    f->base.op = &factory_op;
++
++    return &f->base;
++}
++
++static void build_dev_list(struct screen_factory *sf)
++{
++    pjmedia_vid_dev_info *info = &sf->info;
++    unsigned i;
++
++    portal_probe();
++
++    pthread_mutex_lock(&P.lock);
++    sf->dev_count = P.available ? 1 : 0;
++    pthread_mutex_unlock(&P.lock);
++
++    pj_bzero(info, sizeof(*info));
++    pj_ansi_strxcpy(info->name, PJMEDIA_SCREEN_DEV_NAME, sizeof(info->name));
++    pj_ansi_strxcpy(info->driver, "Screen", sizeof(info->driver));
++    info->dir = PJMEDIA_DIR_CAPTURE;
++    info->has_callback = PJ_TRUE;
++    info->caps = PJMEDIA_VID_DEV_CAP_FORMAT;
++    /* Any size can be made; offer the usual ones so vid_port's closest
++     * format lands exactly on the resolution the application asks for. */
++    for (i = 0; i < PJ_ARRAY_SIZE(screen_sizes) && info->fmt_cnt < PJMEDIA_VID_DEV_INFO_FMT_CNT; i++) {
++        pjmedia_format_init_video(&info->fmt[info->fmt_cnt++], PJMEDIA_FORMAT_I420,
++                                  screen_sizes[i].w, screen_sizes[i].h, DEFAULT_FPS, 1);
++    }
++
++    if (sf->dev_count)
++        PJ_LOG(4, (THIS_FILE, "Screen capture device: %s", info->name));
++}
++
++static pj_status_t screen_factory_init(pjmedia_vid_dev_factory *f)
++{
++    build_dev_list((struct screen_factory *)f);
++    return PJ_SUCCESS;
++}
++
++static pj_status_t screen_factory_destroy(pjmedia_vid_dev_factory *f)
++{
++    struct screen_factory *sf = (struct screen_factory *)f;
++    pj_pool_t *pool = sf->pool;
++
++    portal_cancel();
++    pjmedia_screen_dev_reset();
++    {
++        /* the Close calls are asynchronous: send them before exiting */
++        GDBusConnection *conn = session_bus();
++        if (conn) {
++            g_dbus_connection_flush_sync(conn, NULL, NULL);
++            g_object_unref(conn);
++        }
++    }
++    sf->pool = NULL;
++    pj_pool_release(pool);
++    return PJ_SUCCESS;
++}
++
++static pj_status_t screen_factory_refresh(pjmedia_vid_dev_factory *f)
++{
++    build_dev_list((struct screen_factory *)f);
++    return PJ_SUCCESS;
++}
++
++static unsigned screen_factory_get_dev_count(pjmedia_vid_dev_factory *f)
++{
++    return ((struct screen_factory *)f)->dev_count;
++}
++
++static pj_status_t screen_factory_get_dev_info(pjmedia_vid_dev_factory *f,
++                                               unsigned index,
++                                               pjmedia_vid_dev_info *info)
++{
++    struct screen_factory *sf = (struct screen_factory *)f;
++
++    PJ_ASSERT_RETURN(index < sf->dev_count, PJMEDIA_EVID_INVDEV);
++    pj_memcpy(info, &sf->info, sizeof(*info));
++    return PJ_SUCCESS;
++}
++
++static pj_status_t screen_factory_default_param(pj_pool_t *pool,
++                                                pjmedia_vid_dev_factory *f,
++                                                unsigned index,
++                                                pjmedia_vid_dev_param *param)
++{
++    struct screen_factory *sf = (struct screen_factory *)f;
++
++    PJ_UNUSED_ARG(pool);
++    PJ_ASSERT_RETURN(index < sf->dev_count, PJMEDIA_EVID_INVDEV);
++
++    pj_bzero(param, sizeof(*param));
++    param->dir = PJMEDIA_DIR_CAPTURE;
++    param->cap_id = index;
++    param->rend_id = PJMEDIA_VID_INVALID_DEV;
++    param->flags = PJMEDIA_VID_DEV_CAP_FORMAT;
++    param->clock_rate = DEFAULT_CLOCK_RATE;
++    pj_memcpy(&param->fmt, &sf->info.fmt[0], sizeof(param->fmt));
++    return PJ_SUCCESS;
++}
++
++
++/* PipeWire side */
++
++static enum AVPixelFormat av_format_of(enum spa_video_format format)
++{
++    switch (format) {
++    case SPA_VIDEO_FORMAT_BGRx: return AV_PIX_FMT_BGR0;
++    case SPA_VIDEO_FORMAT_RGBx: return AV_PIX_FMT_RGB0;
++    case SPA_VIDEO_FORMAT_BGRA: return AV_PIX_FMT_BGRA;
++    case SPA_VIDEO_FORMAT_RGBA: return AV_PIX_FMT_RGBA;
++    default:                    return AV_PIX_FMT_NONE;
++    }
++}
++
++/* The PipeWire callbacks run on its loop thread: pjlib (PJ_LOG included)
++ * must know that thread first. */
++static void register_pw_thread(struct screen_stream *strm)
++{
++    if (!pj_thread_is_registered()) {
++        pj_bzero(strm->pw_thread_desc, sizeof(strm->pw_thread_desc));
++        pj_thread_register("screen_pw", strm->pw_thread_desc, &strm->pw_thread);
++    }
++}
++
++static void mark_ended(struct screen_stream *strm)
++{
++    if (strm->closing)
++        return;
++    pthread_mutex_lock(&P.lock);
++    if (P.state == PJMEDIA_SCREEN_DEV_CAPTURING && P.session_handle && strm->session &&
++        strcmp(P.session_handle, strm->session) == 0)
++    {
++        P.state = PJMEDIA_SCREEN_DEV_ENDED;
++    }
++    pthread_cond_broadcast(&P.cond);
++    pthread_mutex_unlock(&P.lock);
++    PJ_LOG(4, (THIS_FILE, "Screen sharing ended outside the application"));
++}
++
++static void on_core_error(void *data, uint32_t id, int seq, int res, const char *message)
++{
++    struct screen_stream *strm = (struct screen_stream *)data;
++
++    register_pw_thread(strm);
++    PJ_UNUSED_ARG(seq);
++    PJ_LOG(3, (THIS_FILE, "PipeWire error on %u: %s (%d)", id, message ? message : "", res));
++    if (id == PW_ID_CORE)
++        mark_ended(strm);       /* the connection to PipeWire is gone */
++}
++
++static const struct pw_core_events core_events = {
++    PW_VERSION_CORE_EVENTS,
++    .error = on_core_error,
++};
++
++static void on_state_changed(void *data, enum pw_stream_state old,
++                             enum pw_stream_state state, const char *error)
++{
++    struct screen_stream *strm = (struct screen_stream *)data;
++
++    register_pw_thread(strm);
++    PJ_LOG(4, (THIS_FILE, "Screen stream %s -> %s%s%s", pw_stream_state_as_string(old),
++               pw_stream_state_as_string(state), error ? ": " : "", error ? error : ""));
++
++    if (state == PW_STREAM_STATE_STREAMING) {
++        strm->streaming = PJ_TRUE;
++    } else if ((state == PW_STREAM_STATE_ERROR || state == PW_STREAM_STATE_UNCONNECTED) &&
++               !strm->closing)
++    {
++        /* Not us: sharing was stopped from the desktop (or the compositor
++         * went away). Tell the application, which goes back to a camera. */
++        mark_ended(strm);
++    }
++}
++
++static void on_param_changed(void *data, uint32_t id, const struct spa_pod *param)
++{
++    struct screen_stream *strm = (struct screen_stream *)data;
++    struct spa_video_info_raw format;
++    uint32_t media_type, media_subtype;
++    uint8_t buffer[1024];
++    struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
++    const struct spa_pod *params[1];
++
++    register_pw_thread(strm);
++    if (param == NULL || id != SPA_PARAM_Format)
++        return;
++    if (spa_format_parse(param, &media_type, &media_subtype) < 0 ||
++        media_type != SPA_MEDIA_TYPE_video || media_subtype != SPA_MEDIA_SUBTYPE_raw)
++        return;
++    pj_bzero(&format, sizeof(format));
++    if (spa_format_video_raw_parse(param, &format) < 0)
++        return;
++
++    PJ_LOG(4, (THIS_FILE, "Screen format: %ux%u, format %u", format.size.width,
++               format.size.height, (unsigned)format.format));
++
++    pthread_mutex_lock(&strm->frame_lock);
++    strm->format = format;
++    strm->have_format = av_format_of(format.format) != AV_PIX_FMT_NONE;
++    pthread_mutex_unlock(&strm->frame_lock);
++
++    pthread_mutex_lock(&P.lock);
++    P.src_width = format.size.width;
++    P.src_height = format.size.height;
++    pthread_mutex_unlock(&P.lock);
++
++    /* Shared memory only: no DMA-BUF and no GPU import */
++    params[0] = spa_pod_builder_add_object(&b,
++        SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
++        SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(8, 3, 32),
++        SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int((1 << SPA_DATA_MemFd) | (1 << SPA_DATA_MemPtr)));
++    pw_stream_update_params(strm->stream, params, 1);
++}
++
++static void on_process(void *data)
++{
++    struct screen_stream *strm = (struct screen_stream *)data;
++    struct pw_buffer *b, *next, *old = NULL;
++    struct spa_data *d;
++
++    b = pw_stream_dequeue_buffer(strm->stream);
++    if (!b)
++        return;
++    /* only the newest matters */
++    while ((next = pw_stream_dequeue_buffer(strm->stream)) != NULL) {
++        pw_stream_queue_buffer(strm->stream, b);
++        b = next;
++    }
++
++    d = &b->buffer->datas[0];
++    if (!d->data || !d->chunk || d->chunk->size == 0 ||
++        (d->chunk->flags & SPA_CHUNK_FLAG_CORRUPTED))
++    {
++        /* nothing new in the picture (a cursor-only update, say) */
++        pw_stream_queue_buffer(strm->stream, b);
++        return;
++    }
++
++    pthread_mutex_lock(&strm->frame_lock);
++    old = strm->held;
++    strm->held = b;
++    strm->held_new = PJ_TRUE;
++    pthread_mutex_unlock(&strm->frame_lock);
++
++    if (old)
++        pw_stream_queue_buffer(strm->stream, old);
++}
++
++/* The buffers go away (renegotiation, the screen no longer shared): never
++ * read the held one after that. */
++static void on_remove_buffer(void *data, struct pw_buffer *b)
++{
++    struct screen_stream *strm = (struct screen_stream *)data;
++
++    pthread_mutex_lock(&strm->frame_lock);
++    if (strm->held == b) {
++        strm->held = NULL;
++        strm->held_new = PJ_FALSE;
++    }
++    pthread_mutex_unlock(&strm->frame_lock);
++}
++
++static const struct pw_stream_events stream_events = {
++    PW_VERSION_STREAM_EVENTS,
++    .state_changed = on_state_changed,
++    .param_changed = on_param_changed,
++    .remove_buffer = on_remove_buffer,
++    .process = on_process,
++};
++
++static void fill_black(struct screen_stream *strm)
++{
++    unsigned w = strm->size.w, h = strm->size.h;
++
++    pj_memset(strm->out, 16, w * h);
++    pj_memset(strm->out + w * h, 128, (w / 2) * (h / 2) * 2);
++}
++
++/* Convert the held buffer into strm->out. Clock thread, frame_lock held. */
++static void convert_held(struct screen_stream *strm)
++{
++    struct spa_data *d = &strm->held->buffer->datas[0];
++    unsigned W = strm->size.w, H = strm->size.h;
++    unsigned sw = strm->format.size.width, sh = strm->format.size.height;
++    enum AVPixelFormat sfmt = av_format_of(strm->format.format);
++    unsigned fit_w, fit_h, fit_x, fit_y;
++    int stride = d->chunk->stride;
++    uint32_t offset = d->chunk->offset;
++    const uint8_t *src_planes[4];
++    int src_strides[4];
++    uint8_t *dst_planes[4];
++    int dst_strides[4];
++
++    if (!strm->have_format || sfmt == AV_PIX_FMT_NONE || sw == 0 || sh == 0)
++        return;
++    if (stride <= 0)
++        stride = (int)sw * 4;
++    if ((unsigned)stride < sw * 4 || offset > d->maxsize ||
++        (uint64_t)stride * sh > (uint64_t)(d->maxsize - offset))
++        return;
++
++    /* the monitor aspect-fitted in the frame, on even pixels for I420 */
++    if ((uint64_t)sw * H > (uint64_t)sh * W) {
++        fit_w = W;
++        fit_h = (unsigned)(((uint64_t)sh * W / sw) & ~1u);
++    } else {
++        fit_h = H;
++        fit_w = (unsigned)(((uint64_t)sw * H / sh) & ~1u);
++    }
++    if (fit_w < 2) fit_w = 2;
++    if (fit_h < 2) fit_h = 2;
++    fit_x = ((W - fit_w) / 2) & ~1u;
++    fit_y = ((H - fit_h) / 2) & ~1u;
++
++    if (fit_w != strm->fit_w || fit_h != strm->fit_h || fit_x != strm->fit_x ||
++        fit_y != strm->fit_y || sw != strm->src_w || sh != strm->src_h ||
++        sfmt != strm->src_fmt || !strm->sws)
++    {
++        int flags = (fit_w < sw) ? SWS_AREA : SWS_BICUBIC;
++        strm->sws = sws_getCachedContext(strm->sws, (int)sw, (int)sh, sfmt,
++                                         (int)fit_w, (int)fit_h, AV_PIX_FMT_YUV420P,
++                                         flags, NULL, NULL, NULL);
++        strm->src_w = sw;
++        strm->src_h = sh;
++        strm->src_fmt = sfmt;
++        strm->fit_x = fit_x;
++        strm->fit_y = fit_y;
++        strm->fit_w = fit_w;
++        strm->fit_h = fit_h;
++        fill_black(strm);
++        if (!strm->sws) {
++            PJ_LOG(3, (THIS_FILE, "Cannot convert %ux%u to %ux%u", sw, sh, fit_w, fit_h));
++            return;
++        }
++        PJ_LOG(4, (THIS_FILE, "Screen %ux%u into %ux%u at %u,%u of %ux%u",
++                   sw, sh, fit_w, fit_h, fit_x, fit_y, W, H));
++    }
++
++    src_planes[0] = (const uint8_t *)d->data + offset;
++    src_planes[1] = src_planes[2] = src_planes[3] = NULL;
++    src_strides[0] = stride;
++    src_strides[1] = src_strides[2] = src_strides[3] = 0;
++
++    dst_planes[0] = strm->out + fit_y * W + fit_x;
++    dst_planes[1] = strm->out + W * H + (fit_y / 2) * (W / 2) + fit_x / 2;
++    dst_planes[2] = strm->out + W * H + (W / 2) * (H / 2) + (fit_y / 2) * (W / 2) + fit_x / 2;
++    dst_planes[3] = NULL;
++    dst_strides[0] = (int)W;
++    dst_strides[1] = dst_strides[2] = (int)(W / 2);
++    dst_strides[3] = 0;
++
++    sws_scale(strm->sws, src_planes, src_strides, 0, (int)sh, dst_planes, dst_strides);
++    strm->out_ready = PJ_TRUE;
++}
++
++static void clock_cb(const pj_timestamp *ts, void *user_data)
++{
++    struct screen_stream *strm = (struct screen_stream *)user_data;
++    pjmedia_frame frame;
++
++    PJ_UNUSED_ARG(ts);
++
++    pthread_mutex_lock(&strm->frame_lock);
++    if (strm->held && strm->held_new) {
++        strm->held_new = PJ_FALSE;
++        convert_held(strm);
++    }
++    pthread_mutex_unlock(&strm->frame_lock);
++
++    if (!strm->out_ready || !strm->vid_cb.capture_cb)
++        return;     /* no picture yet */
++
++    pj_bzero(&frame, sizeof(frame));
++    frame.type = PJMEDIA_FRAME_TYPE_VIDEO;
++    frame.buf = strm->out;
++    frame.size = strm->frame_bytes;
++    frame.timestamp = strm->ts;
++    strm->ts.u64 += strm->ts_inc;
++    (*strm->vid_cb.capture_cb)(&strm->base, strm->user_data, &frame);
++}
++
++static void pipewire_close(struct screen_stream *strm)
++{
++    if (!strm->loop)
++        return;
++
++    pw_thread_loop_lock(strm->loop);
++    strm->closing = PJ_TRUE;
++    if (strm->stream) {
++        pthread_mutex_lock(&strm->frame_lock);
++        if (strm->held) {
++            pw_stream_queue_buffer(strm->stream, strm->held);
++            strm->held = NULL;
++        }
++        pthread_mutex_unlock(&strm->frame_lock);
++        pw_stream_disconnect(strm->stream);
++        spa_hook_remove(&strm->stream_listener);
++        pw_stream_destroy(strm->stream);
++        strm->stream = NULL;
++    }
++    if (strm->core) {
++        spa_hook_remove(&strm->core_listener);
++        pw_core_disconnect(strm->core);
++        strm->core = NULL;
++    }
++    pw_thread_loop_unlock(strm->loop);
++    pw_thread_loop_stop(strm->loop);
++    if (strm->context) {
++        pw_context_destroy(strm->context);
++        strm->context = NULL;
++    }
++    pw_thread_loop_destroy(strm->loop);
++    strm->loop = NULL;
++}
++
++static pj_status_t pipewire_open(struct screen_stream *strm, int fd, uint32_t node_id,
++                                 unsigned fps)
++{
++    static pj_bool_t pw_initialized = PJ_FALSE;
++    uint8_t buffer[1024];
++    struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
++    const struct spa_pod *params[1];
++    struct spa_rectangle def_size = SPA_RECTANGLE(1920, 1080);
++    struct spa_rectangle min_size = SPA_RECTANGLE(1, 1);
++    struct spa_rectangle max_size = SPA_RECTANGLE(16384, 16384);
++    struct spa_fraction def_rate = SPA_FRACTION(fps, 1);
++    struct spa_fraction min_rate = SPA_FRACTION(0, 1);
++    struct spa_fraction max_rate = SPA_FRACTION(360, 1);
++    int res;
++
++    if (!pw_initialized) {
++        pw_init(NULL, NULL);
++        pw_initialized = PJ_TRUE;
++    }
++
++    strm->loop = pw_thread_loop_new("blink-screen", NULL);
++    if (!strm->loop) {
++        close(fd);
++        return PJMEDIA_EVID_SYSERR;
++    }
++    strm->context = pw_context_new(pw_thread_loop_get_loop(strm->loop), NULL, 0);
++    if (!strm->context || pw_thread_loop_start(strm->loop) < 0) {
++        close(fd);
++        pipewire_close(strm);
++        return PJMEDIA_EVID_SYSERR;
++    }
++
++    pw_thread_loop_lock(strm->loop);
++
++    strm->core = pw_context_connect_fd(strm->context, fd, NULL, 0);   /* owns fd now */
++    if (!strm->core) {
++        PJ_LOG(3, (THIS_FILE, "Cannot connect to the PipeWire remote: %s", strerror(errno)));
++        pw_thread_loop_unlock(strm->loop);
++        pipewire_close(strm);
++        return PJMEDIA_EVID_SYSERR;
++    }
++    pw_core_add_listener(strm->core, &strm->core_listener, &core_events, strm);
++
++    strm->stream = pw_stream_new(strm->core, "Blink screen sharing",
++                                 pw_properties_new(PW_KEY_MEDIA_TYPE, "Video",
++                                                   PW_KEY_MEDIA_CATEGORY, "Capture",
++                                                   PW_KEY_MEDIA_ROLE, "Screen",
++                                                   NULL));
++    if (!strm->stream) {
++        pw_thread_loop_unlock(strm->loop);
++        pipewire_close(strm);
++        return PJMEDIA_EVID_SYSERR;
++    }
++    pw_stream_add_listener(strm->stream, &strm->stream_listener, &stream_events, strm);
++
++    params[0] = spa_pod_builder_add_object(&b,
++        SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
++        SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video),
++        SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
++        SPA_FORMAT_VIDEO_format, SPA_POD_CHOICE_ENUM_Id(5,
++            SPA_VIDEO_FORMAT_BGRx, SPA_VIDEO_FORMAT_BGRx, SPA_VIDEO_FORMAT_RGBx,
++            SPA_VIDEO_FORMAT_BGRA, SPA_VIDEO_FORMAT_RGBA),
++        SPA_FORMAT_VIDEO_size, SPA_POD_CHOICE_RANGE_Rectangle(&def_size, &min_size, &max_size),
++        SPA_FORMAT_VIDEO_framerate, SPA_POD_CHOICE_RANGE_Fraction(&def_rate, &min_rate, &max_rate));
++
++    res = pw_stream_connect(strm->stream, PW_DIRECTION_INPUT, node_id,
++                            PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS |
++                            PW_STREAM_FLAG_DONT_RECONNECT,
++                            params, 1);
++    pw_thread_loop_unlock(strm->loop);
++
++    if (res < 0) {
++        PJ_LOG(3, (THIS_FILE, "Cannot connect to PipeWire node %u: %s", node_id, spa_strerror(res)));
++        pipewire_close(strm);
++        return PJMEDIA_EVID_SYSERR;
++    }
++    return PJ_SUCCESS;
++}
++
++static pj_status_t screen_factory_create_stream(pjmedia_vid_dev_factory *f,
++                                                pjmedia_vid_dev_param *param,
++                                                const pjmedia_vid_dev_cb *cb,
++                                                void *user_data,
++                                                pjmedia_vid_dev_stream **p_vid_strm)
++{
++    struct screen_factory *sf = (struct screen_factory *)f;
++    const pjmedia_video_format_detail *vfd;
++    pjmedia_clock_param clock_param;
++    struct screen_stream *strm;
++    pj_pool_t *pool;
++    pj_status_t status;
++    uint32_t node_id = 0;
++    int fd = -1;
++    char *session = NULL;
++
++    PJ_ASSERT_RETURN(f && param && p_vid_strm, PJ_EINVAL);
++    PJ_ASSERT_RETURN(param->fmt.type == PJMEDIA_TYPE_VIDEO &&
++                     param->fmt.detail_type == PJMEDIA_FORMAT_DETAIL_VIDEO &&
++                     param->dir == PJMEDIA_DIR_CAPTURE, PJ_EINVAL);
++
++    if (param->cap_id < 0 || (unsigned)param->cap_id >= sf->dev_count)
++        return PJMEDIA_EVID_INVDEV;
++    if (param->fmt.id != PJMEDIA_FORMAT_I420)
++        return PJMEDIA_EVID_BADFORMAT;
++
++    vfd = pjmedia_format_get_video_format_detail(&param->fmt, PJ_TRUE);
++    if (!vfd || vfd->size.w < 2 || vfd->size.h < 2 || (vfd->size.w & 1) || (vfd->size.h & 1) ||
++        !vfd->fps.num || !vfd->fps.denum)
++        return PJMEDIA_EVID_BADFORMAT;
++
++    status = portal_claim(&fd, &node_id, &session);
++    if (status != PJ_SUCCESS) {
++        PJ_LOG(4, (THIS_FILE, "The screen is not ready to be captured yet"));
++        return status;
++    }
++
++    pool = pj_pool_create(sf->pf, "screen-dev", 1024, 1024, NULL);
++    if (!pool) {
++        close(fd);
++        portal_release(session, PJ_TRUE);
++        return PJ_ENOMEM;
++    }
++
++    strm = PJ_POOL_ZALLOC_T(pool, struct screen_stream);
++    pj_memcpy(&strm->param, param, sizeof(*param));
++    strm->pool = pool;
++    if (cb)
++        pj_memcpy(&strm->vid_cb, cb, sizeof(*cb));
++    strm->user_data = user_data;
++    strm->session = session;
++    strm->size = vfd->size;
++    strm->frame_bytes = (pj_size_t)vfd->size.w * vfd->size.h * 3 / 2;
++    strm->ts_inc = PJMEDIA_SPF2(param->clock_rate, &vfd->fps, 1);
++    strm->src_fmt = AV_PIX_FMT_NONE;
++    strm->out = (pj_uint8_t *)pj_pool_alloc(pool, strm->frame_bytes);
++    pthread_mutex_init(&strm->frame_lock, NULL);
++    fill_black(strm);
++    strm->base.op = &stream_op;
++
++    pj_bzero(&clock_param, sizeof(clock_param));
++    clock_param.usec_interval = PJMEDIA_PTIME(&vfd->fps);
++    clock_param.clock_rate = param->clock_rate;
++    status = pjmedia_clock_create2(pool, &clock_param, PJMEDIA_CLOCK_NO_HIGHEST_PRIO,
++                                   &clock_cb, strm, &strm->clock);
++    if (status != PJ_SUCCESS) {
++        close(fd);
++        pthread_mutex_destroy(&strm->frame_lock);
++        pj_pool_release(pool);
++        portal_release(session, PJ_TRUE);
++        return status;
++    }
++
++    status = pipewire_open(strm, fd, node_id, vfd->fps.num / vfd->fps.denum);
++    if (status != PJ_SUCCESS) {
++        pjmedia_clock_destroy(strm->clock);
++        pthread_mutex_destroy(&strm->frame_lock);
++        pj_pool_release(pool);
++        portal_release(session, PJ_TRUE);
++        return status;
++    }
++
++    PJ_LOG(4, (THIS_FILE, "Screen capture at %dx%d, %u/%u fps", vfd->size.w, vfd->size.h,
++               vfd->fps.num, vfd->fps.denum));
++
++    *p_vid_strm = &strm->base;
++    return PJ_SUCCESS;
++}
++
++static pj_status_t screen_stream_get_param(pjmedia_vid_dev_stream *s,
++                                           pjmedia_vid_dev_param *pi)
++{
++    struct screen_stream *strm = (struct screen_stream *)s;
++
++    PJ_ASSERT_RETURN(strm && pi, PJ_EINVAL);
++    pj_memcpy(pi, &strm->param, sizeof(*pi));
++    return PJ_SUCCESS;
++}
++
++static pj_status_t screen_stream_get_cap(pjmedia_vid_dev_stream *s,
++                                         pjmedia_vid_dev_cap cap,
++                                         void *pval)
++{
++    struct screen_stream *strm = (struct screen_stream *)s;
++
++    PJ_ASSERT_RETURN(s && pval, PJ_EINVAL);
++    if (cap == PJMEDIA_VID_DEV_CAP_FORMAT) {
++        pj_memcpy(pval, &strm->param.fmt, sizeof(strm->param.fmt));
++        return PJ_SUCCESS;
++    }
++    return PJMEDIA_EVID_INVCAP;
++}
++
++static pj_status_t screen_stream_set_cap(pjmedia_vid_dev_stream *s,
++                                         pjmedia_vid_dev_cap cap,
++                                         const void *pval)
++{
++    PJ_UNUSED_ARG(s);
++    PJ_UNUSED_ARG(cap);
++    PJ_UNUSED_ARG(pval);
++    return PJMEDIA_EVID_INVCAP;
++}
++
++static pj_status_t screen_stream_start(pjmedia_vid_dev_stream *s)
++{
++    struct screen_stream *strm = (struct screen_stream *)s;
++
++    PJ_LOG(4, (THIS_FILE, "Starting screen capture"));
++    return pjmedia_clock_start(strm->clock);
++}
++
++static pj_status_t screen_stream_stop(pjmedia_vid_dev_stream *s)
++{
++    struct screen_stream *strm = (struct screen_stream *)s;
++
++    PJ_LOG(4, (THIS_FILE, "Stopping screen capture"));
++    return pjmedia_clock_stop(strm->clock);
++}
++
++static pj_status_t screen_stream_destroy(pjmedia_vid_dev_stream *s)
++{
++    struct screen_stream *strm = (struct screen_stream *)s;
++
++    PJ_ASSERT_RETURN(strm != NULL, PJ_EINVAL);
++
++    if (strm->clock) {
++        pjmedia_clock_stop(strm->clock);
++        pjmedia_clock_destroy(strm->clock);
++        strm->clock = NULL;
++    }
++    pipewire_close(strm);
++    if (strm->sws) {
++        sws_freeContext(strm->sws);
++        strm->sws = NULL;
++    }
++    pthread_mutex_destroy(&strm->frame_lock);
++    portal_release(strm->session, PJ_FALSE);
++    strm->session = NULL;
++    pj_pool_release(strm->pool);
++    return PJ_SUCCESS;
++}
++
++#else   /* screen capture not built */
++
++PJ_DEF(void) pjmedia_screen_dev_get_info(pjmedia_screen_dev_info *info)
++{
++    pj_bzero(info, sizeof(*info));
++    info->state = PJMEDIA_SCREEN_DEV_UNAVAILABLE;
++}
++
++PJ_DEF(void) pjmedia_screen_dev_set_restore_token(const char *token)
++{
++    PJ_UNUSED_ARG(token);
++}
++
++PJ_DEF(unsigned) pjmedia_screen_dev_get_restore_token(char *buf, unsigned size)
++{
++    if (buf && size)
++        buf[0] = '\0';
++    return 0;
++}
++
++PJ_DEF(void) pjmedia_screen_dev_reset(void)
++{
++}
++
++PJ_DEF(pj_status_t) pjmedia_screen_dev_request(void)
++{
++    return PJ_ENOTSUP;
++}
++
++#endif

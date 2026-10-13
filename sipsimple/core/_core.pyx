@@ -37,7 +37,7 @@ CORE_REVISION = PJ_SVN_REVISION
 # Local build counter. Bump CORE_BUILD each time you cut a new _core.so
 # so the runtime banner ("core version <rev>.N") proves the new code is
 # loaded.
-CORE_BUILD = 17
+CORE_BUILD = 18
 
 CYTHON_VERSION = cython.__version__
 
@@ -47,6 +47,7 @@ __all__ = ["PJ_VERSION", "PJ_SVN_REVISION", "CORE_REVISION", "CORE_BUILD", "CYTH
            "SIPCoreError", "PJSIPError", "PJSIPTLSError", "SIPCoreInvalidStateError",
            "AudioMixer", "ToneGenerator", "RecordingWaveFile", "WaveFile", "MixerPort",
            "VideoCamera", "FrameBufferVideoRenderer",
+           "screen_capture_info", "screen_capture_restore_token", "set_screen_capture_restore_token", "request_screen_capture", "reset_screen_capture",
            "sip_status_messages",
            "BaseCredentials", "Credentials", "FrozenCredentials", "BaseSIPURI", "SIPURI", "FrozenSIPURI",
            "BaseHeader", "Header", "FrozenHeader",
