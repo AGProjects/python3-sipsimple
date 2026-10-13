@@ -603,11 +603,15 @@ cdef extern from "pjmedia.h":
     enum pjmedia_vid_dev_wnd_flag:
         PJMEDIA_VID_DEV_WND_BORDER
         PJMEDIA_VID_DEV_WND_RESIZABLE
+    enum:
+        PJMEDIA_VID_DEV_INFO_FMT_CNT
     struct pjmedia_vid_dev_info:
         int id
         char *name
         char *driver
         int dir
+        unsigned int fmt_cnt
+        pjmedia_format fmt[PJMEDIA_VID_DEV_INFO_FMT_CNT]
     cdef struct pjmedia_hwnd_win:
         void *hwnd
     cdef struct pjmedia_hwnd_x11:
@@ -2020,6 +2024,7 @@ cdef class PJSIPUA(object):
     cdef object _get_sound_devices(self, int is_output)
     cdef object _get_default_sound_device(self, int is_output)
     cdef object _get_video_devices(self)
+    cdef object _get_video_device_formats(self, object device)
     cdef object _get_default_video_device(self)
     cdef int _poll_log(self) except -1
     cdef int _handle_exception(self, int is_fatal) except -1

@@ -471,6 +471,52 @@ cdef class PJSIPUA:
                 retval.append(decode_device_name(info.name))
         return retval
 
+    cdef object _get_video_device_formats(self, object device):
+        # (width, height, fps) the capture device delivers, largest first; one
+        # entry per size, at the highest frame rate of any pixel format
+        cdef pjmedia_vid_dev_info info
+        cdef pjmedia_video_format_detail *vid
+        cdef dict sizes = dict()
+        cdef int status
+        cdef unsigned int j
+        cdef int found = 0
+
+        if device is None:
+            return []
+        if device == "system_default":
+            with nogil:
+                status = pjmedia_vid_dev_get_info(PJMEDIA_VID_DEFAULT_CAPTURE_DEV, &info)
+            found = status == 0
+        else:
+            for i in range(pjmedia_vid_dev_count()):
+                with nogil:
+                    status = pjmedia_vid_dev_get_info(i, &info)
+                if status != 0 or info.dir not in (PJMEDIA_DIR_CAPTURE, PJMEDIA_DIR_CAPTURE_PLAYBACK):
+                    continue
+                if decode_device_name(info.name) == device:
+                    found = 1
+                    break
+        if not found:
+            return []
+        for j in range(min(info.fmt_cnt, PJMEDIA_VID_DEV_INFO_FMT_CNT)):
+            if info.fmt[j].detail_type != PJMEDIA_FORMAT_DETAIL_VIDEO:
+                continue
+            vid = &info.fmt[j].det.vid
+            if vid.size.w == 0 or vid.size.h == 0:
+                continue
+            fps = float(vid.fps.num) / vid.fps.denum if vid.fps.denum else 0.0
+            key = (vid.size.w, vid.size.h)
+            if fps > sizes.get(key, -1.0):
+                sizes[key] = fps
+        return sorted(((w, h, fps) for (w, h), fps in sizes.items()), key=lambda item: (item[0] * item[1], item[2]), reverse=True)
+
+    def get_video_device_formats(self, object device):
+        """The sizes a capture device delivers, as (width, height, fps)
+        tuples, largest first. Empty when the device is unknown or the driver
+        does not list them."""
+        self._check_self()
+        return self._get_video_device_formats(device)
+
     cdef object _get_default_video_device(self):
         cdef pjmedia_vid_dev_info info
         cdef int status
