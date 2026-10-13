@@ -228,6 +228,35 @@ New 2.17-only support:
                                        encoding thread, keyframe forced).
                                        Python side:
                                        VideoStream.set_encoder_size().
+  54_v4l2_frame_rates.patch            2.17-only - V4L2 capture devices
+                                       record the highest frame rate of
+                                       each size they list (VIDIOC_ENUM_
+                                       FRAMEINTERVALS, via libv4l2) instead
+                                       of DEFAULT_FPS. Python side:
+                                       Engine.get_video_device_formats().
+  55_vid_port_grow_frame_buffer.patch  2.17-only - received video bigger
+                                       than negotiated (720p from Blink
+                                       for macOS on a level 3.0 call) was
+                                       garbled: the renderer port's frame
+                                       buffer kept its creation size while
+                                       the converter followed the decoder,
+                                       so sws_scale read past its end.
+                                       vid_port grows the buffer on
+                                       FMT_CHANGED and never converts a
+                                       short one; vid_stream grows its
+                                       decoding buffer too (1080p on a
+                                       level 3.0 call). Applies after 53.
+  56_vid_port_capture_exact_size.patch 2.17-only - 720p from the camera was
+                                       a 4:3 picture stretched to 16:9:
+                                       find_closest_fmt() only looks at
+                                       the sizes of the matched pixel
+                                       format (YUYV, up to 640x480 on UVC
+                                       cameras that have 720p as MJPEG),
+                                       so the converter scaled 640x480 up.
+                                       vid_port opens the requested size
+                                       in another format that has it and
+                                       converts only the pixel format.
+                                       Applies after 55.
 
 
 Dropped permanently

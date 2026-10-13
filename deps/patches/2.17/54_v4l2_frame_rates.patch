@@ -1,0 +1,87 @@
+# 54_v4l2_frame_rates.patch
+#
+# V4L2 capture devices report the real frame rate of each size they list.
+# v4l2_get_supported_size() records every size VIDIOC_TRY_FMT accepts in
+# pjmedia_vid_dev_info.fmt[], always at DEFAULT_FPS (25). It now asks the
+# device for the frame intervals of that pixel format and size
+# (VIDIOC_ENUM_FRAMEINTERVALS, through libv4l2 so converted formats such as
+# MJPEG -> I420 are covered too) and records the highest rate. Drivers that
+# do not enumerate intervals keep DEFAULT_FPS.
+#
+# Python side: Engine.get_video_device_formats(name) -> [(w, h, fps), ...]
+# (_core.ua.pxi), used to offer only the resolutions a camera delivers.
+--- pjsip_orig/pjmedia/src/pjmedia-videodev/v4l2_dev.c
++++ pjsip/pjmedia/src/pjmedia-videodev/v4l2_dev.c
+@@ -220,6 +220,49 @@
+     return NULL;
+ }
+ 
++/* The highest frame rate the device delivers at a pixel format and size, as
++ * a fraction (frames per second = num / denum). DEFAULT_FPS when the driver
++ * does not enumerate frame intervals.
++ */
++static void v4l2_get_max_fps(int fd, pj_uint32_t pixelformat,
++                             unsigned width, unsigned height,
++                             unsigned *num, unsigned *denum)
++{
++    struct v4l2_frmivalenum ival;
++    double best = 0;
++    unsigned j;
++
++    *num = DEFAULT_FPS;
++    *denum = 1;
++
++    for (j = 0; j < 64; ++j) {
++        const struct v4l2_fract *interval;
++
++        pj_bzero(&ival, sizeof(ival));
++        ival.index = j;
++        ival.pixel_format = pixelformat;
++        ival.width = width;
++        ival.height = height;
++        if (xioctl(fd, VIDIOC_ENUM_FRAMEINTERVALS, &ival) != PJ_SUCCESS)
++            break;
++
++        /* stepwise and continuous are described by entry 0 only */
++        interval = (ival.type == V4L2_FRMIVAL_TYPE_DISCRETE) ?
++                   &ival.discrete : &ival.stepwise.min;
++        if (interval->numerator > 0 && interval->denominator > 0 &&
++            (double)interval->denominator / interval->numerator > best)
++        {
++            best = (double)interval->denominator / interval->numerator;
++            /* the interval is seconds per frame: invert it */
++            *num = interval->denominator;
++            *denum = interval->numerator;
++        }
++
++        if (ival.type != V4L2_FRMIVAL_TYPE_DISCRETE)
++            break;
++    }
++}
++
+ /* Get the supported size */
+ static void v4l2_get_supported_size(int fd,
+                                     pj_uint32_t fmt_id,
+@@ -250,6 +293,7 @@
+     {
+         struct v4l2_format v4l2_fmt;
+         pj_status_t status;
++        unsigned fps_num, fps_denum;
+ 
+         pj_bzero(&v4l2_fmt, sizeof(v4l2_fmt));
+         v4l2_fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+@@ -266,11 +310,13 @@
+             continue;
+         }
+ 
++        v4l2_get_max_fps(fd, fmt_map->v4l2_fmt_id, v4l_sizes[i].w,
++                         v4l_sizes[i].h, &fps_num, &fps_denum);
+         pjmedia_format_init_video(&info->fmt[info->fmt_cnt++],
+                                   fmt_id,
+                                   v4l_sizes[i].w,
+                                   v4l_sizes[i].h,
+-                                  DEFAULT_FPS, 1);
++                                  fps_num, fps_denum);
+     }
+ }
+ 

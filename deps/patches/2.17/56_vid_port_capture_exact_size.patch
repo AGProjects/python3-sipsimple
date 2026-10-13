@@ -1,0 +1,76 @@
+# 56_vid_port_capture_exact_size.patch
+#
+# 720p from the camera was a 4:3 picture stretched to 16:9.
+#
+# find_closest_fmt() only looks at the sizes of one pixel format: the one
+# matching the requested format id, which comes from the device's first
+# format (YUYV on V4L2). A UVC camera usually has 720p only as MJPEG, which
+# libv4l2 offers decoded as I420/RGB24, while its YUYV stops at 640x480.
+# Asked for 1280x720, the capture port opened YUYV 640x480 and the converter
+# scaled it up to 1280x720.
+#
+# vid_port.c: when the requested size is not available in the matched
+# format, open it in another format that has it (preferring one that reaches
+# the requested frame rate, then the closest colour space), so the converter
+# only changes the pixel format and the picture keeps its shape. Applies
+# after 55.
+--- pjsip_orig/pjmedia/src/pjmedia/vid_port.c
++++ pjsip/pjmedia/src/pjmedia/vid_port.c
+@@ -584,6 +584,57 @@
+                                       &vfd->fps, 
+                                       &di);
+ 
++        /* find_closest_fmt() only looks at the sizes of one pixel format.
++         * A camera often has the size asked for in another one only (720p
++         * as MJPEG, decoded by libv4l2 to I420/RGB, while YUYV stops at
++         * 640x480): rather than scaling a smaller picture of another shape
++         * up (a 4:3 picture stretched to 16:9), open that size and let the
++         * converter change only the pixel format.
++         */
++        if (match_prop.size.w != vfd->size.w ||
++            match_prop.size.h != vfd->size.h)
++        {
++            unsigned n;
++            int best = -1;
++            pj_bool_t best_fps_ok = PJ_FALSE;
++            unsigned best_rank = FMT_DIFF_COLOR_SPACE + 1;
++
++            for (n = 0; n < di.fmt_cnt; ++n) {
++                const pjmedia_video_format_detail *d;
++                pj_bool_t fps_ok;
++                unsigned rank;
++
++                d = pjmedia_format_get_video_format_detail(&di.fmt[n],
++                                                           PJ_TRUE);
++                if (!d || d->size.w != vfd->size.w ||
++                    d->size.h != vfd->size.h)
++                {
++                    continue;
++                }
++                fps_ok = !d->fps.num || !d->fps.denum ||
++                         (pj_uint64_t)d->fps.num * vfd->fps.denum >=
++                         (pj_uint64_t)vfd->fps.num * d->fps.denum;
++                rank = match_format_id(prm->vidparam.fmt.id, di.fmt[n].id);
++                if (best < 0 || (fps_ok && !best_fps_ok) ||
++                    (fps_ok == best_fps_ok && rank < best_rank))
++                {
++                    best = (int)n;
++                    best_fps_ok = fps_ok;
++                    best_rank = rank;
++                }
++            }
++            if (best >= 0) {
++                char best_name[5];
++
++                match_prop.id = di.fmt[best].id;
++                match_prop.size = vfd->size;
++                pjmedia_fourcc_name(match_prop.id, best_name);
++                PJ_LOG(4,(THIS_FILE, "%dx%d is only available as %s, "
++                          "converting the format instead of scaling",
++                          vfd->size.w, vfd->size.h, best_name));
++            }
++        }
++
+         if ((match_prop.id != prm->vidparam.fmt.id) || 
+             (match_prop.size.w != vfd->size.w) ||
+             (match_prop.size.h != vfd->size.h))

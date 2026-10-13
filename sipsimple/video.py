@@ -5,6 +5,8 @@
 
 __all__ = ['IVideoProducer', 'VideoDevice', 'VideoError']
 
+import time
+
 from application.notification import NotificationCenter, NotificationData
 from zope.interface import Attribute, Interface, implementer
 
@@ -31,19 +33,25 @@ class VideoDevice(object):
         self._camera = self._open_camera(device_name, resolution, framerate)
         self._camera.start()
 
-    def _open_camera(self, device_name, resolution, framerate):
-        try:
-            return VideoCamera(device_name, resolution, framerate)
-        except SIPCoreError:
+    def _open_camera(self, device_name, resolution, framerate, attempts=1):
+        # Reopening a camera right after closing it (a new resolution) can fail while the
+        # driver still releases it (uvcvideo/libv4l2): try it again for a moment before
+        # falling back to another device, which would also replace the device setting.
+        for attempt in range(attempts):
             try:
-                return VideoCamera('system_default', resolution, framerate)
+                return VideoCamera(device_name, resolution, framerate)
             except SIPCoreError:
-                return VideoCamera(None, resolution, framerate)
+                if attempt + 1 < attempts:
+                    time.sleep(0.25)
+        try:
+            return VideoCamera('system_default', resolution, framerate)
+        except SIPCoreError:
+            return VideoCamera(None, resolution, framerate)
 
     def set_camera(self, device_name, resolution, framerate):
         old_camera = self._camera
         old_camera.close()
-        new_camera = self._open_camera(device_name, resolution, framerate)
+        new_camera = self._open_camera(device_name, resolution, framerate, attempts=1 if device_name is None else 8)
         if not self.muted:
             new_camera.start()
         self._camera = new_camera

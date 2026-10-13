@@ -1,0 +1,117 @@
+# 55_vid_port_grow_frame_buffer.patch
+#
+# Received video garbled when the other side sends a bigger picture than the
+# stream was negotiated for (e.g. 720p from Blink for macOS, camera or shared
+# screen, on a call where we offered H.264 level 3.0).
+#
+# The decoder's format starts as the square picture derived from the
+# negotiated level's max-fs (3.0: 656x656, 645504 bytes I420). An active
+# renderer port (vid_port.c) allocates its frame buffer once, for that format.
+# When FFmpeg finds the real size (1280x720, 1382400 bytes) it publishes
+# FMT_CHANGED and handle_format_change() recreates the converter for 1280x720,
+# assuming "frm_buf was allocated the biggest supported size", which it is
+# not. From then on the stream refuses to fill the too small buffer ("not
+# enough buffer for decoded frame") and vidstream_render_cb() still converts
+# it as 1280x720: sws_scale() reads ~737 KB past the end of the buffer, which
+# is the garbled picture (and a heap over-read).
+#
+# vid_port.c: handle_format_change() grows the frame buffer to the new
+# format; vidstream_render_cb() never converts a buffer smaller than the
+# converter's input.
+#
+# vid_stream.c: the decoding buffer (dec_frame, 4 bytes per pixel of the
+# negotiated size) grows on the codec's FMT_CHANGED too, so a picture beyond
+# it (1080p on a level 3.0 call) decodes instead of failing with
+# PJ_ETOOSMALL on every frame. Applies after 53.
+--- pjsip_orig/pjmedia/src/pjmedia/vid_port.c
++++ pjsip/pjmedia/src/pjmedia/vid_port.c
+@@ -1049,6 +1049,32 @@
+             return status;
+         }
+ 
++        /* The frame buffer was sized for the format at creation, not for
++         * the biggest one: a decoder switching to a bigger picture (the other
++         * side sends 720p on a stream negotiated for a smaller size) gets a
++         * buffer the stream refuses to fill, and the converter, now set up
++         * for the bigger picture, reads past its end.
++         */
++        if (vp->frm_buf) {
++            pjmedia_video_apply_fmt_param vafp;
++
++            if (get_vfi(&vp->conv.conv_param.src, NULL, &vafp) == PJ_SUCCESS &&
++                vafp.framebytes > vp->frm_buf_size)
++            {
++                void *buf = pj_pool_zalloc(vp->pool, vafp.framebytes);
++
++                PJ_LOG(4,(THIS_FILE, "Frame buffer grows %lu -> %lu bytes",
++                          (unsigned long)vp->frm_buf_size,
++                          (unsigned long)vafp.framebytes));
++                pj_mutex_lock(vp->frm_mutex);
++                vp->frm_buf->buf = buf;
++                vp->frm_buf->size = vafp.framebytes;
++                vp->frm_buf->type = PJMEDIA_FRAME_TYPE_NONE;
++                vp->frm_buf_size = vafp.framebytes;
++                pj_mutex_unlock(vp->frm_mutex);
++            }
++        }
++
+         if (vid_param.fmt.id != vp->conv.conv_param.dst.id ||
+             (vid_param.fmt.det.vid.size.h !=
+              vp->conv.conv_param.dst.det.vid.size.h) ||
+@@ -1359,6 +1385,20 @@
+         pj_add_timestamp32(&vp->clocksrc.timestamp, frame_ts);
+         pjmedia_clock_src_update(&vp->clocksrc, NULL);
+ 
++        /* A buffer still smaller than the converter's input (the format
++         * change is not handled yet) must not be converted: it would be
++         * read past its end.
++         */
++        if (vp->conv.conv) {
++            pjmedia_video_apply_fmt_param vafp;
++
++            if (get_vfi(&vp->conv.conv_param.src, NULL, &vafp) != PJ_SUCCESS ||
++                vafp.framebytes > vp->frm_buf_size)
++            {
++                return PJ_SUCCESS;
++            }
++        }
++
+         status = convert_frame(vp, vp->frm_buf, frame);
+         if (status != PJ_SUCCESS)
+             return status;
+--- pjsip_orig/pjmedia/src/pjmedia/vid_stream.c
++++ pjsip/pjmedia/src/pjmedia/vid_stream.c
+@@ -498,6 +498,33 @@
+         /* This is codec event */
+         switch (event->type) {
+         case PJMEDIA_EVENT_FMT_CHANGED:
++            /* The decoding buffer was sized for the negotiated picture:
++             * grow it when the other side sends a bigger one, or every
++             * following frame fails to decode with PJ_ETOOSMALL. The frame
++             * being decoded now is lost, the next ones fit.
++             */
++            if (event->data.fmt_changed.dir == PJMEDIA_DIR_DECODING) {
++                const pjmedia_video_format_info *vfi;
++                pjmedia_video_apply_fmt_param vafp;
++
++                vfi = pjmedia_get_video_format_info(NULL,
++                                    event->data.fmt_changed.new_fmt.id);
++                pj_bzero(&vafp, sizeof(vafp));
++                vafp.size = event->data.fmt_changed.new_fmt.det.vid.size;
++                if (vfi && vfi->apply_fmt(vfi, &vafp) == PJ_SUCCESS &&
++                    vafp.framebytes > stream->dec_max_size)
++                {
++                    PJ_LOG(4,(c_strm->dec->port.info.name.ptr,
++                              "Decoding buffer grows %u -> %u bytes",
++                              stream->dec_max_size,
++                              (unsigned)vafp.framebytes));
++                    stream->dec_max_size = (unsigned)vafp.framebytes;
++                    stream->dec_frame.buf = pj_pool_zalloc(stream->pool,
++                                                stream->dec_max_size);
++                    stream->dec_frame.size = 0;
++                }
++            }
++
+             /* Copy the event to avoid deadlock if we publish the event
+              * now. This happens because fmt_event may trigger restart
+              * while we're still holding the stream lock.
