@@ -283,6 +283,12 @@ New 2.17-only support:
                                        AVVideoScalingModeResizeAspectFill,
                                        so a camera without a format of that
                                        shape is cropped, not stretched.
+  58_v4l2_open_cloexec.patch           2.17-only - camera resolution
+                                       changes failed with EBUSY after a
+                                       child process (gsettings monitor)
+                                       inherited the open camera and kept
+                                       its buffers. v4l2_dev opens the
+                                       devices close-on-exec.
                                        Applies after 32.
 
 
