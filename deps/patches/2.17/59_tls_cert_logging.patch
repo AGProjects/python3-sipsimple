@@ -1,0 +1,79 @@
+# 59_tls_cert_logging.patch (2.17 rebase of 2.12's 02 ssl_sock_ossl.c hunks + 14)
+#
+# Logs the negotiated TLS certificates after every successful handshake /
+# renegotiation, and the SNI host name sent by TLS clients:
+#
+#   [local TLS certificate]  subject:... | issuer:... | valid until:Y-M-D | peer:ip:port
+#   [remote TLS certificate] subject:... | issuer:... | valid until:Y-M-D | peer:ip:port
+#   [SSL_set_tlsext_host_name] server_name:...
+#
+# Differences from the 2.12 pair (pending/02_pjlib_darwin.patch TLS hunks +
+# pending/14_pjsip_tls_log_fix.patch):
+#   - hooks ssl_update_certs_info() (post-handshake only), not the 2.17
+#     update_certs_info(ssock, ctx, local*, remote*, is_verify) helper, so
+#     the verify callback path does not log twice.
+#   - uses %.*s instead of writing '\0' at ptr[slen] (14's fix could write
+#     one byte past the pool allocation).
+#   - reuses ci->validity.end (already parsed by get_cert_info()) instead of
+#     re-parsing X509_get_notAfter(); month printed 1-based.
+#   - peer printed with pj_sockaddr_print(): IPv6-safe, port in host order
+#     (2.12 printed sin_port unconverted).
+#   - 2.17 skips SNI for IP-literal server names, so the SNI line only
+#     appears when a host name is actually sent.
+#
+# Log level 1, as in 2.12.
+
+--- pjsip_orig/pjlib/src/pj/ssl_sock_ossl.c
++++ pjsip/pjlib/src/pj/ssl_sock_ossl.c
+@@ -2344,6 +2344,30 @@
+     }
+ }
+ 
++/* sipsimple: log a negotiated certificate (subject, issuer, expiry, peer).
++ * The pj_str_t fields in pj_ssl_cert_info are not guaranteed to be
++ * NUL-terminated, so print them with an explicit length.
++ */
++static void log_cert_info(pj_ssl_sock_t *ssock, const char *which,
++                          const pj_ssl_cert_info *ci)
++{
++    pj_parsed_time pt;
++    char peer[PJ_INET6_ADDRSTRLEN + 10];
++
++    if (ci->subject.info.slen == 0 && ci->issuer.info.slen == 0)
++        return;     /* no certificate on this side */
++
++    pj_time_decode(&ci->validity.end, &pt);
++    pj_sockaddr_print(&ssock->rem_addr, peer, sizeof(peer), 3);
++
++    PJ_LOG(1, (THIS_FILE, "[%s TLS certificate] subject:%.*s | issuer:%.*s"
++               " | valid until:%04d-%02d-%02d | peer:%s",
++               which,
++               (int)ci->subject.info.slen, ci->subject.info.ptr,
++               (int)ci->issuer.info.slen, ci->issuer.info.ptr,
++               pt.year, pt.mon + 1, pt.day, peer));
++}
++
+ /* Update local & remote certificates info. This function should be
+  * called after handshake or renegotiation successfully completed.
+  */
+@@ -2353,6 +2377,9 @@
+ 
+     update_certs_info(ssock, NULL, &ssock->local_cert_info, 
+                       &ssock->remote_cert_info, PJ_FALSE);
++
++    log_cert_info(ssock, "local", &ssock->local_cert_info);
++    log_cert_info(ssock, "remote", &ssock->remote_cert_info);
+ }
+ 
+ 
+@@ -2471,6 +2498,10 @@
+ #endif
+         } else {
+ #ifdef SSL_set_tlsext_host_name
++            PJ_LOG(1, (ssock->pool->obj_name,
++                       "[SSL_set_tlsext_host_name] server_name:%.*s",
++                       (int)ssock->param.server_name.slen,
++                       ssock->param.server_name.ptr));
+             /* Server name is null terminated already */
+             if (!SSL_set_tlsext_host_name(ossock->ossl_ssl,
+                                           ssock->param.server_name.ptr))
