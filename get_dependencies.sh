@@ -20,17 +20,10 @@ Usage: ${script_name} [--version VERSION] [--help]
 Download pjsip + ZRTPCPP, extract, and apply the patch series.
 
 Options:
-    --version VERSION   pjsip version to build (default: 2.17).
-                        Supported: 2.17, 2.12. Also accepted as
-                        --version=VERSION.
+    --version VERSION   pjsip version to build. Only 2.17 is supported;
+                        the flag (and PJSIP_VERSION / a positional
+                        argument) is kept so existing callers still work.
     -h, --help          Show this help and exit.
-
-Version can also be set via:
-    PJSIP_VERSION=2.12 ${script_name}
-    ${script_name} 2.12               # legacy positional form
-    ${script_name} --version=2.12     # fall back to the legacy series
-
-Precedence: --version flag > PJSIP_VERSION env var > positional arg > default.
 EOF
 }
 
@@ -42,7 +35,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --version)
             if [ -z "${2:-}" ]; then
-                echo "Error: --version requires a value (2.17 or 2.12)." >&2
+                echo "Error: --version requires a value (2.17)." >&2
                 exit 2
             fi
             arg_version="$2"
@@ -54,7 +47,7 @@ while [ $# -gt 0 ]; do
             ;;
         -v)
             if [ -z "${2:-}" ]; then
-                echo "Error: -v requires a value (2.17 or 2.12)." >&2
+                echo "Error: -v requires a value (2.17)." >&2
                 exit 2
             fi
             arg_version="$2"
@@ -86,22 +79,12 @@ done
 
 cd deps
 
-# Version selection precedence:
-#   1. --version flag (arg_version)
-#   2. PJSIP_VERSION env var
-#   3. positional argument (legacy)
-#   4. default = 2.17 (the migration target; 2.12 is the legacy fallback)
-# Allowed: 2.17 (default, patches/2.17/) and 2.12 (legacy, patches/).
+# Only pjsip 2.17 is supported. --version / PJSIP_VERSION / a positional
+# argument are still accepted, but must say 2.17.
 PJSIP_VERSION="${arg_version:-${PJSIP_VERSION:-${positional:-2.17}}}"
 
 case "${PJSIP_VERSION}" in
-    2.12)
-        # Legacy patch series; lives at deps/patches/[0-9][0-9]_*.patch.
-        patches_dir="patches"
-        ;;
     2.17)
-        # Default series, lives at deps/patches/2.17/.
-        # See PJSIP_217_MIGRATION.md at the repo root for the rebase plan.
         patches_dir="patches/2.17"
         if [ ! -d "${patches_dir}" ]; then
             echo "Error: ${patches_dir} does not exist."                   >&2
@@ -112,7 +95,7 @@ case "${PJSIP_VERSION}" in
         ;;
     *)
         echo "Error: unsupported PJSIP_VERSION='${PJSIP_VERSION}'."        >&2
-        echo "       Supported values: 2.17 (default), 2.12 (legacy)."     >&2
+        echo "       Only 2.17 is supported."                              >&2
         exit 1
         ;;
 esac
@@ -177,29 +160,9 @@ cp -r ZRTPCPP/zrtp ./pjsip/third_party/zsrtp/zrtp/
 cp ZRTPCPP/COPYING ./pjsip/third_party/zsrtp/zrtp/
 cp ZRTPCPP/README.md ./pjsip/third_party/zsrtp/zrtp/
 
-# Patch series for the selected pjsip version.
-# 2.17 (default) -> deps/patches/2.17/[0-9][0-9]_*.patch
-#   Rebased subset; see PJSIP_217_MIGRATION.md.
-# 2.12 (legacy)  -> deps/patches/[0-9][0-9]_*.patch
-#   01..12 are the pjsip 2.12 functional patches (split out from the
-#   old monolith). 13..30 are the auxiliary fixes (zsrtp, tls log, vpx,
-#   mac audio, ffmpeg, srtp UAF, AEAD transport, etc).
+# Patch series: deps/patches/2.17/[0-9][0-9]_*.patch, in numerical order.
+# See deps/patches/2.17/README.
 patches=( "${patches_dir}"/[0-9][0-9]_*.patch )
-
-# Skip the FFmpeg-build patch on Apple Silicon — it doesn't apply cleanly there
-# (see patches/apple-silicon.txt for background).
-if uname -v | grep ARM64 | grep Darwin >/dev/null;
-then
-	patches_subset=()
-	for path in "${patches[@]}";
-	do
-		case "${path}" in
-			"${patches_dir}/17_fix_ffmpeg.patch") ;;
-			*) patches_subset+=( "${path}" ) ;;
-		esac
-	done
-	patches=( "${patches_subset[@]}" )
-fi
 
 # Prefer GNU patch (gpatch on macOS via brew/macports) over BSD patch.
 # BSD patch silently rejects some valid unified-diff hunks that GNU
@@ -273,10 +236,9 @@ do
 done
 
 # setup_pjsip.py reads pjsip/base_rev to embed PJ_SVN_REVISION into the
-# compiled extension. In the 2.12 series this file is written by patch
-# 01_build_system.patch; for 2.17 patch 01 hasn't been ported yet, so
-# write it here unconditionally so both paths produce the same artifact.
-# Value is the version with the dot stripped (2.12 -> "212", 2.17 -> "217").
+# compiled extension. The 2.12 series wrote it from 01_build_system.patch,
+# which hasn't been ported to 2.17, so write it here.
+# Value is the version with the dot stripped (2.17 -> "217").
 base_rev_value="${PJSIP_VERSION//./}"
 echo "${base_rev_value}" > ./pjsip/base_rev
 echo "Wrote pjsip/base_rev = ${base_rev_value}"

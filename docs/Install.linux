@@ -25,7 +25,7 @@ python3-sipsimple checkout:
     ./03-install-python-deps.sh      # creates venv at ~/work/sipsimple-python-PVER-ARCH-env
                                      # and pip-installs python-requirements.txt +
                                      # sipsimple-requirements.txt
-    ./04-install_sipsimple.sh        # patches and builds PJSIP 2.12, installs the SDK
+    ./04-install_sipsimple.sh        # patches and builds PJSIP 2.17, installs the SDK
     ./05-install_sipclients.sh       # installs the sip-* command line clients
 
 After 04 and 05 the venv is at ~/work/sipsimple-python-PVER-ARCH-env (e.g.
@@ -59,7 +59,7 @@ For a system-wide install instead of a venv, replace step 03/04 with:
 
     sudo python3 -m pip install -r linux/python-requirements.txt
     sudo python3 -m pip install --no-build-isolation -r linux/sipsimple-requirements.txt
-    AUTOINSTALL=0 ./get_dependencies.sh 2.12
+    AUTOINSTALL=0 ./get_dependencies.sh
     sudo python3 -m pip install --no-build-isolation .
 
 

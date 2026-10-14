@@ -11,14 +11,10 @@ SRC_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # PJSIP version selection. Never interactive: the version comes from the
 # command line, then the environment, then the default.
 #
-#   ./04-install_sipsimple.sh                    -> 2.17 (default)
-#   ./04-install_sipsimple.sh 2.12               -> legacy series
-#   ./04-install_sipsimple.sh --version 2.12
-#   ./04-install_sipsimple.sh --version=2.12
-#   PJSIP_VERSION=2.12 ./04-install_sipsimple.sh
+#   ./04-install_sipsimple.sh                    -> 2.17
 #
-# See PJSIP_217_MIGRATION.md for the difference between the two patch sets
-# (deps/patches/ for 2.12, deps/patches/2.17/ for 2.17).
+# Only 2.17 is supported (patch series in deps/patches/2.17/). The
+# --version flag / PJSIP_VERSION are still accepted but must say 2.17.
 # ---------------------------------------------------------------------------
 usage() {
     cat <<EOF
@@ -27,7 +23,7 @@ Usage: $(basename "$0") [--version VERSION] [--help]
 Build and install python3-sipsimple against a given PJSIP version.
 
 Options:
-  --version VERSION   PJSIP version to build against: 2.17 (default) or 2.12.
+  --version VERSION   PJSIP version to build against. Only 2.17 is supported.
                       Also accepted as --version=VERSION, -v VERSION, or as a
                       bare positional argument.
   -h, --help          Show this help and exit.
@@ -41,7 +37,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --version|-v)
             if [ -z "${2:-}" ]; then
-                echo "Error: $1 requires a value (2.17 or 2.12)." >&2
+                echo "Error: $1 requires a value (2.17)." >&2
                 exit 2
             fi
             arg_version="$2"
@@ -77,10 +73,10 @@ done
 PJSIP_VERSION="${arg_version:-${PJSIP_VERSION:-2.17}}"
 
 case "$PJSIP_VERSION" in
-    2.17|2.12) ;;
+    2.17) ;;
     *)
         echo "Error: unsupported PJSIP version '$PJSIP_VERSION'." >&2
-        echo "       Supported values: 2.17 (default), 2.12 (legacy)." >&2
+        echo "       Only 2.17 is supported." >&2
         exit 2
         ;;
 esac

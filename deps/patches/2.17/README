@@ -1,24 +1,24 @@
 deps/patches/2.17/
 ==================
 
-Rebased patch series for pjsip 2.17.  Selected at build time:
+Patch series for pjsip 2.17, the only supported pjsip version.
+get_dependencies.sh applies every [0-9][0-9]_*.patch in this folder in
+numerical order (GNU patch, -p0 from deps/).
 
-    ./get_dependencies.sh --version 2.17
-
-The default (no --version flag) is 2.12 and applies the series at
-deps/patches/[0-9][0-9]_*.patch.  The 2.17 path uses this folder.
+The 2.12 series (deps/patches/[0-9][0-9]_*.patch and deps/patches/pending/)
+has been removed; it is still in darcs history.
 
 
 Numbering convention
 --------------------
-Same NN_ prefixes as the 2.12 series so each patch is recognisable
-across versions.  A patch dropped from the 2.17 path simply doesn't
-exist here; do not renumber.  New 2.17-only patches use NN >= 40 to
-avoid colliding with the 2.12 series.
+NN_ prefixes follow the old 2.12 series so each patch can be traced back
+through darcs history.  A patch dropped in the 2.17 rebase simply doesn't
+exist here; do not renumber.  New 2.17-only patches use NN >= 40.
+Numbers of folded/removed patches are not reused.
 
 
-Current status (June 2026)
-==========================
+Current status (October 2026)
+=============================
 
 Present in this folder
 ----------------------
@@ -290,6 +290,15 @@ New 2.17-only support:
                                        its buffers. v4l2_dev opens the
                                        devices close-on-exec.
                                        Applies after 32.
+  59_tls_cert_logging.patch            rebase of 2.12's 02 (TLS hunks) +
+                                       14 - logs local/remote cert
+                                       subject, issuer, expiry and peer
+                                       after each handshake, plus the
+                                       SNI name a TLS client sends.
+                                       Hooks ssl_update_certs_info(), so
+                                       the verify callback doesn't log
+                                       twice; %.*s instead of 14's
+                                       write past slen.
 
 
 Dropped permanently
@@ -298,16 +307,14 @@ Dropped permanently
   17_fix_ffmpeg.patch                  Same.
   30_diag_log_stream_info_from_sdp     Diagnostic-only ("do NOT ship").
   pending/02_pjlib_darwin.patch        GCD semaphores are upstream now.
+                                       Its ssl_sock_ossl.c TLS logging
+                                       hunks live on as 59.
+  pending/14_pjsip_tls_log_fix.patch   Folded into 59.
   31_zrtp_detach_race_null_deref.old   Was .old in 2.12 too.
 
 
 Still TODO
 ----------
-
-Tier 4 (medium risk):
-  pending/14_pjsip_tls_log_fix.patch   TLS cert info logging.  The
-                                       update_certs_info(cert_info*)
-                                       signature changed in 2.17.
 
 Tier 5+ (heavy):
   01_build_system.patch                Makefile / config_auto rebase
