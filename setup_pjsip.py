@@ -270,6 +270,19 @@ class PJSIP_build_ext(build_ext):
         self.verbose = 0
         self.pjsip_dir = os.path.join(os.path.dirname(__file__), "deps", "pjsip")
 
+    def ensure_pjsip_sources(self):
+        # deps/pjsip is generated (pristine pjproject tarball + patch series)
+        # and is not shipped in the sdist. Create it when missing, so every
+        # build path (debian/rules, distro debian/ overrides, pip, setup.py
+        # build) gets a freshly patched tree.
+        if os.path.isdir(self.pjsip_dir):
+            return
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "get_dependencies.sh")
+        if not os.path.isfile(script):
+            raise RuntimeError("%s is missing and %s is not available to create it" % (self.pjsip_dir, script))
+        log.info("deps/pjsip is missing, running get_dependencies.sh")
+        subprocess.check_call(["bash", script], cwd=os.path.dirname(script))
+
     def configure_pjsip(self, silent=True):
         # Detect optional codec libraries that need both a config_site #define
         # and a ./configure flag below.  FDK-AAC enables PJSIP's AAC codec.
@@ -460,6 +473,7 @@ class PJSIP_build_ext(build_ext):
             self.build_dir = os.path.join(self.build_temp, "pjsip")
             if self.clean:
                 self.clean_pjsip()
+            self.ensure_pjsip_sources()
             copy_tree(self.pjsip_dir, self.build_dir, verbose=0)
             try:
                 if not os.path.exists(os.path.join(self.build_dir, "build.mak")):
@@ -480,6 +494,7 @@ class PJSIP_build_ext(build_ext):
             self.build_dir = os.path.join(self.build_temp, "pjsip")
             if self.clean:
                 self.clean_pjsip()
+            self.ensure_pjsip_sources()
             copy_tree(self.pjsip_dir, self.build_dir, verbose=0)
             if not os.path.exists(os.path.join(self.build_dir, "build.mak")):
                 self.configure_pjsip()

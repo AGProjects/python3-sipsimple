@@ -115,14 +115,11 @@ if [ ! -f $PJSIP_VERSION.tar.gz ]; then
     fi
 fi
 
+# Always start from the pristine tarball: drop any previous patched tree
+# and any leftover extraction directory.
+rm -rf pjsip pjproject-*
 tar xzf $PJSIP_VERSION.tar.gz
-
-if [ -d pjsip ]; then
-   rm -r pjsip
-fi
-
-mkdir pjsip
-mv pjproject*/* ./pjsip/
+mv pjproject-$PJSIP_VERSION pjsip
 
 #
 # Update ZSRTP

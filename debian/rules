@@ -6,10 +6,17 @@ export PYBUILD_NAME = sipsimple
 %:
 	dh $@ --with python3 --buildsystem=pybuild
 
+# Regenerate deps/pjsip from the pristine pjproject tarball + patch series
+# on every build, so a stale or partially patched tree can never be built.
+# The patch list ("Applying patch ...") ends up in the build log.
+override_dh_auto_configure:
+	bash ./get_dependencies.sh
+	dh_auto_configure
+
 override_dh_auto_test:
 	# Tests require optional dependencies; skip
 
 override_dh_clean:
 	dh_clean
-	rm -rf build dist MANIFEST
+	rm -rf build dist MANIFEST deps/pjsip deps/pjproject-*
 
