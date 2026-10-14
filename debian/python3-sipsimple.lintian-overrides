@@ -1,0 +1,4 @@
+binary: possible-gpl-code-linked-with-openssl
+# pjsip is built with its bundled, patched third-party code (libsrtp incl.)
+# and linked statically into _core; see deps/patches/2.17/README
+python3-sipsimple: embedded-library
