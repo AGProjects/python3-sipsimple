@@ -1,6 +1,70 @@
 deps/patches/2.17/
 ==================
 
+Why these patches are carried here and not upstream
+---------------------------------------------------
+(Notes for Debian / distribution reviewers.)
+
+python3-sipsimple does not use the system pjproject.  get_dependencies.sh
+unpacks the pristine pjproject 2.17 release tarball, applies this series,
+and setup_pjsip.py builds only pjproject's static libraries, which are
+linked into sipsimple's own extension module (sipsimple/core/_core).
+Nothing from deps/ is installed as a shared library or header, so the
+patched pjproject is private to this package: it cannot conflict with,
+or change the ABI of, a distribution libpjproject used by other
+packages (e.g. Asterisk).
+
+The patches fall into four groups.  Groups 1-3 are not upstreamable by
+nature; group 4 is.
+
+1. Code that is not part of pjproject and which upstream does not carry
+   ZRTP media encryption (12, 12a, 13, 18, 19, 29, 02): pjproject has no
+   ZRTP support.  These add our pjmedia ZRTP transport (transport_zrtp.c,
+   written and maintained by AG Projects) on top of the GNU ZRTP
+   library (ZRTPCPP, pinned commit), plus the build wiring and fixes to
+   the vendored ZRTPCPP sources.
+   Sylk AEAD transport (20, 27): AES-GCM payload encryption that must
+   interoperate byte-for-byte with the Sylk Mobile client.  It is an
+   application protocol of ours, not a standard, so it has no place
+   in pjproject.
+
+2. API extensions that exist for sipsimple's Cython bindings
+   03, 04, 05, 06, 08, 11, 32, 40, 42, 52, 53, 54, 57 add callbacks,
+   accessors and device backends that sipsimple's Python API is built
+   on: ICE state and stop callbacks, SIP header and subscription
+   helpers, audio device change observers, the framebuffer video
+   renderer, our own AVFoundation capture backend (which replaces
+   upstream's darwin/metal backend on macOS), screen capture devices,
+   changing encoder size mid-call, V4L2 frame rate enumeration, and an
+   ARGB format.  They extend pjproject's public structs and function
+   tables, and some replace upstream design choices rather than adding
+   to them.  Building sipsimple against an unpatched pjproject fails at
+   compile time.
+
+3. Defaults and policy that are sipsimple's choice, not bugs
+   07 (mono Opus, low latency x264 tuning), 08 (no automatic b=TIAS),
+   24 (always offer rtcp-fb), 44 and 45 (VP8/VP9 rate control and
+   quality), 48 (H.264 profile-level-id matching libwebrtc), 28 (a
+   tls_name Route URI parameter that selects the TLS SNI name, which is
+   not a standard parameter), and 59 (TLS certificate logging at level
+   1).  They are tuned for interop with Sylk Mobile, Blink and
+   WebRTC-based peers, and upstream is right to keep its own defaults.
+
+4. Bug fixes in upstream code paths
+   09 (WebRTC AEC wrapper), 25, 30, 31, 33, 34 (use-after-free and
+   lifetime bugs), 55, 56 (vid_port frame buffer and capture size), and
+   15 (currently a no-op, see its header).
+   Several of these only trigger under sipsimple's object lifetime model:
+   media pools are released from Python, so teardown ordering differs
+   from pjsua's.  Each could still be offered upstream.  Until a
+   pjproject release contains an equivalent fix, the patch is carried
+   here.  On every pjproject version bump, patches whose fix landed
+   upstream are dropped (see "Dropped permanently" below, e.g. the
+   FFmpeg 5 migration and the Darwin semaphore rewrite).
+
+Every patch has a header comment that says what it changes and why.
+
+
 Patch series for pjsip 2.17, the only supported pjsip version.
 get_dependencies.sh applies every [0-9][0-9]_*.patch in this folder in
 numerical order (GNU patch, -p0 from deps/).
