@@ -1101,7 +1101,23 @@ class XCAPManager(object):
 
         self.state = 'fetching'
         self.command_channel.send(Command('fetch', documents=set(self.document_names)))
-        self.xcap_subscriber.activate()
+        if self.xcap_subscriber.started:    # not started when xcap.xcap_diff is off
+            self.xcap_subscriber.activate()
+
+    def _CH_set_xcap_diff(self, command):
+        # xcap.xcap_diff changed: start (and, once initialized, activate) or stop the xcap-diff subscription
+        subscriber = self.xcap_subscriber
+        if subscriber is None or self.state in ('stopped', 'terminated'):
+            command.signal()
+            return
+        if self.account.xcap.xcap_diff:
+            if not subscriber.started:
+                subscriber.start()
+            if self.state in ('fetching', 'insync', 'updating') and not subscriber.active:
+                subscriber.activate()
+        else:
+            subscriber.stop()
+        command.signal()
 
     def _CH_reload(self, command):
         if self.state == 'terminated':
@@ -1864,11 +1880,9 @@ class XCAPManager(object):
                 self.start()
             else:
                 self.stop()
-        if self.account.enabled and 'xcap_diff' in notification.data.modified:
-            if self.account.xcap.xcap_diff:
-                self.xcap_subscriber.start()
-            else:
-                self.xcap_subscriber.stop()
+        if self.account.enabled and 'xcap.xcap_diff' in notification.data.modified:
+            # in the manager's own green thread, after the commands before it
+            self.command_channel.send(Command('set_xcap_diff'))
 
     def _NH_CFGSettingsObjectWasDeleted(self, notification):
         notification.center.remove_observer(self, sender=self.account, name='CFGSettingsObjectDidChange')
