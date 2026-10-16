@@ -1,3 +1,9 @@
+python3-sipsimple (5.6.2) unstable; urgency=medium
+
+  * Fixed starting XCAP without subscription to xcap-diff
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Thu, 15 Oct 2026 07:21:08 -0300
+
 python3-sipsimple (5.6.1) unstable; urgency=medium
 
   * Don't apply a fetched addressbook document while local changes are on their way to the journal
