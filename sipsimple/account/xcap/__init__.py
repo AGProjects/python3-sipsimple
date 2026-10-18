@@ -803,6 +803,7 @@ class XCAPManager(object):
         self.command_channel = coros.queue()
         self.last_fetch_time = datetime.fromtimestamp(0)
         self.last_update_time = datetime.fromtimestamp(0)
+        self.loaded_documents = None    # what the data was last loaded from (_documents_state)
         self.not_executed_fetch = None
         self.state = 'stopped'
         self.timer = None
@@ -1009,6 +1010,7 @@ class XCAPManager(object):
             command.signal()
             return
         self.state = 'initializing'
+        self.loaded_documents = None    # a (re)start loads the data at least once
         notification_center = NotificationCenter()
         notification_center.post_notification('XCAPManagerWillStart', sender=self)
         notification_center.add_observer(self, sender=SIPSimpleSettings(), name='CFGSettingsObjectDidChange')
@@ -1214,7 +1216,13 @@ class XCAPManager(object):
             if not self.journal:
                 self.state = 'insync'
                 if any(max(doc.update_time, doc.fetch_time) > self.last_update_time for doc in self.documents):
-                    self._load_data()
+                    # fetched or updated since the last load, but not necessarily changed: the cached
+                    # copy at the start and the server's (a 304, or the same ETag) are the same
+                    # documents, and loading them again posts XCAPManagerDidReloadData for nothing
+                    state = self._documents_state()
+                    if state != self.loaded_documents:
+                        self._load_data()
+                        self.loaded_documents = state
                 self.last_update_time = datetime.utcnow()
             command.signal()
             if self.not_executed_fetch is not None:
@@ -1935,6 +1943,11 @@ class XCAPManager(object):
                 notification_center = NotificationCenter()
                 notification_data = NotificationData(root=self.xcap_root, documents=documents, notified_etags=changed_etags)
                 notification_center.post_notification('XCAPDocumentsDidChange', sender=self, data=notification_data)
+
+    def _documents_state(self):
+        """What identifies the documents the data is loaded from: each one's ETag, and whether it
+        has content (a document reset or not found has neither)."""
+        return tuple((doc.name, doc.etag, doc.content is not None) for doc in self.documents)
 
     def _load_data(self):
         addressbook = Addressbook.from_payload(self.resource_lists.content['sipsimple_addressbook'])
