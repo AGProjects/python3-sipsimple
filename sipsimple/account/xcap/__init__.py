@@ -15,16 +15,18 @@ import weakref
 # The requests are blocking: _blocking() below runs each one in a thread of
 # twisted's pool while the calling green thread waits, so the twisted reactor
 # thread (SIP, DNS lookups, notifications, every other green thread) keeps
-# running for the length of a fetch or an update.
-from xcaplib.green import XCAPClient
+# running for the length of a fetch or an update. The plain client, not
+# xcaplib.green's: that one hands the request to a thread itself, and from a
+# thread of the pool it would create a second eventlib hub, which fails.
+from xcaplib.client import XCAPClient
 from sipsimple.threading.green import Worker
 
 
 def _blocking(func, *args, **kw):
     """Run a blocking XCAP request in a thread of twisted's pool, the calling green thread waiting
-    for it. xcaplib's client monkey-patches socket and ssl with gevent at import, so a request made
-    in a green thread of the reactor thread ran gevent's hub there, and twisted (SIP, DNS lookups,
-    timers, notifications) stood still for the length of each fetch or update."""
+    for it, so twisted (SIP, DNS lookups, timers, notifications) runs meanwhile. Older xcaplib
+    monkey-patches socket and ssl with gevent at import: made in a green thread of the reactor
+    thread, a request ran gevent's hub there and stopped twisted for its length."""
     from eventlib import coros
     from twisted.internet import threads
     event = coros.event()
