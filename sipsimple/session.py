@@ -1118,6 +1118,14 @@ class Session(object):
         self.remote_sylk_zrtp_capability = peer_capability_from_headers(data.headers)
         notification_center.post_notification('SIPSessionNewIncoming', sender=self, data=NotificationData(streams=self.proposed_streams[:], headers=data.headers, replaced_dialog=replaced_dialog_id))
 
+    @staticmethod
+    def _route_unreachable(data):
+        """Whether an outgoing INVITE ended before any response because the route could not be
+        reached: pjsip itself fails it (originator local) with 503 (a transport error: no connection,
+        a TLS handshake that timed out) or 408 (nothing came back). A response from the other end
+        has originator remote; a cancelled session goes through disconnecting first."""
+        return data.originator == 'local' and data.prev_state == 'outgoing' and getattr(data, 'code', 0) in (408, 503)
+
     @transition_state(None, 'connecting')
     @run_in_green_thread
     def connect(self, to_header, routes, streams, is_focus=False, transfer_info=None, extra_headers=None):
@@ -1149,6 +1157,7 @@ class Session(object):
         self.direction = 'outgoing'
         self.proposed_streams = streams
         self.route = routes[0]
+        remaining_routes = list(routes[1:])     # tried in turn when the INVITE cannot be sent to a route (transport failure)
         self.transport = self.route.transport.lower()
         self.local_focus = is_focus
         self._invitation = Invitation()
@@ -1237,6 +1246,26 @@ class Session(object):
                 with api.timeout(settings.sip.invite_timeout):
                     while True:
                         notification = self._channel.wait()
+                        if notification.name.startswith('SIPInvitation') and notification.sender is not self._invitation:
+                            continue    # left over from an INVITE to a route given up on
+                        if notification.name == 'SIPInvitationChangedState' and notification.data.state == 'disconnected' and remaining_routes and self._route_unreachable(notification.data):
+                            failed_route, reason = self.route, notification.data.reason
+                            notification_center.remove_observer(self, sender=self._invitation)
+                            self.route = remaining_routes.pop(0)
+                            self.transport = self.route.transport.lower()
+                            try:
+                                contact_uri = self.account.contact[PublicGRUUIfAvailable, self.route]
+                            except KeyError:
+                                raise InvitationDisconnectedError(notification.sender, notification.data)
+                            route_header = RouteHeader(self.route.uri)
+                            contact_header = ContactHeader(contact_uri)
+                            if is_focus:
+                                contact_header.parameters[b'isfocus'] = None
+                            self._invitation = Invitation()
+                            notification_center.add_observer(self, sender=self._invitation)
+                            notification_center.post_notification('SIPSessionWillTryNextRoute', sender=self, data=NotificationData(failed_route=failed_route, route=self.route, reason=reason))
+                            self._invitation.send_invite(to_header.uri, from_header, to_header, route_header, contact_header, local_sdp, self.account.credentials, extra_headers)
+                            continue
                         if notification.name == 'SIPInvitationGotSDPUpdate':
                             if notification.data.succeeded:
                                 local_sdp = notification.data.local_sdp
