@@ -12,10 +12,10 @@ import random
 import socket
 import weakref
 
-# Always the green client: it does the HTTP(S) work in a worker thread while
-# the calling green thread waits. The gevent variant ran gevent's hub (and the
-# blocking TLS reads under it) on the twisted reactor thread, stalling SIP,
-# notifications and every other green thread for the length of each fetch.
+# The requests are blocking: _blocking() below runs each one in a thread of
+# twisted's pool while the calling green thread waits, so the twisted reactor
+# thread (SIP, DNS lookups, notifications, every other green thread) keeps
+# running for the length of a fetch or an update.
 from xcaplib.green import XCAPClient
 from sipsimple.threading.green import Worker
 
