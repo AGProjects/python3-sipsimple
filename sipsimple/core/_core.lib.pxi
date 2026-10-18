@@ -259,7 +259,14 @@ cdef class PJSIPEndpoint:
 cdef class PJMEDIAEndpoint:
     def __cinit__(self, PJCachingPool caching_pool):
         cdef int status
-        status = pjmedia_endpt_create(&caching_pool._obj.factory, NULL, 1, &self._obj)
+        cdef pj_pool_factory *factory = &caching_pool._obj.factory
+        cdef pjmedia_endpt *endpoint = NULL
+        # creating the endpoint initialises the audio subsystem: ALSA, which on PipeWire makes
+        # a blocking D-Bus call; without the GIL so the other threads (the twisted reactor:
+        # DNS lookups, timers) keep running meanwhile
+        with nogil:
+            status = pjmedia_endpt_create(factory, NULL, 1, &endpoint)
+        self._obj = endpoint
         if status != 0:
             raise PJSIPError("Could not create PJMEDIA endpoint", status)
         self._pool = pjmedia_endpt_create_pool(self._obj, "PJMEDIAEndpoint", 4096, 4096)
@@ -296,6 +303,7 @@ cdef class PJMEDIAEndpoint:
 
     cdef void _video_subsystem_init(self, PJCachingPool caching_pool):
         cdef int status
+        cdef pj_pool_factory *factory = &caching_pool._obj.factory
 
         status = pjmedia_video_format_mgr_create(self._pool, 64, 0, NULL)
         if status != 0:
@@ -323,7 +331,8 @@ cdef class PJMEDIAEndpoint:
         if status != 0:
             raise PJSIPError("Could not initialize vpx video codecs", status)
         self._has_vpx = 1
-        status = pjmedia_vid_dev_subsys_init(&caching_pool._obj.factory)
+        with nogil:     # probes the cameras (V4L2): without the GIL, as the audio subsystem
+            status = pjmedia_vid_dev_subsys_init(factory)
         if status != 0:
             raise PJSIPError("Could not initialize video subsystem", status)
         self._has_video = 1
