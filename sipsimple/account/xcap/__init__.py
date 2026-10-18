@@ -19,6 +19,19 @@ import weakref
 from xcaplib.green import XCAPClient
 from sipsimple.threading.green import Worker
 
+
+def _blocking(func, *args, **kw):
+    """Run a blocking XCAP request in a thread of twisted's pool, the calling green thread waiting
+    for it. xcaplib's client monkey-patches socket and ssl with gevent at import, so a request made
+    in a green thread of the reactor thread ran gevent's hub there, and twisted (SIP, DNS lookups,
+    timers, notifications) stood still for the length of each fetch or update."""
+    from eventlib import coros
+    from twisted.internet import threads
+    event = coros.event()
+    deferred = threads.deferToThread(func, *args, **kw)
+    deferred.addCallbacks(event.send, lambda failure: event.send_exception(failure.type, failure.value, failure.getTracebackObject()))
+    return event.wait()
+
 from io import StringIO
 from collections import OrderedDict
 from contextlib import contextmanager
@@ -152,7 +165,7 @@ class Document(object):
         try:
             notification_data = NotificationData(method='GET', url=self.url, application=self.application, etag=self.etag, result='fetch')
             notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
-            document = self.manager.client.get(self.application, etagnot=self.etag, globaltree=self.global_tree, headers={'Accept': self.payload_type.content_type}, filename=self.filename)
+            document = _blocking(self.manager.client.get, self.application, etagnot=self.etag, globaltree=self.global_tree, headers={'Accept': self.payload_type.content_type}, filename=self.filename)
             self.content = self.payload_type.parse(document)
             self.etag = document.etag
             self.__dict__['dirty'] = False
@@ -214,9 +227,9 @@ class Document(object):
         try:
             kw = dict(etag=self.etag) if self.etag is not None else dict(etagnot='*')
             if data is not None:
-                response = self.manager.client.put(self.application, data, globaltree=self.global_tree, filename=self.filename, headers={'Content-Type': self.payload_type.content_type}, **kw)
+                response = _blocking(self.manager.client.put, self.application, data, globaltree=self.global_tree, filename=self.filename, headers={'Content-Type': self.payload_type.content_type}, **kw)
             else:
-                response = self.manager.client.delete(self.application, data, globaltree=self.global_tree, filename=self.filename, **kw)
+                response = _blocking(self.manager.client.delete, self.application, data, globaltree=self.global_tree, filename=self.filename, **kw)
         except (BadStatusLine, ConnectionLost, URLError) as e:
             notification_data = NotificationData(method=method, url=self.url, application=self.application, result='failure', reason=str(e), code=408, etag=self.etag)
             notification_center.post_notification('XCAPTrace', sender=self, data=notification_data)
