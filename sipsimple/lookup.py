@@ -50,9 +50,9 @@ def _green_wait_for(fd, readable, writable, _error, expiration):
     if expiration is None:
         timeout = None
     else:
-        timeout = expiration - time()
-        if timeout <= 0.0:
-            raise dns.exception.Timeout
+        # past the deadline still look once without waiting: when the reactor thread was busy
+        # the answer may be in the socket already, and it is not a timeout of the name server
+        timeout = max(expiration - time(), 0.0)
     rlist, wlist, _ = select.select([fd] if readable else [], [fd] if writable else [], [], timeout)
     if not rlist and not wlist:
         raise dns.exception.Timeout
