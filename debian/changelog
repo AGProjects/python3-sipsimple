@@ -1,3 +1,13 @@
+python3-sipsimple (5.6.3) unstable; urgency=medium
+
+  * Try the next route when an outgoing INVITE cannot reach a proxy (transport error / no response)
+  * Make the TLS connect timeout a setting (tls.timeout, 10 s default)
+  * DNS: read an answer that arrived while the reactor was busy instead of timing out
+  * Release the GIL while pjmedia initialises the audio and video devices
+  * XCAP: do not reload the data when the documents did not change
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Sun, 18 Oct 2026 09:43:39 -0300
+
 python3-sipsimple (5.6.2) unstable; urgency=medium
 
   * Fixed starting XCAP without subscription to xcap-diff
