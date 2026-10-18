@@ -27,7 +27,7 @@ class Engine(Thread, metaclass=Singleton):
                              "tls_ca_file": None,
                              "tls_cert_file": None,
                              "tls_privkey_file": None,
-                             "tls_timeout": 3000,
+                             "tls_timeout": 10000,
                              # Just the SDK version. The pjsip version used to be appended
                              # too, along with PJ_SVN_REVISION -- which is not an SVN revision
                              # in this tree but the pjsip series (217 for 2.17), so it only

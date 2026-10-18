@@ -113,6 +113,9 @@ class TLSSettings(SettingsGroup):
     ca_list = Setting(type=Path, default=None, nillable=True)
     certificate = Setting(type=Path, default=None, nillable=True)
     verify_server = Setting(type=bool, default=False)
+    # milliseconds for an outgoing TLS connection to be up: the TCP connect and the handshake
+    # together (pjlib starts the timer before the TCP connect)
+    timeout = Setting(type=NonNegativeInteger, default=10000)
 
 class SIPSimpleSettings(SettingsObject):
     __id__ = 'SIPSimpleSettings'

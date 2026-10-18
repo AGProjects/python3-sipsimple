@@ -184,7 +184,8 @@ class SIPApplication(object, metaclass=Singleton):
                                         verify_server=settings.tls.verify_server,
                                         ca_file=settings.tls.ca_list.normalized if settings.tls.ca_list else None,
                                         cert_file=settings.tls.certificate.normalized if settings.tls.certificate else None,
-                                        privkey_file=settings.tls.certificate.normalized if settings.tls.certificate else None)
+                                        privkey_file=settings.tls.certificate.normalized if settings.tls.certificate else None,
+                                        timeout=settings.tls.timeout)
         except Exception as e:
             notification_center.post_notification('SIPApplicationFailedToStartTLS', sender=self, data=NotificationData(error=e))
         else:
@@ -462,7 +463,7 @@ class SIPApplication(object, metaclass=Singleton):
                     self.engine.set_udp_port(settings.sip.udp_port)
                 if 'sip.tcp_port' in notification.data.modified:
                     self.engine.set_tcp_port(settings.sip.tcp_port)
-                if {'sip.tls_port', 'tls.ca_list', 'default_account', 'tls.verify_server', 'tls.certificate'}.intersection(notification.data.modified):
+                if {'sip.tls_port', 'tls.ca_list', 'default_account', 'tls.verify_server', 'tls.certificate', 'tls.timeout'}.intersection(notification.data.modified):
                     self._initialize_tls()
                 if 'rtp.port_range' in notification.data.modified:
                     self.engine.rtp_port_range = (settings.rtp.port_range.start, settings.rtp.port_range.end)
