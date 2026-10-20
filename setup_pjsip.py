@@ -130,7 +130,6 @@ class PJSIP_build_ext(build_ext):
                    "#define PJMEDIA_HAS_ILBC_CODEC 0",
                    "#define PJMEDIA_HAS_OPENCORE_AMRNB_CODEC 0",
                    "#define PJMEDIA_HAS_OPENCORE_AMRWB_CODEC 0",
-                   "#define PJMEDIA_HAS_BCG729 1",
                    "#define PJMEDIA_HAS_WEBRTC_AEC 1",
                    "#define PJMEDIA_RTP_PT_TELEPHONE_EVENTS 101",
                    "#define PJMEDIA_RTP_PT_TELEPHONE_EVENTS_STR \"101\"",
@@ -312,6 +311,7 @@ class PJSIP_build_ext(build_ext):
                     break
         if bcg729_path is not None:
             log.info("Found bcg729 at %s; enabling G.729 codec" % bcg729_path)
+            extra_config.append("#define PJMEDIA_HAS_BCG729 1")
         else:
             log.info("bcg729 development headers not found; G.729 codec will be disabled. "
                      "Install libbcg729-dev (Debian/Ubuntu), run mac/02b-install-bcg729.sh "
