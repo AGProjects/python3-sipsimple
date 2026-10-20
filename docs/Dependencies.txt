@@ -14,7 +14,7 @@ SIP SIMPLE SDK depends upon the following third party C sources:
 
 Fetch and patch the dependencies using the get_dependencies.sh script:
 
-    ./get_dependencies.sh
+    bash get_dependencies.sh
 
 The script downloads pjproject-2.17.tar.gz, copies the ZRTPCPP tree into
 deps/pjsip/third_party/zsrtp/, then applies the patch series from

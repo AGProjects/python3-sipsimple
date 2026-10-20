@@ -24,11 +24,11 @@ Same flow as on any Debian-based Linux: see Install.linux. From inside
 the python3-sipsimple checkout:
 
     cd linux
-    ./01-install-build-env.sh
-    ./02-install-c-deps.sh
-    ./03-install-python-deps.sh
-    ./04-install_sipsimple.sh
-    ./05-install_sipclients.sh
+    bash 01-install-build-env.sh
+    bash 02-install-c-deps.sh
+    bash 03-install-python-deps.sh
+    bash 04-install_sipsimple.sh
+    bash 05-install_sipclients.sh
 
 The build defaults to PJSIP 2.12 and applies the patch series from
 deps/patches/. On 64-bit Raspberry Pi OS no aconfigure edits are needed —
@@ -40,7 +40,7 @@ Building a debian package
 -------------------------
 
 For each project below, in this order, clone the repo and run
-`./makedeb.sh`, then `sudo dpkg -i dist/*.deb`:
+`bash makedeb.sh`, then `sudo dpkg -i dist/*.deb`:
 
   1. python3-application
   2. python3-otr

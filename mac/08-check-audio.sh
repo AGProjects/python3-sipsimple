@@ -21,9 +21,9 @@
 #      under that name on this machine?
 #
 # Usage:
-#     ./08-check-audio.sh                  # checks, plus capture test if allowed
-#     ./08-check-audio.sh --no-record      # skip the capture test
-#     ./08-check-audio.sh --force-record   # attempt capture even if denied
+#     bash 08-check-audio.sh                  # checks, plus capture test if allowed
+#     bash 08-check-audio.sh --no-record      # skip the capture test
+#     bash 08-check-audio.sh --force-record   # attempt capture even if denied
 #                                          # (will block until the timeout)
 #
 # Every external command that can block is run under a watchdog, and INT/TERM
@@ -373,7 +373,7 @@ if [ "$remote" -eq 1 ]; then
     echo "granted microphone access. Either run from a Terminal window opened"
     echo "on the machine itself, or use:"
     echo
-    echo "    ./09-run-in-gui-session.sh ./08-check-audio.sh"
+    echo "    bash 09-run-in-gui-session.sh bash 08-check-audio.sh"
 fi
 echo "Done."
 hr

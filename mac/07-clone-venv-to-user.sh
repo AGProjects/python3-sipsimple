@@ -17,11 +17,11 @@
 # same Python minor version, so it loads unchanged.
 #
 # Usage:
-#   sudo ./07-clone-venv-to-user.sh <target-user> [dest-venv-path]
+#   sudo bash 07-clone-venv-to-user.sh <target-user> [dest-venv-path]
 #
-#   sudo ./07-clone-venv-to-user.sh bob
+#   sudo bash 07-clone-venv-to-user.sh bob
 #       -> /Users/bob/work/<same-venv-name>
-#   sudo ./07-clone-venv-to-user.sh bob /Users/bob/envs/sipsimple
+#   sudo bash 07-clone-venv-to-user.sh bob /Users/bob/envs/sipsimple
 #       -> that exact path
 #
 # Options:

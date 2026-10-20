@@ -5,7 +5,7 @@
 # (G.729, opus, AMR-WB, etc.) made it into the compiled _core.so.
 #
 # Usage:
-#     ./06-show-codecs.sh
+#     bash 06-show-codecs.sh
 #
 # Exits 0 if the engine started and the codec list was printed; non-zero if
 # something went wrong (import error, engine never came up, etc.).

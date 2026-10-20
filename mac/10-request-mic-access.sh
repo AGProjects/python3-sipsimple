@@ -23,9 +23,9 @@
 #
 # Usage
 # -----
-#     ./10-request-mic-access.sh              # ask, wait up to 120s
-#     ./10-request-mic-access.sh --timeout 30
-#     ./10-request-mic-access.sh --reset      # forget the decision, then ask
+#     bash 10-request-mic-access.sh              # ask, wait up to 120s
+#     bash 10-request-mic-access.sh --timeout 30
+#     bash 10-request-mic-access.sh --reset      # forget the decision, then ask
 #
 # The dialog can only appear in a GUI (Aqua) session -- at the console or
 # over Screen Sharing. This script refuses to run anywhere else, because in
@@ -134,7 +134,7 @@ if initial == 2:
     print("Access was explicitly refused earlier, and macOS will not ask a")
     print("second time. Either flip it back on in System Settings >")
     print("Privacy & Security > Microphone, or clear the decision and rerun:")
-    print("    ./10-request-mic-access.sh --reset")
+    print("    bash 10-request-mic-access.sh --reset")
     raise SystemExit(1)
 
 # Build a real capture session. Merely querying status never prompts; the
@@ -201,8 +201,8 @@ if final == 3:
     print()
     print("Granted. Terminal now appears in System Settings > Privacy &")
     print("Security > Microphone, and the grant persists across reboots.")
-    print("Verify with:  ./08-check-audio.sh")
-    print("From ssh:     ./09-run-in-gui-session.sh ./08-check-audio.sh")
+    print("Verify with:  bash 08-check-audio.sh")
+    print("From ssh:     bash 09-run-in-gui-session.sh bash 08-check-audio.sh")
     raise SystemExit(0)
 elif final == 2:
     print()

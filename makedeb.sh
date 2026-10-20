@@ -29,8 +29,7 @@ fi
 # Remove stale build artifacts (may be configured for the wrong architecture)
 rm -rf dist build
 
-chmod +x get_dependencies.sh
-./get_dependencies.sh 2.17
+bash get_dependencies.sh 2.17
 
 sudo apt install -y equivs devscripts cython3 python3-setuptools
 

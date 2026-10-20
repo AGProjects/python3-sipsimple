@@ -80,10 +80,10 @@
 #   autotools and meson sources trip over.
 #
 # Usage:
-#   ./02-install-c-deps.sh              show the plan, ask, then converge
-#   ./02-install-c-deps.sh --dry-run    report only, change nothing
-#   ./02-install-c-deps.sh --yes        no prompt (unattended)
-#   ./02-install-c-deps.sh --only x264  act on one port
+#   bash 02-install-c-deps.sh              show the plan, ask, then converge
+#   bash 02-install-c-deps.sh --dry-run    report only, change nothing
+#   bash 02-install-c-deps.sh --yes        no prompt (unattended)
+#   bash 02-install-c-deps.sh --only x264  act on one port
 #
 # Exit: 0 = every library in the closure is universal.
 
@@ -495,7 +495,7 @@ if [ -z "$offenders" ] && [ -z "$failed" ]; then
         && echo "    environment snapshot written to ${SNAPSHOT#$SCRIPT_DIR/}"
     echo
     echo "==> OK — C dependencies are installed and universal."
-    echo "    Next: ./02b-install-bcg729.sh, then ./03-install-python-deps.sh"
+    echo "    Next: bash 02b-install-bcg729.sh, then bash 03-install-python-deps.sh"
     exit 0
 fi
 

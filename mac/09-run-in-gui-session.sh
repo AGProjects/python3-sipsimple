@@ -26,14 +26,14 @@
 #   * The microphone must have been granted ONCE, interactively, in that GUI
 #     session (at the console or over Screen Sharing). This script cannot do
 #     that part for you: the consent dialog needs a human. Run
-#     ./08-check-audio.sh there and answer the prompt.
+#     bash 08-check-audio.sh there and answer the prompt.
 #
 # Usage
 # -----
-#   ./09-run-in-gui-session.sh <command> [args...]
+#   bash 09-run-in-gui-session.sh <command> [args...]
 #
-#   ./09-run-in-gui-session.sh ./08-check-audio.sh
-#   ./09-run-in-gui-session.sh "$VIRTUAL_ENV/bin/sip-session3" sip:bob@example.com
+#   bash 09-run-in-gui-session.sh bash 08-check-audio.sh
+#   bash 09-run-in-gui-session.sh "$VIRTUAL_ENV/bin/sip-session3" sip:bob@example.com
 #
 # Options
 #   -u, --user USER   run as this user (default: the console user)
@@ -128,7 +128,7 @@ if [ "$(id -u)" -ne 0 ]; then
     # non-empty value rather than a true one. Build the flag list explicitly.
     reexec_flags=()
     [ "$quiet" -eq 1 ] && reexec_flags+=(-q)
-    exec sudo -- "$0" ${reexec_flags+"${reexec_flags[@]}"} --user "$target_user" -- "$@"
+    exec sudo -- bash "$0" ${reexec_flags+"${reexec_flags[@]}"} --user "$target_user" -- "$@"
 fi
 
 # Resolve the command to an absolute path while we can still see the caller's

@@ -12,15 +12,15 @@ Numbered installer scripts live in the ../mac folder. From inside the
 python3-sipsimple checkout:
 
     cd mac
-    ./01-install-build-env.sh        # checks Python and MacPorts, installs virtualenv
-    ./02-install-c-deps.sh           # MacPorts: yasm x264 gnutls openssl sqlite3
-                                     #           ffmpeg mpfr libmpc libvpx opus
-                                     #           gmp mpc libuuid pkgconfig wget
-    ./03-install-python-deps.sh      # creates venv at ~/work/sipsimple-python-PVER-ARCH-env
-                                     # and pip-installs python-requirements.txt +
-                                     # sipsimple-requirements.txt
-    ./04-install_sipsimple.sh        # patches and builds PJSIP 2.12, installs the SDK
-    ./05-install_sipclients.sh       # installs the sip-* command line clients
+    bash 01-install-build-env.sh        # checks Python and MacPorts, installs virtualenv
+    bash 02-install-c-deps.sh           # MacPorts: yasm x264 gnutls openssl sqlite3
+                                        #           ffmpeg mpfr libmpc libvpx opus
+                                        #           gmp mpc libuuid pkgconfig wget
+    bash 03-install-python-deps.sh      # creates venv at ~/work/sipsimple-python-PVER-ARCH-env
+                                        # and pip-installs python-requirements.txt +
+                                        # sipsimple-requirements.txt
+    bash 04-install_sipsimple.sh        # patches and builds PJSIP 2.12, installs the SDK
+    bash 05-install_sipclients.sh       # installs the sip-* command line clients
 
 After 04 and 05 the venv is at ~/work/sipsimple-python-PVER-ARCH-env (e.g.
 ~/work/sipsimple-python-3.11-arm64-env on Apple Silicon). Either source the

@@ -11,11 +11,11 @@ SRC_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # PJSIP version selection. Never interactive: the version comes from the
 # command line, then the environment, then the default.
 #
-#   ./04-install_sipsimple.sh                    -> 2.17 (default)
-#   ./04-install_sipsimple.sh 2.12               -> legacy series
-#   ./04-install_sipsimple.sh --version 2.12
-#   ./04-install_sipsimple.sh --version=2.12
-#   PJSIP_VERSION=2.12 ./04-install_sipsimple.sh
+#   bash 04-install_sipsimple.sh                    -> 2.17 (default)
+#   bash 04-install_sipsimple.sh 2.12               -> legacy series
+#   bash 04-install_sipsimple.sh --version 2.12
+#   bash 04-install_sipsimple.sh --version=2.12
+#   PJSIP_VERSION=2.12 bash 04-install_sipsimple.sh
 #
 # See PJSIP_217_MIGRATION.md for the difference between the two patch sets
 # (deps/patches/ for 2.12, deps/patches/2.17/ for 2.17).
@@ -106,8 +106,7 @@ rm -rf deps/pjsip deps/ZRTPCPP deps/pjproject-* 2>/dev/null || true
 
 # AUTOINSTALL=0 skips the apt block at the top of get_dependencies.sh
 # (we already installed everything via 02-install-c-deps.sh).
-chmod +x ./get_dependencies*
-AUTOINSTALL=0 PJSIP_VERSION="$PJSIP_VERSION" ./get_dependencies.sh
+AUTOINSTALL=0 PJSIP_VERSION="$PJSIP_VERSION" bash get_dependencies.sh
 
 if [ $? -ne 0 ]; then
     echo
@@ -139,7 +138,7 @@ python3-sipsimple installed.
   Virtualenv:     $VENV
   Scripts/bin:    $VENV/bin/
 
-To use the SDK and (after running ./05-install_sipclients.sh) the sip-* CLI
+To use the SDK and (after running bash 05-install_sipclients.sh) the sip-* CLI
 tools, activate the venv in any shell:
 
     source $SCRIPT_DIR/activate_venv.sh

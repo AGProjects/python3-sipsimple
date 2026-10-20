@@ -11,7 +11,7 @@ SRC_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # PJSIP version selection. Never interactive: the version comes from the
 # command line, then the environment, then the default.
 #
-#   ./04-install_sipsimple.sh                    -> 2.17
+#   bash 04-install_sipsimple.sh                    -> 2.17
 #
 # Only 2.17 is supported (patch series in deps/patches/2.17/). The
 # --version flag / PJSIP_VERSION are still accepted but must say 2.17.
@@ -100,8 +100,7 @@ echo "Building against PJSIP $PJSIP_VERSION."
 # Re-running needs a clean deps tree; get_dependencies.sh fails otherwise.
 rm -rf deps/pjsip deps/ZRTPCPP deps/pjproject-* 2>/dev/null || true
 
-chmod +x ./get_dependencies*
-./get_dependencies.sh --version "$PJSIP_VERSION"
+bash get_dependencies.sh --version "$PJSIP_VERSION"
 
 if [ $? -ne 0 ]; then
     echo
@@ -123,7 +122,7 @@ if [ -f "/opt/local/include/bcg729/encoder.h" ] && [ -f "/opt/local/lib/libbcg72
 else
     echo
     echo "NOTE: bcg729 not found at /opt/local — G.729 codec will be DISABLED."
-    echo "      Run '$SCRIPT_DIR/02b-install-bcg729.sh' first if you want G.729."
+    echo "      Run 'bash $SCRIPT_DIR/02b-install-bcg729.sh' first if you want G.729."
     echo
 fi
 
@@ -220,11 +219,11 @@ fi
 # exception here is logged but doesn't fail the install.
 echo
 # Delegate the live codec enumeration to a standalone script so you can run
-# the same check at any time without re-installing — see ./06-show-codecs.sh.
-if [ -x "$SCRIPT_DIR/06-show-codecs.sh" ]; then
-    "$SCRIPT_DIR/06-show-codecs.sh" || echo "  (codec enumeration failed; install itself was OK)"
+# the same check at any time without re-installing — see 06-show-codecs.sh.
+if [ -f "$SCRIPT_DIR/06-show-codecs.sh" ]; then
+    bash "$SCRIPT_DIR/06-show-codecs.sh" || echo "  (codec enumeration failed; install itself was OK)"
 else
-    echo "  (skipping codec check: $SCRIPT_DIR/06-show-codecs.sh not executable)"
+    echo "  (skipping codec check: $SCRIPT_DIR/06-show-codecs.sh not found)"
 fi
 
 # Resolve the venv root and the python3 site-packages dir for the post-install
@@ -243,7 +242,7 @@ python3-sipsimple installed.
   Virtualenv:     $VENV
   Scripts/bin:    $VENV/bin/
 
-To use the SDK and (after running ./05-install_sipclients.sh) the sip-* CLI
+To use the SDK and (after running bash 05-install_sipclients.sh) the sip-* CLI
 tools, activate the venv in any shell:
 
     source $SCRIPT_DIR/activate_venv.sh

@@ -76,4 +76,4 @@ echo "  port:     $(command -v port)"
 echo "  otool:    $(command -v otool)"
 [ -n "$(command -v cmake)" ] && echo "  cmake:    $(command -v cmake)"
 echo
-echo "Next: ./02-install-c-deps.sh"
+echo "Next: bash 02-install-c-deps.sh"
