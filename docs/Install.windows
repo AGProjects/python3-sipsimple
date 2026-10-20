@@ -1,61 +1,64 @@
-
 SIP SIMPLE SDK installation on Microsoft Windows
 ------------------------------------------------
 
 Home page: http://sipsimpleclient.org
 
-This document describes the installation procedure on Microsoft Windows
-operating systems. Supported versions are Windows XP or higher.
+This document describes the installation procedure on 64-bit Microsoft
+Windows (10 or later).
 
 
 Step 1. Prerequisites
 ---------------------
 
-The building process is designed to work with the MSYS2 environment and the
-MinGW-w64 compiler toolchain.  Other approaches might work but they are not
+The building process is designed to work with the MSYS2 environment and its
+UCRT64 MinGW-w64 toolchain.  Other approaches might work but they are not
 tested nor supported.
 
 MSYS2: MSYS2 is a minimal Unix-like environment for Windows.  It includes a
 port of the 'pacman' package manager (ported from Arch Linux) and a pretty
-extensive collection of packages which can be easily installed.  It contains
-packages for the MinGW-w64 toolchain, for 32 and 64 bit architectures.
+extensive collection of packages which can be easily installed.
 
-MinGW-w64: MinGW is a minimal compilation toolchain for Windows.  It
-contains GCC and allows for compilation of native applications for Windows. 
-The original MinGW project (available at http://mingw.org, henceforth
-referred to as 'MinGW32') didn't support 64 bit Windows so the MinGW-w64
-project was created.  It contains support for both 32 and 64 bit
-architectures and generally it's better maintained than MinGW32.
+UCRT64: of MSYS2's environments, UCRT64 builds native 64-bit Windows code
+with GCC against the Universal C Runtime.  It is the one to use: PyQt6, which
+Blink needs, is only packaged there (and in CLANG64), not in the older
+MINGW64 environment.  Every package below is named mingw-w64-ucrt-x86_64-*.
 
 
-Step 1.1. Installing MSYS2 and MinGW-w64
-----------------------------------------
+Step 1.1. Installing MSYS2
+--------------------------
 
-The following instructions will guide you through the installation of a MSYS2 and MinGW-w64.
-
-* Go to http://msys2.github.io and download the MSYS2 installer
-* Run it and install it on C:\msys2 (or any other path, but note it has to be
+* Go to https://www.msys2.org and download the MSYS2 installer
+* Run it and install it on C:\msys64 (or any other path, but note it has to be
   ASCII only and with no spaces! The no spaces restriction also applies to the
   paths of the packages that will be built during the installation)
-* Upgrade the system packages by following the instructions from:
-  http://msys2.github.io
+* Update it: pacman -Syu (repeat until nothing is left to update)
 
-Launch MSYS MINGW64
+Launch "MSYS2 UCRT64" and run everything below in it.
 
 * Install the compiler toolchain and assorted tools:
-  pacman -S mingw-w64-x86_64-toolchain
+
+  pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-pkgconf \
+            mingw-w64-ucrt-x86_64-autotools git patch make wget tar
 
 
-Step 1.2. Installing Python-PIP
--------------------------------
+Step 1.2. Installing Python
+---------------------------
 
 The Python binaries that are available for download on Python's official
 website are compiled with Visual Studio, and if we use MinGW to compile
 libraries which are then used by Python modules we are at risk because the
-resulting application would load 2 different C runtimes.  So you should
-remove python3 if it is installed in Windows.
+resulting application would load 2 different C runtimes.  Use MSYS2's own
+Python only.
 
-* Install pip/setuptools: pacman -S mingw-w64-x86_64-python3-pip
+* Install Python and pip:
+
+  pacman -S mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-python-pip \
+            mingw-w64-ucrt-x86_64-python-setuptools mingw-w64-ucrt-x86_64-python-wheel \
+            mingw-w64-ucrt-x86_64-cython
+
+* MSYS2's Python is marked as externally managed; let pip install into it:
+
+  export PIP_BREAK_SYSTEM_PACKAGES=1
 
 
 Step 2. Install dependencies
@@ -66,63 +69,19 @@ their minimum version number.
 
 * Install required dependencies with pacman:
 
-  pacman -S mingw-w64-x86_64-gnutls mingw-w64-x86_64-python3-lxml \
-  mingw-w64-x86_64-ffmpeg mingw-w64-x86_64-sqlite3 msys2-w32api-headers \
-  mingw-w64-x86_64-gmp mingw-w64-x86_64-mpc mingw-w64-x86_64-mpfr
-
-* Install the Python package dependencies:
-
-  pip3 install cython==0.29.37 dnspython twisted python-dateutil greenlet
+  P=mingw-w64-ucrt-x86_64
+  pacman -S $P-gnutls $P-openssl $P-ffmpeg $P-libvpx $P-opus $P-sqlite3 \
+            $P-gmp $P-mpc $P-mpfr \
+            $P-python-lxml $P-python-cryptography $P-python-pyopenssl $P-python-gmpy2 \
+            $P-python-dateutil $P-python-dnspython $P-python-greenlet $P-python-twisted
 
 
-Step 2.1. Install python3-application, python3-gnults and python3-otr
+Step 2.1. Install python3-application, python3-gnutls and python3-otr
 ---------------------------------------------------------------------
 
-* Install git:
-  pacman -S git
-
-* Install python3-application
-
-  pip3 install git+https://github.com/AGProjects/python3-application.git
-
-* Install python3-gnutls:
-
-  pacman -S mingw-w64-x86_64-python-pyopenssl
+  pip install git+https://github.com/AGProjects/python3-application.git
   pip install git+https://github.com/AGProjects/python3-gnutls.git --no-build-isolation
-
-* Install cryptography:
-
-  pacman -S --overwrite '*' mingw-w64-x86_64-python-setuptools-rust patch
-
-  wget https://mirror.msys2.org/mingw/sources/mingw-w64-python-cryptography-38.0.4-1.src.tar.zst
-
-  Extract this and cd into the dir:
-  tar --zstd -xvf ./mingw-w64-python-cryptography-38.0.4-1.src.tar.zst
-  cd mingw-w64-python-cryptography
-  makepkg-mingw -cfiL --nocheck --nosign
-
-* Install gmpy2:
-
-  pacman -S mingw-w64-x86_64-python-gmpy2
-
-* Install python3-otr:
-
   pip install git+https://github.com/AGProjects/python3-otr.git --no-build-isolation
-
-
-Step 2.2. Build and install some extra packages
------------------------------------------------
-
-mingw-w64-intsafe-headers
-
-* Get the package code: darcs get http://devel.ag-projects.com/repositories/windows/mingw-w64-intsafe-headers
-* Enter the directory and build+install the package: cd mingw-w64-intsafe-headers && makepkg-mingw -cfiL --nocheck --nosign
-* Install will probably fail, so install with pacman -U --overwrite '*' ./mingw-w64-intsafe-headers-1.1.0-1-any.pkg.tar.zst
-
-mingw-w64-dshow-baseclasses
-
-* Get the package code: darcs get http://devel.ag-projects.com/repositories/windows/mingw-w64-dshow-baseclasses
-* Enter the directory and build+install the package: cd mingw-w64-dshow-baseclasses && makepkg-mingw -cfiL --nocheck --nosign
 
 
 Step 3. Install SIP SIMPLE client SDK
@@ -153,7 +112,25 @@ contain any space in its name.
 
   cd python3-sipsimple
 
-  ./get_dependencies.sh
+  bash get_dependencies.sh
 
   pip install . --no-build-isolation
 
+setup_pjsip.py takes the include and library paths from $MINGW_PREFIX, which
+the UCRT64 shell sets to /ucrt64.  The DirectShow base classes that pjsip's
+camera support needs are part of pjsip 2.17 (third_party/BaseClasses); the
+mingw-w64-intsafe-headers and mingw-w64-dshow-baseclasses packages that older
+versions of this document asked for are no longer needed.
+
+Check the installation:
+
+  python3 -c "import sipsimple; print(sipsimple.__version__)"
+
+
+Notes
+-----
+
+* Audio uses pjsip's WMME backend, with patch 05's device change listener.
+* Video capture uses pjsip's DirectShow backend.
+* Screen capture as a video device ("My screen") is macOS and Linux only; on
+  Windows pjmedia_screen_dev_* are stubs.

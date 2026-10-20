@@ -70,10 +70,10 @@ if sys_platform == "darwin":
     os.environ['MACOSX_DEPLOYMENT_TARGET'] = min_osx_version
 
 if sys_platform == "win32":
-    offmpeg_cflags = "-I/mingw64/include"
-    offmepg_ldflags = "-L/mingw64/lib/"
-    local_cflags = " %s" % (offmpeg_cflags)
-    local_ldflags = " %s" % (offmepg_ldflags)
+    # MSYS2: the environment's prefix (/ucrt64, /mingw64, /clang64), as set by its shell
+    mingw_prefix = os.environ.get("MINGW_PREFIX", "/ucrt64")
+    local_cflags = " -I%s/include" % mingw_prefix
+    local_ldflags = " -L%s/lib" % mingw_prefix
     os.environ['CFLAGS'] = os.environ.get('CFLAGS', '') + local_cflags
     os.environ['LDFLAGS'] = os.environ.get('LDFLAGS', '') + local_ldflags
 
@@ -305,7 +305,7 @@ class PJSIP_build_ext(build_ext):
         # writes PJMEDIA_HAS_BCG729=1 into confdefs.h and links libbcg729 in.
         bcg729_path = os.environ.get("SIPSIMPLE_BCG729_PATH")
         if bcg729_path is None:
-            for cand in ("/opt/local", "/opt/homebrew", "/usr/local", "/mingw64", "/usr"):
+            for cand in ("/opt/local", "/opt/homebrew", "/usr/local", os.environ.get("MINGW_PREFIX", "/mingw64"), "/usr"):
                 if os.path.exists(os.path.join(cand, "include", "bcg729", "encoder.h")):
                     bcg729_path = cand
                     break
