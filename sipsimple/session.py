@@ -111,6 +111,18 @@ class SIPInvitationTransferDidFail(Exception):
 
 
 @decorator
+def _apply_contact_parameters(contact_header, parameters):
+    """Add extra Contact header parameters, e.g. RFC 3840 feature tags
+    ({'+g.agp.radio-ptt': None}). Names and values may be str or bytes; a
+    None value produces a bare parameter."""
+    for name, value in (parameters or {}).items():
+        if isinstance(name, str):
+            name = name.encode()
+        if isinstance(value, str):
+            value = value.encode()
+        contact_header.parameters[name] = value
+
+
 def transition_state(required_state, new_state):
     def state_transitioner(func):
         @preserve_signature(func)
@@ -1128,7 +1140,7 @@ class Session(object):
 
     @transition_state(None, 'connecting')
     @run_in_green_thread
-    def connect(self, to_header, routes, streams, is_focus=False, transfer_info=None, extra_headers=None):
+    def connect(self, to_header, routes, streams, is_focus=False, transfer_info=None, extra_headers=None, contact_parameters=None):
         self.greenlet = api.getcurrent()
         notification_center = NotificationCenter()
         settings = SIPSimpleSettings()
@@ -1233,6 +1245,7 @@ class Session(object):
             contact_header = ContactHeader(contact_uri)
             if is_focus:
                 contact_header.parameters[b'isfocus'] = None
+            _apply_contact_parameters(contact_header, contact_parameters)
             if self.transfer_info is not None:
                 if self.transfer_info.referred_by is not None:
                     extra_headers.append(Header('Referred-By', self.transfer_info.referred_by))
@@ -1261,6 +1274,7 @@ class Session(object):
                             contact_header = ContactHeader(contact_uri)
                             if is_focus:
                                 contact_header.parameters[b'isfocus'] = None
+                            _apply_contact_parameters(contact_header, contact_parameters)
                             self._invitation = Invitation()
                             notification_center.add_observer(self, sender=self._invitation)
                             notification_center.post_notification('SIPSessionWillTryNextRoute', sender=self, data=NotificationData(failed_route=failed_route, route=self.route, reason=reason))
@@ -1487,7 +1501,7 @@ class Session(object):
 
     @transition_state('incoming', 'accepting')
     @run_in_green_thread
-    def accept(self, streams, is_focus=False, extra_headers=None):
+    def accept(self, streams, is_focus=False, extra_headers=None, contact_parameters=None):
         self.greenlet = api.getcurrent()
         notification_center = NotificationCenter()
         settings = SIPSimpleSettings()
@@ -1604,6 +1618,7 @@ class Session(object):
                 contact_header.uri = local_contact_uri
             if is_focus:
                 contact_header.parameters[b'isfocus'] = None
+            _apply_contact_parameters(contact_header, contact_parameters)
             self._invitation.send_response(200, contact_header=contact_header, sdp=local_sdp, extra_headers=extra_headers)
             notification_center.post_notification('SIPSessionWillStart', sender=self)
             # Local and remote SDPs will be set after the 200 OK is sent
