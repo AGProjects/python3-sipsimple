@@ -14,6 +14,16 @@ if [ "$(dpkg --print-architecture)" = "armhf" ] && [ "$(uname -m)" = "aarch64" ]
     echo "Detected armhf userland on 64-bit kernel: building with '$SETARCH'"
 fi
 
+# Cython < 0.29.31 (e.g. Debian buster's 0.29.2) does not know the noexcept
+# keyword; under 0.29 semantics it is a no-op, so strip it in the build tree.
+strip_noexcept_for_old_cython() {
+    if python3 -c 'import re, sys, Cython; v = tuple(int(x) for x in re.findall(r"\d+", Cython.__version__)[:3]); sys.exit(0 if v < (0, 29, 31) else 1)'; then
+        echo "Cython $(python3 -c 'import Cython; print(Cython.__version__)') predates noexcept, removing it from the build tree"
+        find sipsimple \( -name '*.pyx' -o -name '*.pxd' -o -name '*.pxi' \) -exec sed -i -E 's/\) noexcept( |:|$)/)\1/' {} +
+        rm -f sipsimple/core/_core.c
+    fi
+}
+
 # rebuild mode: reuse the extracted build tree and compiled binaries from a
 # previous run; skips clean (-nc) and builds binary packages only (-b)
 if [ "$mode" = "rebuild" ]; then
@@ -22,6 +32,7 @@ if [ "$mode" = "rebuild" ]; then
         sed -i "s/) unstable/$distro) $distro/" debian/changelog
         head -1 debian/changelog
     fi
+    strip_noexcept_for_old_cython
     $SETARCH debuild --no-sign -nc -b
     exit 0
 fi
@@ -64,5 +75,7 @@ done
 
 sudo mk-build-deps --install --root-cmd sudo --remove debian/control
 rm -f python3-sipsimple-build-deps_*
+
+strip_noexcept_for_old_cython
 
 $SETARCH debuild --no-sign
