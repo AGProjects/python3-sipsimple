@@ -31,7 +31,7 @@ from sipsimple.audio import AudioDevice, RootAudioBridge
 from sipsimple.configuration import ConfigurationManager
 from sipsimple.configuration.settings import SIPSimpleSettings
 from sipsimple.core import AudioMixer, Engine, SIPCoreError, PJSIPError
-from sipsimple.lookup import DNSManager
+from sipsimple.lookup import DNSLookup, DNSManager
 from sipsimple.session import SessionManager, TerminateSubscription
 from sipsimple.storage import ISIPSimpleStorage, ISIPSimpleApplicationDataStorage
 from sipsimple.threading import ThreadManager, run_in_thread, run_in_twisted_thread
@@ -121,6 +121,9 @@ class SIPApplication(object, metaclass=Singleton):
                 self._stop_pending = True
                 return
             self.state = 'stopping'
+        # A lookup with no answer would otherwise hold up the shutdown for its
+        # whole lifetime (the account registration waits on one).
+        DNSLookup.abort_all()
         notification_center = NotificationCenter()
         notification_center.post_notification('SIPApplicationWillEnd', sender=self)
         self._shutdown_subsystems()
@@ -365,6 +368,7 @@ class SIPApplication(object, metaclass=Singleton):
             if self.state == 'stopping':
                 return
             self.state = 'stopping'
+        DNSLookup.abort_all()
         notification.center.post_notification('SIPApplicationWillEnd', sender=self)
         #
         # In theory we need to stop the subsystems here, based on what subsystems are already running according to our state,

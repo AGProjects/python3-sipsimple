@@ -42,20 +42,53 @@ dns.query.select = select
 
 import dns.exception
 
+from greenlet import getcurrent
+
+
+class DNSLookupAborted(BaseException):
+    # Derived from BaseException on purpose: dnspython catches Exception
+    # around every nameserver query and retries until the lifetime runs
+    # out, which is exactly what aborting must not do.
+    pass
+
+
+# Lookups are aborted either all at once (DNSLookup.abort_all(), used when
+# the application stops) or one by one (DNSLookup.cancel()). The green
+# thread running a lookup is mapped to its DNSLookup so that the socket
+# wait below can tell whether the lookup it serves has been cancelled.
+_abort_all = False
+_running_lookups = {}
+
+_abort_check_interval = 0.2
+
+
+def _check_aborted():
+    if _abort_all:
+        raise DNSLookupAborted('DNS lookups aborted')
+    lookup = _running_lookups.get(getcurrent())
+    if lookup is not None and lookup.cancelled:
+        raise DNSLookupAborted('DNS lookup cancelled')
+
+
 # dnspython 2.x waits for socket readiness in dns.query._wait_for() using a
 # real selectors.DefaultSelector (kqueue/epoll), which blocks the twisted
 # reactor thread for the full query timeout and starves every green thread
 # (registrations, session lookups, ...). Replace it with a green wait.
+# The wait is done in short slices so that an aborted lookup ends promptly.
 def _green_wait_for(fd, readable, writable, _error, expiration):
-    if expiration is None:
-        timeout = None
-    else:
-        # past the deadline still look once without waiting: when the reactor thread was busy
-        # the answer may be in the socket already, and it is not a timeout of the name server
-        timeout = max(expiration - time(), 0.0)
-    rlist, wlist, _ = select.select([fd] if readable else [], [fd] if writable else [], [], timeout)
-    if not rlist and not wlist:
-        raise dns.exception.Timeout
+    while True:
+        _check_aborted()
+        if expiration is None:
+            timeout = _abort_check_interval
+        else:
+            # past the deadline still look once without waiting: when the reactor thread was busy
+            # the answer may be in the socket already, and it is not a timeout of the name server
+            timeout = min(max(expiration - time(), 0.0), _abort_check_interval)
+        rlist, wlist, _ = select.select([fd] if readable else [], [fd] if writable else [], [], timeout)
+        if rlist or wlist:
+            return
+        if expiration is not None and time() >= expiration:
+            raise dns.exception.Timeout
 
 # dnspython 2.x renamed Resolver.query() to Resolver.resolve() and deprecated
 # the old name. Provide resolve() on dnspython 1.x so we can use it everywhere.
@@ -93,13 +126,23 @@ def domain_iterator(domain):
 def post_dns_lookup_notifications(func):
     @preserve_signature(func)
     def wrapper(obj, *args, **kwargs):
+        current = getcurrent()
+        _running_lookups[current] = obj
         try:
+            _check_aborted()
             result = func(obj, *args, **kwargs)
         except DNSLookupError as e:
             raise
+        except DNSLookupAborted as e:
+            reason = str(e) or 'DNS lookup aborted'
+            NotificationCenter().post_notification('DNSLookupDidFail', sender=obj, data=NotificationData(error=reason, originator='local'))
+            raise DNSLookupError(reason)
         else:
             NotificationCenter().post_notification('DNSLookupDidSucceed', sender=obj, data=NotificationData(result=result))
             return result
+        finally:
+            if _running_lookups.get(current) is obj:
+                del _running_lookups[current]
     return wrapper
 
 
@@ -158,6 +201,7 @@ class DNSResolver(dns.resolver.Resolver):
         self.nameservers = dns_manager.nameservers
 
     def resolve(self, *args, **kw):
+        _check_aborted()
         start_time = time()
         try:
             return dns.resolver.Resolver.resolve(self, *args, **kw)
@@ -193,6 +237,24 @@ class NAPTRResult(object):
 class DNSLookup(object):
 
     cache = DNSCache()
+
+    cancelled = False
+
+    def cancel(self):
+        """
+        Abort the lookup running on this object, if any, and any lookup started
+        on it later. It ends with DNSLookupDidFail (originator 'local').
+        """
+        self.cancelled = True
+
+    @staticmethod
+    def abort_all(abort=True):
+        """
+        Abort every running lookup and make new ones fail immediately, until
+        called with abort=False. Used by SIPApplication when it stops.
+        """
+        global _abort_all
+        _abort_all = abort
 
     @run_in_waitable_green_thread
     @post_dns_lookup_notifications
@@ -554,7 +616,7 @@ class DNSManager(object, metaclass=Singleton):
                 command = self._channel.wait()
                 handler = getattr(self, '_CH_%s' % command.name)
                 handler(command)
-            except InterruptCommand:
+            except (InterruptCommand, DNSLookupAborted):
                 pass
 
     def _CH_probe_dns(self, command):
