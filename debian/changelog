@@ -1,3 +1,13 @@
+python3-sipsimple (5.6.4) unstable; urgency=medium
+
+  * Don't depend on executable bit of install scripts anymore
+  * Update Windows build instructions
+  * Update Windows patches
+  * XCAP: use xcaplib's plain client, _blocking() already runs requests in a thread; the green client from a pool thread created a second eventlib hub
+  * Increase xcaplib dep minimum version
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Wed, 21 Oct 2026 06:21:06 -0300
+
 python3-sipsimple (5.6.3) unstable; urgency=medium
 
   * Try the next route when an outgoing INVITE cannot reach a proxy (transport error / no response)
