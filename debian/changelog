@@ -1,6 +1,7 @@
 python3-sipsimple (5.6.4) unstable; urgency=medium
 
   * Don't depend on executable bit of install scripts anymore
+  * Make DNS queries abortable
   * Update Windows build instructions
   * Update Windows patches
   * XCAP: use xcaplib's plain client, _blocking() already runs requests in a thread; the green client from a pool thread created a second eventlib hub
