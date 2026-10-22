@@ -1950,7 +1950,7 @@ class XCAPManager(object):
                                                    }
 
                 applications = set(child.selector.auid for child in xcap_diff if isinstance(child, xcapdiff.Document))
-                documents = set(document.name for document in self.documents if document.application in applications and document.etag != changed_etags[name]['new_etag'])
+                documents = set(document.name for document in self.documents if document.application in applications and document.etag != changed_etags.get(document.name, {}).get('new_etag'))
 
                 if documents:
                     self.command_channel.send(Command('fetch', documents=documents))
