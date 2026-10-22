@@ -369,7 +369,19 @@ cdef class Invitation:
         return 0
 
     def send_message(self, str content_type not None, content not None, list extra_headers not None=list()):
-        """Send a SIP MESSAGE *inside* this established dialog.
+        """Send a SIP MESSAGE inside this established dialog (see send_request)"""
+        return self.send_request("MESSAGE", content_type, content, extra_headers)
+
+    def send_info(self, str content_type not None, content not None, list extra_headers not None=list()):
+        """Send a SIP INFO inside this established dialog (e.g. application/dtmf-relay), see send_request"""
+        return self.send_request("INFO", content_type, content, extra_headers)
+
+    def send_request(self, str method not None, str content_type not None, content not None, list extra_headers not None=list()):
+        """Send a request with a body *inside* this established dialog.
+
+        Only for requests that do not create or change a dialog usage
+        (MESSAGE, INFO, ...): INVITE, ACK, BYE, CANCEL, PRACK and UPDATE are
+        handled by the INVITE session and refused here.
 
         PJSIP's pjsip_dlg_create_request fills in everything dialog-bound
         from the dialog's recorded state, so we don't have to:
@@ -389,13 +401,17 @@ cdef class Invitation:
         cdef int status
         cdef pj_mutex_t *lock = self._lock
         cdef pjsip_tx_data *tdata = NULL
-        cdef pjsip_method method
+        cdef pjsip_method request_method
         cdef pjsip_msg_body *body
-        cdef PJSTR method_name = PJSTR(b"MESSAGE")
+        cdef PJSTR method_name
         cdef PJSTR type_pj
         cdef PJSTR subtype_pj
         cdef PJSTR body_pj
         cdef PJSIPUA ua
+
+        if method.upper() in ("INVITE", "ACK", "BYE", "CANCEL", "PRACK", "UPDATE"):
+            raise SIPCoreError("Cannot send %s with send_request" % method)
+        method_name = PJSTR(method.upper().encode("ascii"))
 
         ua = self._check_ua()
         if ua is None:
@@ -403,7 +419,7 @@ cdef class Invitation:
         if self._dialog == NULL:
             raise SIPCoreError("Invitation has no dialog yet")
         if self.state not in ("connected", "received_proposal", "sent_proposal", "received_proposal_request", "early"):
-            raise SIPCoreError("Cannot send in-dialog MESSAGE in state %r" % self.state)
+            raise SIPCoreError("Cannot send in-dialog %s in state %r" % (method, self.state))
 
         if "/" not in content_type:
             raise SIPCoreError("content_type must be 'type/subtype'")
@@ -417,7 +433,7 @@ cdef class Invitation:
         else:
             raise SIPCoreError("content must be str or bytes")
 
-        pjsip_method_init_np(&method, &method_name.pj_str)
+        pjsip_method_init_np(&request_method, &method_name.pj_str)
 
         with nogil:
             status = pj_mutex_lock(lock)
@@ -425,9 +441,9 @@ cdef class Invitation:
             raise PJSIPError("failed to acquire lock", status)
         try:
             with nogil:
-                status = pjsip_dlg_create_request(self._dialog, &method, -1, &tdata)
+                status = pjsip_dlg_create_request(self._dialog, &request_method, -1, &tdata)
             if status != 0:
-                raise PJSIPError("Could not create in-dialog MESSAGE", status)
+                raise PJSIPError("Could not create in-dialog %s" % method, status)
             body = pjsip_msg_body_create(tdata.pool, &type_pj.pj_str, &subtype_pj.pj_str, &body_pj.pj_str)
             if body == NULL:
                 with nogil:
@@ -441,7 +457,7 @@ cdef class Invitation:
             if status != 0:
                 # pjsip_dlg_send_request frees tdata on failure paths internally;
                 # don't double-free here.
-                raise PJSIPError("Could not send in-dialog MESSAGE", status)
+                raise PJSIPError("Could not send in-dialog %s" % method, status)
         finally:
             with nogil:
                 pj_mutex_unlock(lock)
