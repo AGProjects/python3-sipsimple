@@ -278,7 +278,8 @@ class OTREncryption(object):
 
     @run_in_twisted_thread
     def start(self):
-        if not self.stream.enable_otr:
+        # self.stream may be a non-ChatStream transport (sip-session3's MessageSession)
+        if not getattr(self.stream, 'enable_otr', True):
             return
         try:
             if self.otr_session is not None:
@@ -311,7 +312,7 @@ class OTREncryption(object):
         handler(notification)
 
     def _NH_MediaStreamDidStart(self, notification):
-        if self.stream.start_otr and self.stream.enable_otr:
+        if self.stream.start_otr and getattr(self.stream, 'enable_otr', True):
             self.otr_session.start()
 
     def _NH_MediaStreamDidEnd(self, notification):
