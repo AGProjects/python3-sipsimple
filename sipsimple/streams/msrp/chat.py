@@ -45,6 +45,9 @@ from sipsimple.threading.green import run_in_green_thread
 from sipsimple.util import MultilingualText, ISOTimestamp
 
 
+# OTR whitespace tag: 16 byte base tag followed by 8 byte version tags
+_otr_whitespace_tag = re.compile(rb'\x20\x09\x20\x20\x09\x09\x09\x09\x20\x09\x20\x09\x20\x09\x20\x20(?:[\x20\x09]{8})*')
+
 __all__ = ['ChatStream', 'ChatStreamError', 'ChatIdentity', 'CPIMPayload', 'CPIMHeader', 'CPIMNamespace', 'CPIMParserError', 'OTRState', 'SMPStatus']
 
 
@@ -275,6 +278,8 @@ class OTREncryption(object):
 
     @run_in_twisted_thread
     def start(self):
+        if not self.stream.enable_otr:
+            return
         try:
             if self.otr_session is not None:
                 self.otr_session.start()
@@ -306,7 +311,7 @@ class OTREncryption(object):
         handler(notification)
 
     def _NH_MediaStreamDidStart(self, notification):
-        if self.stream.start_otr:
+        if self.stream.start_otr and self.stream.enable_otr:
             self.otr_session.start()
 
     def _NH_MediaStreamDidEnd(self, notification):
@@ -345,6 +350,11 @@ class ChatStream(MSRPStreamBase):
 
     prefer_cpim = True
     start_otr = True
+    # False: OTR off in both directions. We do not offer it, do not answer
+    # an offer (query, whitespace tag, AKE), and an OTR data message is
+    # refused with a ChatStreamOTRError instead of reaching the application
+    # as ciphertext.
+    enable_otr = True
 
     def __init__(self):
         super(ChatStream, self).__init__(direction='sendrecv')
@@ -483,7 +493,19 @@ class ChatStream(MSRPStreamBase):
             message = Message(payload.content, payload.content_type, sender=self.remote_identity, recipients=[self.local_identity], timestamp=ISOTimestamp.now())
             private = False
 
-        if IgnoreMessage:
+        if IgnoreMessage is None or not self.enable_otr:  # no OTR library is OTR disabled
+            content = message.content if isinstance(message.content, bytes) else message.content.encode()
+            if content.startswith(b'?OTR'):
+                if content.startswith((b'?OTR:AAMD', b'?OTR:AAID')):  # v3/v2 data message
+                    self.msrp_session.send_report(chunk, 400, 'OTR is disabled')
+                    NotificationCenter().post_notification('ChatStreamOTRError', sender=self, data=NotificationData(error='received an OTR encrypted message, but OTR is disabled'))
+                else:  # query, AKE or error message: no answer means no OTR session
+                    self.msrp_session.send_report(chunk, 200, 'OK')
+                return
+            if _otr_whitespace_tag.search(content):
+                message.content = _otr_whitespace_tag.sub(b'', content)
+            encrypted = encryption_active = False
+        else:
             try:
                 content = message.content if isinstance(message.content, bytes) else message.content.encode()
                 message.content = self.encryption.otr_session.handle_input(content, message.content_type)
@@ -562,7 +584,7 @@ class ChatStream(MSRPStreamBase):
                     else:
                         charset = None
 
-                    if not isinstance(message, QueuedOTRInternalMessage):
+                    if not isinstance(message, QueuedOTRInternalMessage) and self.enable_otr and IgnoreMessage is not None:
                         try:
                             message.content = self.encryption.otr_session.handle_output(message.content, message.content_type)
                         except OTRError as e:
