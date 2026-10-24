@@ -1908,7 +1908,7 @@ cdef class AudioTransport:
             with nogil:
                 status = pjmedia_stream_get_stat(stream, &stat)
             if status == 0:
-                if self._packets_received == stat.rx.pkt and self.direction == "sendrecv":
+                if self._packets_received == stat.rx.pkt and self.direction == b"sendrecv":     # bytes, as valid_sdp_directions
                     _add_event("RTPAudioTransportDidTimeout", dict(obj=self))
                 self._packets_received = stat.rx.pkt
                 if timer.media_check_interval > 0:
@@ -2486,7 +2486,7 @@ cdef class VideoTransport:
             with nogil:
                 status = pjmedia_vid_stream_get_stat(stream, &stat)
             if status == 0:
-                if self._packets_received == stat.rx.pkt and self.direction == "sendrecv":
+                if self._packets_received == stat.rx.pkt and self.direction == b"sendrecv":     # bytes, as valid_sdp_directions
                     _add_event("RTPVideoTransportDidTimeout", dict(obj=self))
                 self._packets_received = stat.rx.pkt
                 if timer.media_check_interval > 0:
