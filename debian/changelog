@@ -1,3 +1,19 @@
+python3-sipsimple (5.6.6) unstable; urgency=medium
+
+  * Fixed the RTP timeout never firing under Python 3: the transport's direction is bytes
+  * Let OTREncryption run on transports without enable_otr
+  * Add ChatStream.enable_otr to turn OTR off in both directions
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Sat, 24 Oct 2026 20:04:25 -0300
+
+python3-sipsimple (5.6.5) unstable; urgency=medium
+
+  * Disable OTR on chat streams when the account has it off, fix OTR error notice
+  * Allow send INFO inside a dialog 
+  * Fixed for RTP timeout not fire after Python3 migration
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Fri, 23 Oct 2026 12:07:46 -0300
+
 python3-sipsimple (5.6.4) unstable; urgency=medium
 
   * Don't depend on executable bit of install scripts anymore
