@@ -15,7 +15,9 @@
 # (the SDK falls back to a camera) and shows nothing, so a "My screen" left
 # in the settings does not pop the picker up at start. With a restore token
 # (ScreenCast v4, persist_mode 2) the picker is skipped. When sharing is
-# stopped from the desktop (its indicator), the state goes to ENDED.
+# stopped from the desktop (its indicator), the state goes to ENDED: the
+# portal session's Closed signal is watched on a thread of its own while a
+# stream captures, as the PipeWire stream does not always change state then.
 #
 # Only monitors are offered (not windows) so a remote pointer lands on a
 # known place, and the cursor is embedded in the frames when the portal can.
@@ -177,7 +179,7 @@
 +#endif  /* __PJMEDIA_VIDEODEV_SCREEN_DEV_H__ */
 --- pjsip_orig/pjmedia/src/pjmedia-videodev/screen_dev.c
 +++ pjsip/pjmedia/src/pjmedia-videodev/screen_dev.c
-@@ -0,0 +1,1779 @@
+@@ -0,0 +1,1871 @@
 +/*
 + * Copyright (C) 2026 AG Projects
 + *
@@ -1181,6 +1183,16 @@
 +    struct spa_hook              stream_listener;
 +    char                        *session;           /* portal session (owned) */
 +    pj_bool_t                    streaming;
++
++    /* The portal session's Closed signal, watched on a thread of its own:
++     * stopping the sharing from the desktop (its indicator in the top bar)
++     * closes the session, and the PipeWire stream does not always say so. */
++    pthread_t                    watch_thread;
++    pj_bool_t                    watching;
++    GMainContext                *watch_ctx;
++    GMainLoop                   *watch_loop;
++    pj_thread_desc               watch_thread_desc;
++    pj_thread_t                 *watch_pj_thread;
 +    pj_bool_t                    closing;
 +    pj_thread_desc               pw_thread_desc;    /* pjlib registration of */
 +    pj_thread_t                 *pw_thread;         /* the PipeWire thread   */
@@ -1407,6 +1419,86 @@
 +    pthread_cond_broadcast(&P.cond);
 +    pthread_mutex_unlock(&P.lock);
 +    PJ_LOG(4, (THIS_FILE, "Screen sharing ended outside the application"));
++}
++
++static void on_session_closed(GDBusConnection *conn, const char *sender, const char *path,
++                              const char *iface, const char *signal, GVariant *params, gpointer data)
++{
++    struct screen_stream *strm = (struct screen_stream *)data;
++
++    PJ_UNUSED_ARG(conn);
++    PJ_UNUSED_ARG(sender);
++    PJ_UNUSED_ARG(iface);
++    PJ_UNUSED_ARG(signal);
++    PJ_UNUSED_ARG(params);
++    PJ_LOG(4, (THIS_FILE, "Portal session %s closed", path ? path : "?"));
++    mark_ended(strm);
++}
++
++static void *session_watch(void *arg)
++{
++    struct screen_stream *strm = (struct screen_stream *)arg;
++    GDBusConnection *conn;
++    guint subscription;
++
++    pj_bzero(strm->watch_thread_desc, sizeof(strm->watch_thread_desc));
++    pj_thread_register("screen_watch", strm->watch_thread_desc, &strm->watch_pj_thread);
++    g_main_context_push_thread_default(strm->watch_ctx);
++    conn = session_bus();
++    if (conn) {
++        subscription = g_dbus_connection_signal_subscribe(conn, PORTAL_BUS, SESSION_IFACE, "Closed",
++                                                          strm->session, NULL, G_DBUS_SIGNAL_FLAGS_NONE,
++                                                          on_session_closed, strm, NULL);
++        g_main_loop_run(strm->watch_loop);
++        g_dbus_connection_signal_unsubscribe(conn, subscription);
++        while (g_main_context_iteration(strm->watch_ctx, FALSE))
++            ;   /* the unsubscription's own cleanup */
++        g_object_unref(conn);
++    }
++    g_main_context_pop_thread_default(strm->watch_ctx);
++    return NULL;
++}
++
++static gboolean quit_watch(gpointer loop)
++{
++    g_main_loop_quit((GMainLoop *)loop);
++    return G_SOURCE_REMOVE;
++}
++
++static void session_watch_start(struct screen_stream *strm)
++{
++    if (!strm->session)
++        return;
++    strm->watch_ctx = g_main_context_new();
++    strm->watch_loop = g_main_loop_new(strm->watch_ctx, FALSE);
++    if (pthread_create(&strm->watch_thread, NULL, session_watch, strm) == 0) {
++        strm->watching = PJ_TRUE;
++    } else {
++        PJ_LOG(3, (THIS_FILE, "Cannot watch the portal session: sharing stopped from the desktop goes unnoticed"));
++        g_main_loop_unref(strm->watch_loop);
++        g_main_context_unref(strm->watch_ctx);
++        strm->watch_loop = NULL;
++        strm->watch_ctx = NULL;
++    }
++}
++
++static void session_watch_stop(struct screen_stream *strm)
++{
++    GSource *source;
++
++    if (!strm->watching)
++        return;
++    /* an idle source quits the loop even if it has not started running yet */
++    source = g_idle_source_new();
++    g_source_set_callback(source, quit_watch, strm->watch_loop, NULL);
++    g_source_attach(source, strm->watch_ctx);
++    g_source_unref(source);
++    pthread_join(strm->watch_thread, NULL);
++    strm->watching = PJ_FALSE;
++    g_main_loop_unref(strm->watch_loop);
++    g_main_context_unref(strm->watch_ctx);
++    strm->watch_loop = NULL;
++    strm->watch_ctx = NULL;
 +}
 +
 +static void on_core_error(void *data, uint32_t id, int seq, int res, const char *message)
@@ -1849,6 +1941,7 @@
 +
 +    PJ_LOG(4, (THIS_FILE, "Screen capture at %dx%d, %u/%u fps", vfd->size.w, vfd->size.h,
 +               vfd->fps.num, vfd->fps.denum));
++    session_watch_start(strm);
 +
 +    *p_vid_strm = &strm->base;
 +    return PJ_SUCCESS;
@@ -1910,6 +2003,7 @@
 +
 +    PJ_ASSERT_RETURN(strm != NULL, PJ_EINVAL);
 +
++    session_watch_stop(strm);   /* before anything it may touch goes */
 +    if (strm->clock) {
 +        pjmedia_clock_stop(strm->clock);
 +        pjmedia_clock_destroy(strm->clock);
