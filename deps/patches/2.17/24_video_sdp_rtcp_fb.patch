@@ -24,6 +24,21 @@
 # from the 2.12 patch header. See deps/patches/24_video_sdp_rtcp_fb.patch
 # for the full background section.
 #
+# Payload types (sdp_neg.c):
+#   The rtcp-fb lines carry pjsip's local payload type. Answering an
+#   offer, pjmedia_sdp_neg gives the answer the offer's payload types
+#   (apply_answer_symmetric_pt) and renumbers on re-offers
+#   (assign_pt_and_update_codec_mapping), rewriting rtpmap and fmtp but
+#   not rtcp-fb; it also drops the rtpmap and fmtp of the formats it
+#   does not keep, but not their rtcp-fb. An answer to an offer with
+#   H264 at 102 thus read
+#       m=video 50160 RTP/AVP 102
+#       a=rtpmap:102 H264/90000
+#       a=rtcp-fb:100 nack            <- pjsip's own H264 payload type
+#   and Janus (SylkServer's webrtcgateway) went down on it. rtcp-fb
+#   now follows rtpmap and fmtp wherever they are renumbered or
+#   dropped ("a=rtcp-fb:* ..." is left alone).
+#
 --- pjsip_orig/pjmedia/src/pjmedia/endpoint.c
 +++ pjsip/pjmedia/src/pjmedia/endpoint.c
 @@ -882,6 +882,78 @@
@@ -105,3 +120,138 @@
 
          /* Find maximum bitrate in this media */
          vfd = pjmedia_format_get_video_format_detail(&codec_param.enc_fmt,
+--- pjsip_orig/pjmedia/src/pjmedia/sdp_neg.c
++++ pjsip/pjmedia/src/pjmedia/sdp_neg.c
+@@ -33,6 +33,30 @@
+ 
+ #define START_DYNAMIC_PT    PJMEDIA_RTP_PT_DYNAMIC
+ #define DYNAMIC_PT_SIZE     127 - START_DYNAMIC_PT + 1
++
++/* Remove the rtcp-fb attributes of a format (added per payload type by
++ * 24_video_sdp_rtcp_fb), with its rtpmap and fmtp: left behind, they name a
++ * payload type the m-line does not have. "a=rtcp-fb:* ..." stays.
++ */
++static void remove_rtcp_fb(pjmedia_sdp_media *m, const pj_str_t *fmt)
++{
++    unsigned i = 0;
++
++    while (i < m->attr_count) {
++        const pjmedia_sdp_attr *a = m->attr[i];
++
++        if (pj_strcmp2(&a->name, "rtcp-fb") == 0 &&
++            a->value.slen > fmt->slen &&
++            pj_strncmp(&a->value, fmt, fmt->slen) == 0 &&
++            a->value.ptr[fmt->slen] == ' ')
++        {
++            pjmedia_sdp_media_remove_attr(m, (pjmedia_sdp_attr *)a);
++            continue;
++        }
++        ++i;
++    }
++}
++
+ #define UNKNOWN_CODEC       99
+ 
+ /* Array for mapping PT number to codec ID. */
+@@ -943,6 +967,9 @@
+                 if (a)
+                     pjmedia_sdp_media_remove_attr(offer, a);
+ 
++                /* Remove rtcp-fb associated with this format */
++                remove_rtcp_fb(offer, fmt);
++
+                 /* Remove this format from offer's array */
+                 pj_array_erase(offer->desc.fmt, sizeof(offer->desc.fmt[0]),
+                                offer->desc.fmt_count, i);
+@@ -998,6 +1025,9 @@
+                     if (a)
+                         pjmedia_sdp_media_remove_attr(answer, a);
+ 
++                    /* Remove rtcp-fb associated with this format */
++                    remove_rtcp_fb(answer, fmt);
++
+                     /* Remove this format from answer's array */
+                     pj_array_erase(answer->desc.fmt, 
+                                    sizeof(answer->desc.fmt[0]),
+@@ -1234,9 +1264,37 @@
+             pjmedia_sdp_media_remove_attr(answer, a);
+             a_tmp[a_tmp_cnt++] = a;
+         }
++
++        /* Also update payload type in rtcp-fb: 24_video_sdp_rtcp_fb adds
++         * them with the local payload type, which must follow the offer's
++         * like rtpmap and fmtp (a "a=rtcp-fb:100 nack" left next to
++         * "m=video ... 102" names a format the answer does not have).
++         */
++        {
++            unsigned j = 0;
++
++            while (j < answer->attr_count) {
++                a = answer->attr[j];
++                if (pj_strcmp2(&a->name, "rtcp-fb") == 0 &&
++                    a->value.slen > pt_answer[i].slen &&
++                    pj_strncmp(&a->value, &pt_answer[i],
++                               pt_answer[i].slen) == 0 &&
++                    a->value.ptr[pt_answer[i].slen] == ' ')
++                {
++                    rewrite_pt(pool, &a->value, &pt_answer[i], &pt_offer[i]);
++                    /* Out of the way of the next payload types, like
++                     * rtpmap and fmtp; put back below.
++                     */
++                    pjmedia_sdp_media_remove_attr(answer, a);
++                    a_tmp[a_tmp_cnt++] = a;
++                    continue;
++                }
++                ++j;
++            }
++        }
+     }
+ 
+-    /* Return back 'rtpmap' and 'fmtp' attributes */
++    /* Return back 'rtpmap', 'fmtp' and 'rtcp-fb' attributes */
+     for (i = 0; i < a_tmp_cnt; ++i)
+         pjmedia_sdp_media_add_attr(answer, a_tmp[i]);
+ }
+@@ -1657,6 +1715,9 @@
+         if (a) {
+             pjmedia_sdp_media_remove_attr(answer, a);
+         }
++
++        /* Remove rtcp-fb for this format */
++        remove_rtcp_fb(answer, &answer->desc.fmt[i]);
+     }
+     answer->desc.fmt_count = pt_answer_count;
+ 
+@@ -2033,6 +2094,32 @@
+                 continue;
+ 
+             new_pt = pt_change[pt - START_DYNAMIC_PT];
++            /* No PT change */
++            if (new_pt == 0 || new_pt == pt)
++                continue;
++
++            rewrite_pt2(pool, (pj_str_t *)&attr->value,
++                        pt, new_pt);
++        }
++
++        /* Modify rtcp-fb (added per payload type by 24_video_sdp_rtcp_fb) */
++        for (j = 0; j < sdp_m->attr_count; ++j) {
++            const pjmedia_sdp_attr *attr;
++            unsigned pt, new_pt = 0;
++
++            attr = sdp_m->attr[j];
++            if (pj_strcmp2(&attr->name, "rtcp-fb") != 0)
++                continue;
++            /* "*" (every format) or not a number: nothing to map */
++            if (attr->value.slen < 1 || !pj_isdigit(attr->value.ptr[0]))
++                continue;
++
++            /* We only need to handle mapping for dynamic PT */
++            pt = pj_strtoul(&attr->value);
++            if (pt < START_DYNAMIC_PT || pt > 127)
++                continue;
++
++            new_pt = pt_change[pt - START_DYNAMIC_PT];
+             /* No PT change */
+             if (new_pt == 0 || new_pt == pt)
+                 continue;
