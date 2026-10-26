@@ -1,3 +1,10 @@
+python3-sipsimple (5.6.7) unstable; urgency=medium
+
+  * Fix a H.264 video negotiation bug 
+  * Ended a Linux screen capture when its OS session is closed
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Mon, 26 Oct 2026 12:25:24 -0300
+
 python3-sipsimple (5.6.6) unstable; urgency=medium
 
   * Fixed the RTP timeout never firing under Python 3: the transport's direction is bytes
