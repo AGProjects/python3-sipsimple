@@ -1,3 +1,10 @@
+python3-sipsimple (5.6.8) unstable; urgency=medium
+
+  * Fixed SIP response class checks using true division, non-200 2xx treated as failure
+    thanks to yiguo2000@formosa-tea.com for discovery and reporting
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Wed, 04 Nov 2026 16:43:46 -0300
+
 python3-sipsimple (5.6.7) unstable; urgency=medium
 
   * Fix a H.264 video negotiation bug 
