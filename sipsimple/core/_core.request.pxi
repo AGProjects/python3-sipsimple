@@ -380,7 +380,7 @@ cdef class Request:
                 if rdata != NULL:
                     # This shouldn't happen, but safety fist!
                     _pjsip_msg_to_dict(rdata.msg_info.msg, event_dict)
-                if self._tsx.status_code / 100 == 2:
+                if self._tsx.status_code // 100 == 2:
                     if rdata != NULL:
                         if "Expires" in event_dict["headers"]:
                             expires = event_dict["headers"]["Expires"]

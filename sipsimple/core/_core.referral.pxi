@@ -352,7 +352,7 @@ cdef class Referral:
             else:
                 if self._term_reason is not None:
                     _add_event("SIPReferralDidFail", dict(obj=self, code=self._term_code, reason=self._term_reason))
-                elif code/100 == 2:
+                elif code // 100 == 2:
                     _add_event("SIPReferralDidEnd", dict(obj=self))
                 else:
                     _add_event("SIPReferralDidFail", dict(obj=self, code=code, reason=reason))
@@ -839,7 +839,7 @@ cdef class IncomingReferral:
                     self.peer_address.ip = rdata.pkt_info.src_name
                     self.peer_address.port = rdata.pkt_info.src_port
             status_code = event.body.tsx_state.tsx.status_code
-            if event.body.tsx_state.type==PJSIP_EVENT_RX_MSG and status_code/100==2:
+            if event.body.tsx_state.type==PJSIP_EVENT_RX_MSG and status_code // 100 == 2:
                 _pjsip_msg_to_dict(rdata.msg_info.msg, event_dict)
                 try:
                     self.remote_contact_header = event_dict['headers']['Contact'][0]
@@ -853,7 +853,7 @@ cdef class IncomingReferral:
                     event_dict["code"] = status_code
                     event_dict["reason"] = _pj_str_to_str(event.body.tsx_state.tsx.status_text)
                 _add_event("SIPIncomingReferralNotifyDidFail", event_dict)
-                if status_code in (408, 481) or status_code/100==7:
+                if status_code in (408, 481) or status_code // 100 == 7:
                     # PJSIP will terminate the subscription and the dialog will be destroyed
                     self._terminate(ua, 1)
         elif (event != NULL and event.type == PJSIP_EVENT_TSX_STATE and
@@ -960,7 +960,7 @@ cdef void _Referral_cb_tsx_impl_impl(pjsip_evsub *sub, pjsip_transaction *tsx, p
             event.body.tsx_state.tsx.role == PJSIP_ROLE_UAC and
             event.body.tsx_state.tsx.state == PJSIP_TSX_STATE_COMPLETED and
             _pj_str_to_str(event.body.tsx_state.tsx.method.name) in ("REFER", "SUBSCRIBE") and
-            event.body.tsx_state.tsx.status_code/100 == 2):
+            event.body.tsx_state.tsx.status_code // 100 == 2):
             rdata = event.body.tsx_state.src.rdata
             if rdata != NULL:
                 if referral.peer_address is None:

@@ -1542,7 +1542,7 @@ cdef class Invitation:
                     self._transfer_refresh_timer.cancel()
                     self._transfer_refresh_timer = None
                 self._transfer_usage = NULL
-                if timer.code/100 == 2:
+                if timer.code // 100 == 2:
                     _add_event("SIPInvitationTransferDidEnd", dict(obj=self))
                 else:
                     _add_event("SIPInvitationTransferDidFail", dict(obj=self, code=timer.code, reason=timer.reason))
@@ -2015,7 +2015,7 @@ cdef void _Invitation_transfer_cb_tsx_impl(pjsip_evsub *sub, pjsip_transaction *
             event.body.tsx_state.tsx.role == PJSIP_ROLE_UAC and
             event.body.tsx_state.tsx.state == PJSIP_TSX_STATE_COMPLETED and
             _pj_str_to_str(event.body.tsx_state.tsx.method.name) in ("REFER", "SUBSCRIBE") and
-            event.body.tsx_state.tsx.status_code/100 == 2):
+            event.body.tsx_state.tsx.status_code // 100 == 2):
             rdata = event.body.tsx_state.src.rdata
             if rdata != NULL:
                 rdata_dict = dict()
@@ -2168,7 +2168,7 @@ cdef void _Invitation_transfer_in_cb_tsx_impl(pjsip_evsub *sub, pjsip_transactio
             code = event.body.tsx_state.tsx.status_code
             reason = _pj_str_to_str(event.body.tsx_state.tsx.status_text)
 
-            if code in (408, 481) or code/100==7:
+            if code in (408, 481) or code // 100 == 7:
                 # Be careful! PJSIP will erase the subscription
                 timer = TransferStateCallbackTimer("TERMINATED", code, reason)
                 timer.schedule(0, <timer_callback>invitation._transfer_cb_state, invitation)

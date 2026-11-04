@@ -693,7 +693,7 @@ cdef class IncomingSubscription:
         # pjsip_dlg_modify_response() increases ref count unncessarily
         with nogil:
             pjsip_tx_data_dec_ref(self._initial_response)
-        if code / 100 == 2:
+        if code // 100 == 2:
             pjsip_msg_add_hdr(self._initial_response.msg,
                               <pjsip_hdr *> pjsip_expires_hdr_create(self._initial_response.pool, self._expires))
         with nogil:
@@ -809,7 +809,7 @@ cdef class IncomingSubscription:
                     self.peer_address.ip = rdata.pkt_info.src_name
                     self.peer_address.port = rdata.pkt_info.src_port
             status_code = event.body.tsx_state.tsx.status_code
-            if event.body.tsx_state.type==PJSIP_EVENT_RX_MSG and status_code/100==2:
+            if event.body.tsx_state.type==PJSIP_EVENT_RX_MSG and status_code // 100 == 2:
                 _pjsip_msg_to_dict(rdata.msg_info.msg, event_dict)
                 _add_event("SIPIncomingSubscriptionNotifyDidSucceed", event_dict)
             else:
@@ -819,7 +819,7 @@ cdef class IncomingSubscription:
                     event_dict["code"] = status_code
                     event_dict["reason"] = _pj_str_to_str(event.body.tsx_state.tsx.status_text)
                 _add_event("SIPIncomingSubscriptionNotifyDidFail", event_dict)
-                if status_code in (408, 481) or status_code/100==7:
+                if status_code in (408, 481) or status_code // 100 == 7:
                     # PJSIP will terminate the subscription and the dialog will be destroyed
                     self._terminate(ua, None, 1)
         elif (event != NULL and event.type == PJSIP_EVENT_TSX_STATE and
@@ -922,7 +922,7 @@ cdef void _Subscription_cb_tsx_impl(pjsip_evsub *sub, pjsip_transaction *tsx, pj
             event.body.tsx_state.tsx.role == PJSIP_ROLE_UAC and
             event.body.tsx_state.tsx.state == PJSIP_TSX_STATE_COMPLETED and
             _pj_str_to_str(event.body.tsx_state.tsx.method.name) == "SUBSCRIBE" and
-            event.body.tsx_state.tsx.status_code / 100 == 2):
+            event.body.tsx_state.tsx.status_code // 100 == 2):
             rdata = event.body.tsx_state.src.rdata
             if rdata != NULL:
                 if subscription.peer_address is None:
