@@ -1,3 +1,10 @@
+python3-sipsimple (5.6.9) unstable; urgency=medium
+
+  * Linux: list and open video devices beyond /dev/video3, a USB camera
+    next to the built-in one was not seen
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Sun, 08 Nov 2026 07:29:12 -0300
+
 python3-sipsimple (5.6.8) unstable; urgency=medium
 
   * Fixed SIP response class checks using true division, non-200 2xx treated as failure
