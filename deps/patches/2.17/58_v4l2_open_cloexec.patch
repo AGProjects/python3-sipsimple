@@ -1,0 +1,49 @@
+# 58_v4l2_open_cloexec.patch
+#
+# Linux: after a while every change of the camera resolution failed with
+# "libv4l2: error setting pixformat: Device or resource busy" and the camera
+# fell back to the Null device, until the application was restarted.
+#
+# The camera was opened without O_CLOEXEC, so any process the application
+# started while the camera was open inherited the descriptor. A long running
+# one (Blink's "gsettings monitor org.gnome.desktop.notifications
+# show-banners") kept the device and its buffers after we closed it, and the
+# driver refuses VIDIOC_S_FMT while another descriptor holds buffers.
+#
+# v4l2_dev.c: open capture devices (the scan and the stream) close-on-exec.
+--- pjsip_orig/pjmedia/src/pjmedia-videodev/v4l2_dev.c
++++ pjsip/pjmedia/src/pjmedia-videodev/v4l2_dev.c
+@@ -30,6 +30,15 @@
+ #include <linux/videodev2.h>
+ #include <libv4l2.h>
+ #include <fcntl.h>
++
++/* The camera is opened close-on-exec: a process Blink or any other
++ * application starts while the camera is open (a long running helper such
++ * as "gsettings monitor") would otherwise inherit the descriptor, and with
++ * it the buffers, keeping the device busy after we close it: every later
++ * VIDIOC_S_FMT (a new resolution) fails with EBUSY. */
++#ifndef O_CLOEXEC
++#   define O_CLOEXEC 0
++#endif
+ #include <errno.h>
+ #include <sys/mman.h>
+ 
+@@ -350,7 +359,7 @@
+         if (!pj_file_exists(dev_name))
+             continue;
+ 
+-        fd = v4l2_open(dev_name, O_RDWR, 0);
++        fd = v4l2_open(dev_name, O_RDWR | O_CLOEXEC, 0);
+         if (fd == -1)
+             continue;
+ 
+@@ -666,7 +675,7 @@
+     stream->user_data = user_data;
+     stream->fd = INVALID_FD;
+ 
+-    stream->fd = v4l2_open(vdi->dev_name, O_RDWR, 0);
++    stream->fd = v4l2_open(vdi->dev_name, O_RDWR | O_CLOEXEC, 0);
+     if (stream->fd < 0)
+         goto on_error;
+ 

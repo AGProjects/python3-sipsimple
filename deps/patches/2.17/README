@@ -52,8 +52,9 @@ nature; group 4 is.
 
 4. Bug fixes in upstream code paths
    09 (WebRTC AEC wrapper), 25, 30, 31, 33, 34 (use-after-free and
-   lifetime bugs), 55, 56 (vid_port frame buffer and capture size), and
-   15 (currently a no-op, see its header).
+   lifetime bugs), 55, 56 (vid_port frame buffer and capture size), 60
+   (V4L2 devices beyond /dev/video3), and 15 (currently a no-op, see its
+   header).
    Several of these only trigger under sipsimple's object lifetime model:
    media pools are released from Python, so teardown ordering differs
    from pjsua's.  Each could still be offered upstream.  Until a
@@ -363,6 +364,14 @@ New 2.17-only support:
                                        the verify callback doesn't log
                                        twice; %.*s instead of 14's
                                        write past slen.
+  60_v4l2_scan_all_nodes.patch         2.17-only - Linux: a USB camera next
+                                       to the built-in one was not listed:
+                                       v4l2_dev probed /dev/video0..3 only
+                                       (V4L2_MAX_DEVS), and a second UVC
+                                       camera usually gets /dev/video4 or
+                                       higher (two nodes per camera). It
+                                       probes up to /dev/video63 and keeps
+                                       up to 8 devices. Applies after 58.
 
 
 Dropped permanently

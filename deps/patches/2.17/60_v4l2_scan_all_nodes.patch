@@ -1,0 +1,34 @@
+# 60_v4l2_scan_all_nodes.patch
+#
+# Linux: a USB camera plugged in next to the built-in one was not listed
+# and could not be chosen (the SDK fell back to the default camera).
+#
+# The V4L2 backend probed /dev/video0 to /dev/video3 only: V4L2_MAX_DEVS (4)
+# was both the number of nodes probed and of devices kept. Every UVC camera
+# takes two nodes (capture and metadata) and node numbers are not reused
+# while one is held, so a second camera often lands on /dev/video4 or
+# higher and was never opened.
+#
+# v4l2_dev.c: probe nodes up to /dev/video63 (V4L2_MAX_NODES) and keep up
+# to 8 capture devices (V4L2_MAX_DEVS, the size of the scan's stack array).
+--- pjsip_orig/pjmedia/src/pjmedia-videodev/v4l2_dev.c
++++ pjsip/pjmedia/src/pjmedia-videodev/v4l2_dev.c
+@@ -44,7 +44,8 @@
+ 
+ #define THIS_FILE               "v4l2_dev.c"
+ #define DRIVER_NAME             "v4l2"
+-#define V4L2_MAX_DEVS           4
++#define V4L2_MAX_DEVS           8       /* capture devices kept */
++#define V4L2_MAX_NODES          64      /* /dev/videoN nodes scanned */
+ #define DEFAULT_WIDTH           640
+ #define DEFAULT_HEIGHT          480
+ #define DEFAULT_FPS             25
+@@ -347,7 +348,7 @@
+     f->dev_count = 0;
+     f->dev_pool = pj_pool_create(f->pf, DRIVER_NAME, 500, 500, NULL);
+ 
+-    for (i=0; i<V4L2_MAX_DEVS && f->dev_count < V4L2_MAX_DEVS; ++i) {
++    for (i=0; i<V4L2_MAX_NODES && f->dev_count < V4L2_MAX_DEVS; ++i) {
+         int fd;
+         vid4lin_dev_info *pdi;
+         pj_uint32_t fmt_cap[8];
