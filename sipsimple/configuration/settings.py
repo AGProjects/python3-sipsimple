@@ -27,6 +27,7 @@ class AudioSettings(SettingsGroup):
     input_device = Setting(type=str, default='system_default', nillable=True)
     output_device = Setting(type=str, default='system_default', nillable=True)
     sample_rate = Setting(type=SampleRate, default=32000)
+    stereo = Setting(type=bool, default=False)      # stereo audio (music): a stereo mixer, Opus in stereo, no echo canceller
     muted = RuntimeSetting(type=bool, default=False)
     silent = Setting(type=bool, default=False)
     echo_canceller = EchoCancellerSettings

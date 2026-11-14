@@ -1621,6 +1621,7 @@ cdef class PJMEDIAEndpoint(object):
     cdef list _get_codecs(self)
     cdef list _get_all_codecs(self)
     cdef list _get_current_codecs(self)
+    cdef int _set_opus_channels(self, int channels) except -1
     cdef int _set_codecs(self, list req_codecs) except -1
     cdef list _get_video_codecs(self)
     cdef list _get_all_video_codecs(self)
@@ -2065,6 +2066,7 @@ cdef class AudioMixer(object):
     cdef list _connected_slots
     cdef readonly int ec_tail_length
     cdef readonly int sample_rate
+    cdef readonly int channel_count
     cdef readonly int slot_count
     cdef readonly int used_slot_count
     cdef readonly unicode input_device

@@ -433,6 +433,11 @@ cdef class PJSIPUA:
             finally:
                 pj_rwmutex_unlock_read(self.audio_change_rwlock)
 
+    def set_opus_channels(self, int channels):
+        """Opus in stereo (2) or mono (1) for the calls made from now on (a stereo mixer: AudioMixer channel_count)."""
+        self._check_self()
+        self._pjmedia_endpoint._set_opus_channels(channels)
+
     def refresh_sound_devices(self):
         self._check_self()
         cdef int status

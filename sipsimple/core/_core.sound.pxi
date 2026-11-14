@@ -110,7 +110,7 @@ cdef class AudioMixer:
         if status != 0:
             raise PJSIPError("failed to create lock", status)
 
-    def __init__(self, unicode input_device, unicode output_device, int sample_rate, int ec_tail_length, int slot_count=254):
+    def __init__(self, unicode input_device, unicode output_device, int sample_rate, int ec_tail_length, int slot_count=254, int channel_count=1):
         global _dealloc_handler_queue
         cdef int status
         cdef pj_pool_t *conf_pool
@@ -132,8 +132,13 @@ cdef class AudioMixer:
             raise ValueError("sample_rate argument should be a non-negative integer")
         if sample_rate % 50:
             raise ValueError("sample_rate argument should be dividable by 50")
+        if channel_count not in (1, 2):
+            raise ValueError("channel_count argument should be 1 (mono) or 2 (stereo)")
         self.sample_rate = sample_rate
         self.slot_count = slot_count
+        # stereo: the bridge, the sound device and the null port in 2 channels; the mono ports (streams in a mono
+        # codec, tones, recordings) are converted by the bridge, which allows a mono port on a stereo bridge
+        self.channel_count = channel_count
 
         conf_pool_name = b"AudioMixer_%d" % id(self)
         conf_pool = ua.create_memory_pool(conf_pool_name, 4096, 4096)
@@ -142,13 +147,13 @@ cdef class AudioMixer:
         snd_pool = ua.create_memory_pool(snd_pool_name, 4096, 4096)
         self._snd_pool = snd_pool
         with nogil:
-            status = pjmedia_conf_create(conf_pool, slot_count+1, sample_rate, 1,
-                                         <int>(sample_rate / 50), 16, PJMEDIA_CONF_NO_DEVICE, conf_bridge_address)
+            status = pjmedia_conf_create(conf_pool, slot_count+1, sample_rate, channel_count,
+                                         <int>(sample_rate / 50) * channel_count, 16, PJMEDIA_CONF_NO_DEVICE, conf_bridge_address)
         if status != 0:
             raise PJSIPError("Could not create audio mixer", status)
         with nogil:
-            status = pjmedia_null_port_create(conf_pool, sample_rate, 1,
-                                              <unsigned int>(sample_rate / 50), 16, null_port_address)
+            status = pjmedia_null_port_create(conf_pool, sample_rate, channel_count,
+                                              <unsigned int>(sample_rate / 50) * channel_count, 16, null_port_address)
         if status != 0:
             raise PJSIPError("Could not create null audio port", status)
 
@@ -614,9 +619,9 @@ cdef class AudioMixer:
                     port_param.base.dir = PJMEDIA_DIR_CAPTURE_PLAYBACK
                     port_param.base.play_id = output_device_i
                     port_param.base.rec_id = input_device_i
-                port_param.base.channel_count = 1
+                port_param.base.channel_count = self.channel_count
                 port_param.base.clock_rate = sample_rate
-                port_param.base.samples_per_frame = <int>(sample_rate / 50)
+                port_param.base.samples_per_frame = <int>(sample_rate / 50) * self.channel_count
                 port_param.base.bits_per_sample = 16
                 port_param.base.flags |= (PJMEDIA_AUD_DEV_CAP_EC | PJMEDIA_AUD_DEV_CAP_EC_TAIL)
                 port_param.base.ec_enabled = 1

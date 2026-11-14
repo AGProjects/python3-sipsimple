@@ -16,8 +16,15 @@ class AudioStream(RTPStream):
     type = 'audio'
     priority = 1
 
-    def __init__(self):
+    # the codecs that carry stereo: a stereo call offers only these (Opus; the others are mono)
+    stereo_codecs = ('opus',)
+
+    def __init__(self, stereo=None):
         super(AudioStream, self).__init__()
+        # a stereo call: it offers only the codecs that carry stereo. None: stereo when audio.stereo is on.
+        # Stereo itself (a stereo mixer, Opus in stereo) is the application's audio.stereo; an answer to an
+        # offer is not restricted (the caller chose its codecs)
+        self.stereo = stereo
 
         from sipsimple.application import SIPApplication
         from sipsimple.streams.rtp import stream_creation_context
@@ -229,6 +236,9 @@ class AudioStream(RTPStream):
     def _create_transport(self, rtp_transport, remote_sdp=None, stream_index=None):
         settings = SIPSimpleSettings()
         available_codecs = list(self.session.account.rtp.audio_codec_list or settings.rtp.audio_codec_list)
+        stereo = settings.audio.stereo if self.stereo is None else self.stereo
+        if stereo and remote_sdp is None:       # our offer, in stereo: the stereo codecs only, in the preferred order
+            available_codecs = [codec for codec in available_codecs if codec.lower() in self.stereo_codecs] or list(self.stereo_codecs)
         if remote_sdp is not None:
             # Enforce audio_codec_list preference order
             remote_codecs = list(remote_sdp.media[stream_index or 0].codec_list)

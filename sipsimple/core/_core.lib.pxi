@@ -256,6 +256,44 @@ cdef class PJSIPEndpoint:
                 pjsip_endpt_destroy(self._obj)
 
 
+# Opus in stereo or mono: its default codec parameter (what new calls offer and use; a stereo call's SDP gets
+# "stereo=1; sprop-stereo=1", added by pjmedia's opus codec). C, so that pjmedia_codec_param need not be declared.
+cdef extern from *:
+    """
+    #include <pjmedia-codec.h>
+    static int sipsimple_set_opus_channels(pjmedia_endpt *endpt, unsigned channels)
+    {
+    #if defined(PJMEDIA_HAS_OPUS_CODEC) && PJMEDIA_HAS_OPUS_CODEC != 0
+        pjmedia_codec_mgr *mgr = pjmedia_endpt_get_codec_mgr(endpt);
+        const pjmedia_codec_info *info[1];
+        unsigned count = 1;
+        pj_str_t id = pj_str((char *)"opus/48000");
+        pjmedia_codec_param param;
+        pjmedia_codec_opus_config cfg;
+        pj_status_t status;
+
+        status = pjmedia_codec_mgr_find_codecs_by_id(mgr, &id, &count, info, NULL);
+        if (status != PJ_SUCCESS)
+            return status;
+        if (count == 0)
+            return PJ_ENOTFOUND;
+        status = pjmedia_codec_mgr_get_default_param(mgr, info[0], &param);
+        if (status != PJ_SUCCESS)
+            return status;
+        status = pjmedia_codec_opus_get_config(&cfg);
+        if (status != PJ_SUCCESS)
+            return status;
+        cfg.channel_cnt = channels;
+        param.info.channel_cnt = channels;
+        return pjmedia_codec_opus_set_default_param(&cfg, &param);
+    #else
+        return PJ_ENOTSUP;
+    #endif
+    }
+    """
+    int sipsimple_set_opus_channels(pjmedia_endpt *endpt, unsigned int channels) nogil
+
+
 cdef class PJMEDIAEndpoint:
     def __cinit__(self, PJCachingPool caching_pool):
         cdef int status
@@ -372,6 +410,16 @@ cdef class PJMEDIAEndpoint:
         cdef tuple codec_data
         codecs = self._get_codecs()
         return list(set([codec_data[1] for codec_data in codecs]))
+
+    cdef int _set_opus_channels(self, int channels) except -1:
+        cdef int status
+        if channels not in (1, 2):
+            raise ValueError("channels should be 1 (mono) or 2 (stereo)")
+        with nogil:
+            status = sipsimple_set_opus_channels(self._obj, channels)
+        if status != 0:
+            raise PJSIPError("Could not set the Opus channels", status)
+        return 0
 
     cdef list _get_current_codecs(self):
         cdef list codecs

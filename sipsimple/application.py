@@ -237,16 +237,23 @@ class SIPApplication(object, metaclass=Singleton):
         if output_device not in (None, 'system_default') and output_device not in self.engine.output_devices:
             output_device = 'system_default'
         tail_length = settings.audio.echo_canceller.tail_length if settings.audio.echo_canceller.enabled else 0
+        channels = 2 if settings.audio.stereo else 1
+        if channels == 2:
+            tail_length = 0     # stereo is for music: no echo canceller (it would work on voice, in mono)
+        try:
+            self.engine.set_opus_channels(channels)
+        except Exception as e:
+            log.warning('Could not set Opus to %s: %s' % ('stereo' if channels == 2 else 'mono', e))
         if not self.engine.input_devices and not self.engine.output_devices:
             log.warning('No audio devices found; starting without audio hardware (using null sound device)')
             input_device = None
             output_device = None
             alert_device = None
         try:
-            voice_mixer = AudioMixer(input_device, output_device, settings.audio.sample_rate, tail_length)
+            voice_mixer = AudioMixer(input_device, output_device, settings.audio.sample_rate, tail_length, channel_count=channels)
         except PJSIPError as e:
             log.warning('Could not initialize voice audio device (%s); falling back to null sound device' % e)
-            voice_mixer = AudioMixer(None, None, settings.audio.sample_rate, 0)
+            voice_mixer = AudioMixer(None, None, settings.audio.sample_rate, 0, channel_count=channels)
         voice_mixer.muted = settings.audio.muted
         self.voice_audio_device = AudioDevice(voice_mixer)
         self.voice_audio_bridge = RootAudioBridge(voice_mixer)
@@ -395,7 +402,7 @@ class SIPApplication(object, metaclass=Singleton):
 
         try:
             if notification.sender is settings:
-                if 'audio.sample_rate' in notification.data.modified:
+                if {'audio.sample_rate', 'audio.stereo'}.intersection(notification.data.modified):
                     alert_device = settings.audio.alert_device
                     if alert_device not in (None, 'system_default') and alert_device not in self.engine.output_devices:
                         alert_device = 'system_default'
@@ -406,7 +413,14 @@ class SIPApplication(object, metaclass=Singleton):
                     if output_device not in (None, 'system_default') and output_device not in self.engine.output_devices:
                         output_device = 'system_default'
                     tail_length = settings.audio.echo_canceller.tail_length if settings.audio.echo_canceller.enabled else 0
-                    voice_mixer = AudioMixer(input_device, output_device, settings.audio.sample_rate, tail_length)
+                    channels = 2 if settings.audio.stereo else 1
+                    if channels == 2:
+                        tail_length = 0
+                    try:
+                        self.engine.set_opus_channels(channels)
+                    except Exception as e:
+                        log.warning('Could not set Opus to %s: %s' % ('stereo' if channels == 2 else 'mono', e))
+                    voice_mixer = AudioMixer(input_device, output_device, settings.audio.sample_rate, tail_length, channel_count=channels)
                     voice_mixer.muted = settings.audio.muted
                     self.voice_audio_device = AudioDevice(voice_mixer)
                     self.voice_audio_bridge = RootAudioBridge(voice_mixer)
@@ -430,6 +444,8 @@ class SIPApplication(object, metaclass=Singleton):
                         if output_device not in (None, 'system_default') and output_device not in self.engine.output_devices:
                             output_device = 'system_default'
                         tail_length = settings.audio.echo_canceller.tail_length if settings.audio.echo_canceller.enabled else 0
+                        if self.voice_audio_bridge.mixer.channel_count == 2:
+                            tail_length = 0     # stereo: no echo canceller
                         if (input_device, output_device, tail_length) != attrgetter('input_device', 'output_device', 'ec_tail_length')(self.voice_audio_bridge.mixer):
                             self.voice_audio_bridge.mixer.set_sound_devices(input_device, output_device, tail_length)
                             settings.audio.input_device = self.voice_audio_bridge.mixer.input_device

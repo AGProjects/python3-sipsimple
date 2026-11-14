@@ -1,0 +1,77 @@
+# 61_opus_stereo_music.patch   (pjsip 2.17)
+#
+# Opus for music when python3-sipsimple runs in stereo (audio.stereo:
+# a stereo AudioMixer and Opus' default param with channel_cnt = 2).
+# Mono calls are unchanged.
+#
+#   1. The encoder is opened for music: OPUS_APPLICATION_AUDIO and
+#      OPUS_SIGNAL_MUSIC instead of OPUS_APPLICATION_VOIP and
+#      OPUS_SIGNAL_VOICE, which favour speech and smear music
+#      (instruments, a backing track) even in stereo.
+#
+#   2. RFC 7587 section 6.1: a sender should send mono unless the
+#      receiver asked for stereo ("stereo=1" in its fmtp).  pjmedia
+#      opens the encoder with the local channel count whatever the
+#      peer asked for, so a mono peer got stereo packets (decodable,
+#      by downmixing, but a waste of bits).  The encoder still takes
+#      our stereo frames, but is forced to code mono
+#      (OPUS_SET_FORCE_CHANNELS(1)) when the peer did not ask for
+#      stereo.  Decoding is unchanged: a stereo decoder plays a mono
+#      stream on both channels.
+#
+# The choice is logged at level 4 ("Opus encoder for music, stereo").
+#
+# Group 3 in README (sipsimple's policy): music is what stereo is for in
+# sipsimple; upstream keeps its speech defaults.
+#
+--- pjsip_orig/pjmedia/src/pjmedia-codec/opus.c
++++ pjsip/pjmedia/src/pjmedia-codec/opus.c
+@@ -647,6 +647,7 @@
+     int idx, err;
+     pj_bool_t auto_bit_rate = PJ_TRUE;
+     pj_bool_t enc_use_plc = PJ_FALSE;
++    pj_bool_t music, peer_stereo;
+ 
+     PJ_ASSERT_RETURN(codec && attr && opus_data, PJ_EINVAL);
+ 
+@@ -741,11 +742,22 @@
+     TRACE_((THIS_FILE, "%s:%d: sample_rate: %u",
+             __FUNCTION__, __LINE__, opus_data->cfg.sample_rate));
+ 
++    /* sipsimple: stereo is music (python3-sipsimple audio.stereo): the
++     * encoder tuned for music rather than speech.  A peer that did not
++     * ask for stereo (no "stereo=1" in its fmtp, RFC 7587 section 6.1)
++     * gets mono, coded from our stereo frames.
++     */
++    music = (attr->info.channel_cnt > 1);
++    idx = find_fmtp(&attr->setting.enc_fmtp, &STR_STEREO, PJ_FALSE);
++    peer_stereo = (idx >= 0 &&
++                   pj_strtoul(&attr->setting.enc_fmtp.param[idx].val) > 0);
++
+     /* Initialize encoder */
+     err = opus_encoder_init(opus_data->enc,
+                             opus_data->cfg.sample_rate,
+                             attr->info.channel_cnt,
+-                            OPUS_APPLICATION_VOIP);
++                            music? OPUS_APPLICATION_AUDIO:
++                                   OPUS_APPLICATION_VOIP);
+     if (err != OPUS_OK) {
+         PJ_LOG(2, (THIS_FILE, "Unable to create encoder: %s %d",
+                    opus_strerror(err), err));
+@@ -754,7 +766,15 @@
+     }
+     
+     /* Set signal type */
+-    opus_encoder_ctl(opus_data->enc, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
++    opus_encoder_ctl(opus_data->enc, OPUS_SET_SIGNAL(music? OPUS_SIGNAL_MUSIC:
++                                                            OPUS_SIGNAL_VOICE));
++    /* sipsimple: our stereo, to a peer that wants mono: coded as mono */
++    if (music && !peer_stereo)
++        opus_encoder_ctl(opus_data->enc, OPUS_SET_FORCE_CHANNELS(1));
++    PJ_LOG(4, (THIS_FILE, "Opus encoder for %s, %s",
++               music? "music": "voice",
++               attr->info.channel_cnt < 2? "mono":
++               peer_stereo? "stereo": "mono (the peer did not ask for stereo)"));
+     /* Set bitrate */
+     opus_encoder_ctl(opus_data->enc, OPUS_SET_BITRATE(auto_bit_rate?
+                                                       OPUS_AUTO:

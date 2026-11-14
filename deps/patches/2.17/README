@@ -42,7 +42,8 @@ nature; group 4 is.
    compile time.
 
 3. Defaults and policy that are sipsimple's choice, not bugs
-   07 (mono Opus, low latency x264 tuning), 08 (no automatic b=TIAS),
+   07 (mono Opus, low latency x264 tuning), 61 (stereo Opus coded for
+   music), 08 (no automatic b=TIAS),
    24 (always offer rtcp-fb), 44 and 45 (VP8/VP9 rate control and
    quality), 48 (H.264 profile-level-id matching libwebrtc), 28 (a
    tls_name Route URI parameter that selects the TLS SNI name, which is
@@ -372,6 +373,15 @@ New 2.17-only support:
                                        higher (two nodes per camera). It
                                        probes up to /dev/video63 and keeps
                                        up to 8 devices. Applies after 58.
+  61_opus_stereo_music.patch           2.17-only - stereo Opus (the SDK's
+                                       audio.stereo) is coded for music:
+                                       OPUS_APPLICATION_AUDIO and
+                                       OPUS_SIGNAL_MUSIC instead of the
+                                       speech settings; and coded as mono
+                                       (OPUS_SET_FORCE_CHANNELS) to a peer
+                                       whose fmtp has no stereo=1 (RFC
+                                       7587 6.1). Mono calls unchanged.
+                                       Applies after 07.
 
 
 Dropped permanently
