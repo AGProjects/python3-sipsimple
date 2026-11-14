@@ -1,0 +1,839 @@
+# 63_agpm_audio_device.patch   (pjsip 2.17)
+#
+# The AG Podcast Mixer link: AG CuteMusic's mixer as an audio device,
+# without a sound device in between (python3-sipsimple
+# docs/PodcastMixerLink.md).
+#
+# AG CuteMusic and Blink exchange 48 kHz stereo s16le PCM through two
+# shared-memory rings in a per-user directory ($AGPM_DIR, else
+# $XDG_RUNTIME_DIR/ag-podcast-mixer on Linux, $TMPDIR/ag-podcast-mixer
+# on macOS): to-call.ring (AG CuteMusic's mix, the device's capture)
+# and from-call.ring (the device's playback, AG CuteMusic's BLINK
+# strip).  AG CuteMusic creates both and holds mixer.lock while its
+# mixer runs.
+#
+#   1. agpm.h, agpm_dev.c (new): the rings (one writer, one reader,
+#      __atomic builtins; the writer never waits) and an audio device
+#      factory with one device, "AG Podcast Mixer", 2 in / 2 out,
+#      listed only while mixer.lock is held and both rings are valid
+#      (re-tested on pjmedia_aud_dev_refresh()).  Its stream runs on
+#      its own pjmedia clock; the capture goes through a delay buffer
+#      (WSOLA) that absorbs the drift against AG CuteMusic's clock;
+#      48 kHz stereo is converted to and from the stream's rate and
+#      channel count (pjmedia_resample, downmix/upmix).
+#      pjmedia_agpm_available() and pjmedia_agpm_dir() are for
+#      sipsimple's Engine (podcast_mixer_available, podcast_mixer_dir).
+#   2. config.h: PJMEDIA_AUDIO_DEV_HAS_AGPM, on except Windows (mmap,
+#      flock).
+#   3. audiodev.c: the factory registered after the real devices.
+#   4. pjmedia_audiodev.h includes agpm.h; agpm_dev.o in the Makefile,
+#      CMakeLists.txt and pjmedia_audiodev.vcxproj.
+#
+# Group 2 in README (a device backend sipsimple's API is built on).
+#
+--- pjsip_orig/pjmedia/include/pjmedia-audiodev/agpm.h
++++ pjsip/pjmedia/include/pjmedia-audiodev/agpm.h
+@@ -0,0 +1,52 @@
++/*
++ * AG Podcast Mixer link: AG CuteMusic's mixer as an audio device, without a sound device in between
++ * (python3-sipsimple docs/PodcastMixerLink.md).
++ *
++ * Two shared-memory rings in a per-user directory: to-call.ring (AG CuteMusic writes the mix, we read it as
++ * the device's capture) and from-call.ring (we write the device's playback, AG CuteMusic plays it on its
++ * BLINK strip). AG CuteMusic creates both and holds mixer.lock while its mixer runs; the device is listed
++ * only then.
++ */
++#ifndef __PJMEDIA_AUDIODEV_AGPM_H__
++#define __PJMEDIA_AUDIODEV_AGPM_H__
++
++#include <pjmedia-audiodev/audiodev.h>
++
++PJ_BEGIN_DECL
++
++#define PJMEDIA_AGPM_DEVICE_NAME    "AG Podcast Mixer"
++#define PJMEDIA_AGPM_MAGIC          0x4d504741      /* "AGPM", little-endian */
++#define PJMEDIA_AGPM_VERSION        1
++#define PJMEDIA_AGPM_RATE           48000
++#define PJMEDIA_AGPM_CHANNELS       2
++#define PJMEDIA_AGPM_QUANTUM        240             /* frames: 5 ms, the writers' granularity */
++#define PJMEDIA_AGPM_HEADER_SIZE    64
++
++/* The ring header, 64 bytes, little-endian, followed by capacity frames of s16le x channels. */
++typedef struct pjmedia_agpm_ring_header
++{
++    pj_uint32_t magic;
++    pj_uint16_t version;
++    pj_uint16_t channels;
++    pj_uint32_t sample_rate;
++    pj_uint32_t capacity;           /* frames, a power of two */
++    pj_uint32_t writer_pid;
++    pj_uint32_t writer_generation;  /* bumped when a writer (re)attaches: the reader resyncs */
++    pj_uint64_t write_index;        /* frames, monotonic, written by the writer only */
++    pj_uint64_t read_index;         /* frames, monotonic, written by the reader only */
++    pj_uint8_t  reserved[24];
++} pjmedia_agpm_ring_header;
++
++/* The link's directory (per user, 0700): $AGPM_DIR, else $XDG_RUNTIME_DIR/ag-podcast-mixer (Linux),
++ * $TMPDIR/ag-podcast-mixer (macOS), else /tmp/ag-podcast-mixer-<uid>. */
++PJ_DECL(const char*) pjmedia_agpm_dir(void);
++
++/* Whether AG CuteMusic's mixer runs (it holds mixer.lock) and its rings are there. */
++PJ_DECL(pj_bool_t) pjmedia_agpm_available(void);
++
++/* The factory, registered by the audio subsystem when PJMEDIA_AUDIO_DEV_HAS_AGPM. */
++pjmedia_aud_dev_factory* pjmedia_agpm_factory(pj_pool_factory *pf);
++
++PJ_END_DECL
++
++#endif  /* __PJMEDIA_AUDIODEV_AGPM_H__ */
+--- pjsip_orig/pjmedia/src/pjmedia-audiodev/agpm_dev.c
++++ pjsip/pjmedia/src/pjmedia-audiodev/agpm_dev.c
+@@ -0,0 +1,660 @@
++/*
++ * AG Podcast Mixer link: an audio device whose capture is AG CuteMusic's mix and whose playback goes to
++ * AG CuteMusic's BLINK strip, through two shared-memory rings (python3-sipsimple docs/PodcastMixerLink.md).
++ *
++ * - The device is listed only while AG CuteMusic holds mixer.lock and both rings are there.
++ * - The rings are 48 kHz, stereo, s16le. The stream converts to and from what the stream asks for
++ *   (the conference bridge's rate and channel count: 32 or 48 kHz, mono or stereo).
++ * - The stream runs on its own clock (a pjmedia clock, one tick per frame). AG CuteMusic's clock is its
++ *   headset: the two drift apart, which a delay buffer (WSOLA) absorbs on the capture side.
++ */
++#include <pjmedia-audiodev/audiodev_imp.h>
++#include <pjmedia-audiodev/agpm.h>
++#include <pjmedia/clock.h>
++#include <pjmedia/delaybuf.h>
++#include <pjmedia/errno.h>
++#include <pjmedia/resample.h>
++#include <pj/assert.h>
++#include <pj/log.h>
++#include <pj/os.h>
++#include <pj/pool.h>
++#include <pj/string.h>
++
++#if PJMEDIA_AUDIO_DEV_HAS_AGPM
++
++#include <errno.h>
++#include <fcntl.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/file.h>
++#include <sys/mman.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++#define THIS_FILE           "agpm_dev.c"
++#define DELAY_BUF_MAX_MS    80          /* the most the capture side buffers to absorb drift */
++#define MAX_DRAIN           8           /* frames taken from to-call per tick, at most */
++
++
++/* The directory and the liveness lock */
++
++static char agpm_dir_path[512];
++
++PJ_DEF(const char*) pjmedia_agpm_dir(void)
++{
++    const char *base;
++
++    if (agpm_dir_path[0])
++        return agpm_dir_path;
++    if ((base = getenv("AGPM_DIR")) != NULL && *base) {
++        pj_ansi_strxcpy(agpm_dir_path, base, sizeof(agpm_dir_path));
++#if defined(PJ_DARWINOS) && PJ_DARWINOS != 0
++    } else if ((base = getenv("TMPDIR")) != NULL && *base) {
++        pj_ansi_snprintf(agpm_dir_path, sizeof(agpm_dir_path), "%s%sag-podcast-mixer", base,
++                         base[strlen(base) - 1] == '/' ? "" : "/");
++#else
++    } else if ((base = getenv("XDG_RUNTIME_DIR")) != NULL && *base) {
++        pj_ansi_snprintf(agpm_dir_path, sizeof(agpm_dir_path), "%s/ag-podcast-mixer", base);
++#endif
++    } else {
++        pj_ansi_snprintf(agpm_dir_path, sizeof(agpm_dir_path), "/tmp/ag-podcast-mixer-%u", (unsigned)getuid());
++    }
++    return agpm_dir_path;
++}
++
++static void agpm_path(char *buf, size_t size, const char *name)
++{
++    pj_ansi_snprintf(buf, size, "%s/%s", pjmedia_agpm_dir(), name);
++}
++
++/* Whether AG CuteMusic holds mixer.lock: a shared lock cannot be taken then. */
++static pj_bool_t agpm_mixer_running(void)
++{
++    char path[600];
++    int fd, running;
++
++    agpm_path(path, sizeof(path), "mixer.lock");
++    fd = open(path, O_RDONLY);
++    if (fd < 0)
++        return PJ_FALSE;
++    if (flock(fd, LOCK_SH | LOCK_NB) == 0) {
++        flock(fd, LOCK_UN);
++        running = 0;
++    } else {
++        running = (errno == EWOULDBLOCK);
++    }
++    close(fd);
++    return running ? PJ_TRUE : PJ_FALSE;
++}
++
++
++/* The rings */
++
++typedef struct agpm_ring
++{
++    int                          fd;
++    size_t                       size;
++    pjmedia_agpm_ring_header    *header;
++    pj_int16_t                  *data;
++    pj_uint32_t                  mask;          /* capacity - 1 */
++    pj_uint32_t                  generation;    /* the writer's, as last seen by the reader */
++} agpm_ring;
++
++static void agpm_ring_close(agpm_ring *ring)
++{
++    if (ring->header)
++        munmap(ring->header, ring->size);
++    if (ring->fd >= 0)
++        close(ring->fd);
++    ring->header = NULL;
++    ring->data = NULL;
++    ring->fd = -1;
++}
++
++static pj_status_t agpm_ring_open(agpm_ring *ring, const char *name)
++{
++    char path[600];
++    struct stat st;
++    pjmedia_agpm_ring_header *header;
++    void *map;
++
++    ring->fd = -1;
++    ring->header = NULL;
++    agpm_path(path, sizeof(path), name);
++    ring->fd = open(path, O_RDWR);
++    if (ring->fd < 0 || fstat(ring->fd, &st) != 0 || st.st_size < PJMEDIA_AGPM_HEADER_SIZE)
++        goto failed;
++    map = mmap(NULL, (size_t)st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, ring->fd, 0);
++    if (map == MAP_FAILED)
++        goto failed;
++    ring->size = (size_t)st.st_size;
++    ring->header = header = (pjmedia_agpm_ring_header*)map;
++    if (header->magic != PJMEDIA_AGPM_MAGIC || header->version != PJMEDIA_AGPM_VERSION ||
++        header->channels != PJMEDIA_AGPM_CHANNELS || header->sample_rate != PJMEDIA_AGPM_RATE ||
++        header->capacity == 0 || (header->capacity & (header->capacity - 1)) != 0 ||
++        ring->size < PJMEDIA_AGPM_HEADER_SIZE + (size_t)header->capacity * PJMEDIA_AGPM_CHANNELS * 2)
++    {
++        PJ_LOG(3, (THIS_FILE, "%s is not a valid AG Podcast Mixer ring", path));
++        goto failed;
++    }
++    ring->data = (pj_int16_t*)((char*)map + PJMEDIA_AGPM_HEADER_SIZE);
++    ring->mask = header->capacity - 1;
++    ring->generation = __atomic_load_n(&header->writer_generation, __ATOMIC_ACQUIRE);
++    return PJ_SUCCESS;
++
++failed:
++    agpm_ring_close(ring);
++    return PJMEDIA_EAUD_SYSERR;
++}
++
++/* As the reader: from now on, only what is written from now on (nothing stale). */
++static void agpm_ring_reader_sync(agpm_ring *ring)
++{
++    pjmedia_agpm_ring_header *h = ring->header;
++    ring->generation = __atomic_load_n(&h->writer_generation, __ATOMIC_ACQUIRE);
++    __atomic_store_n(&h->read_index, __atomic_load_n(&h->write_index, __ATOMIC_ACQUIRE), __ATOMIC_RELEASE);
++}
++
++/* As the reader: the frames there are to read (resyncing after a writer restart or an overrun). */
++static pj_uint64_t agpm_ring_available(agpm_ring *ring)
++{
++    pjmedia_agpm_ring_header *h = ring->header;
++    pj_uint64_t w, r;
++
++    if (__atomic_load_n(&h->writer_generation, __ATOMIC_ACQUIRE) != ring->generation)
++        agpm_ring_reader_sync(ring);
++    w = __atomic_load_n(&h->write_index, __ATOMIC_ACQUIRE);
++    r = __atomic_load_n(&h->read_index, __ATOMIC_RELAXED);
++    if (w < r || w - r > h->capacity) {      /* lost: start again from what comes next */
++        agpm_ring_reader_sync(ring);
++        return 0;
++    }
++    return w - r;
++}
++
++/* As the reader: frames (interleaved stereo) into out; the caller checked agpm_ring_available. */
++static void agpm_ring_read(agpm_ring *ring, pj_int16_t *out, unsigned frames)
++{
++    pjmedia_agpm_ring_header *h = ring->header;
++    pj_uint64_t r = __atomic_load_n(&h->read_index, __ATOMIC_RELAXED);
++    unsigned start = (unsigned)(r & ring->mask);
++    unsigned first = PJ_MIN(frames, h->capacity - start);
++
++    pj_memcpy(out, ring->data + start * PJMEDIA_AGPM_CHANNELS, first * PJMEDIA_AGPM_CHANNELS * 2);
++    if (first < frames)
++        pj_memcpy(out + first * PJMEDIA_AGPM_CHANNELS, ring->data, (frames - first) * PJMEDIA_AGPM_CHANNELS * 2);
++    __atomic_store_n(&h->read_index, r + frames, __ATOMIC_RELEASE);
++}
++
++/* As the writer: attach (the reader resyncs on the new generation). */
++static void agpm_ring_writer_attach(agpm_ring *ring)
++{
++    pjmedia_agpm_ring_header *h = ring->header;
++    h->writer_pid = (pj_uint32_t)getpid();
++    __atomic_store_n(&h->write_index, __atomic_load_n(&h->read_index, __ATOMIC_ACQUIRE), __ATOMIC_RELEASE);
++    __atomic_add_fetch(&h->writer_generation, 1, __ATOMIC_ACQ_REL);
++}
++
++/* As the writer: frames (interleaved stereo); dropped when there is no room (the reader is gone or behind:
++ * the writer never waits). */
++static pj_bool_t agpm_ring_write(agpm_ring *ring, const pj_int16_t *in, unsigned frames)
++{
++    pjmedia_agpm_ring_header *h = ring->header;
++    pj_uint64_t w = __atomic_load_n(&h->write_index, __ATOMIC_RELAXED);
++    pj_uint64_t r = __atomic_load_n(&h->read_index, __ATOMIC_ACQUIRE);
++    unsigned start, first;
++
++    if (w - r + frames > h->capacity)
++        return PJ_FALSE;
++    start = (unsigned)(w & ring->mask);
++    first = PJ_MIN(frames, h->capacity - start);
++    pj_memcpy(ring->data + start * PJMEDIA_AGPM_CHANNELS, in, first * PJMEDIA_AGPM_CHANNELS * 2);
++    if (first < frames)
++        pj_memcpy(ring->data, in + first * PJMEDIA_AGPM_CHANNELS, (frames - first) * PJMEDIA_AGPM_CHANNELS * 2);
++    __atomic_store_n(&h->write_index, w + frames, __ATOMIC_RELEASE);
++    return PJ_TRUE;
++}
++
++PJ_DEF(pj_bool_t) pjmedia_agpm_available(void)
++{
++    agpm_ring ring;
++
++    if (!agpm_mixer_running())
++        return PJ_FALSE;
++    if (agpm_ring_open(&ring, "to-call.ring") != PJ_SUCCESS)
++        return PJ_FALSE;
++    agpm_ring_close(&ring);
++    if (agpm_ring_open(&ring, "from-call.ring") != PJ_SUCCESS)
++        return PJ_FALSE;
++    agpm_ring_close(&ring);
++    return PJ_TRUE;
++}
++
++
++/* The factory and its stream */
++
++struct agpm_factory
++{
++    pjmedia_aud_dev_factory  base;
++    pj_pool_t               *pool;
++    pj_pool_factory         *pf;
++    unsigned                 dev_count;     /* 1 while AG CuteMusic's mixer runs, as of the last refresh */
++    pjmedia_aud_dev_info     info;
++};
++
++struct agpm_stream
++{
++    pjmedia_aud_stream   base;
++    pjmedia_aud_param    param;
++    pj_pool_t           *pool;
++    pjmedia_aud_rec_cb   rec_cb;
++    pjmedia_aud_play_cb  play_cb;
++    void                *user_data;
++
++    pjmedia_clock       *clock;
++    agpm_ring            to_call;           /* read: the capture */
++    agpm_ring            from_call;         /* written: the playback */
++
++    unsigned             frames;            /* per channel, per frame, at the stream's rate */
++    unsigned             frames48;          /* the same frame at 48 kHz */
++    pjmedia_delay_buf   *delay_buf;         /* the capture at 48 kHz stereo, drift absorbed */
++    pjmedia_resample    *resample_in;       /* 48 kHz -> the stream's rate (stereo), or NULL */
++    pjmedia_resample    *resample_out;      /* the stream's rate -> 48 kHz (stereo), or NULL */
++
++    pj_int16_t          *ring_buf;          /* frames48 x 2 */
++    pj_int16_t          *stereo_buf;        /* frames x 2, at the stream's rate */
++    pj_int16_t          *frame_buf;         /* the stream's frame: frames x channel_count */
++
++    pj_timestamp         rec_ts;
++    pj_timestamp         play_ts;
++    unsigned             underruns;
++    unsigned             dropped;
++};
++
++static pj_status_t agpm_factory_init(pjmedia_aud_dev_factory *f);
++static pj_status_t agpm_factory_destroy(pjmedia_aud_dev_factory *f);
++static unsigned    agpm_factory_get_dev_count(pjmedia_aud_dev_factory *f);
++static pj_status_t agpm_factory_get_dev_info(pjmedia_aud_dev_factory *f, unsigned index, pjmedia_aud_dev_info *info);
++static pj_status_t agpm_factory_default_param(pjmedia_aud_dev_factory *f, unsigned index, pjmedia_aud_param *param);
++static pj_status_t agpm_factory_create_stream(pjmedia_aud_dev_factory *f, const pjmedia_aud_param *param,
++                                              pjmedia_aud_rec_cb rec_cb, pjmedia_aud_play_cb play_cb,
++                                              void *user_data, pjmedia_aud_stream **p_aud_strm);
++static pj_status_t agpm_factory_refresh(pjmedia_aud_dev_factory *f);
++static void        agpm_factory_set_dev_change_cb(pjmedia_aud_dev_factory *f, pjmedia_aud_dev_change_callback cb);
++static int         agpm_factory_get_default_rec_dev(pjmedia_aud_dev_factory *f);
++static int         agpm_factory_get_default_play_dev(pjmedia_aud_dev_factory *f);
++
++static pj_status_t agpm_stream_get_param(pjmedia_aud_stream *s, pjmedia_aud_param *param);
++static pj_status_t agpm_stream_get_cap(pjmedia_aud_stream *s, pjmedia_aud_dev_cap cap, void *value);
++static pj_status_t agpm_stream_set_cap(pjmedia_aud_stream *s, pjmedia_aud_dev_cap cap, const void *value);
++static pj_status_t agpm_stream_start(pjmedia_aud_stream *s);
++static pj_status_t agpm_stream_stop(pjmedia_aud_stream *s);
++static pj_status_t agpm_stream_destroy(pjmedia_aud_stream *s);
++
++static pjmedia_aud_dev_factory_op factory_op =
++{
++    &agpm_factory_init,
++    &agpm_factory_destroy,
++    &agpm_factory_get_dev_count,
++    &agpm_factory_get_dev_info,
++    &agpm_factory_default_param,
++    &agpm_factory_create_stream,
++    &agpm_factory_refresh,
++    &agpm_factory_set_dev_change_cb,
++    &agpm_factory_get_default_rec_dev,
++    &agpm_factory_get_default_play_dev
++};
++
++static pjmedia_aud_stream_op stream_op =
++{
++    &agpm_stream_get_param,
++    &agpm_stream_get_cap,
++    &agpm_stream_set_cap,
++    &agpm_stream_start,
++    &agpm_stream_stop,
++    &agpm_stream_destroy
++};
++
++pjmedia_aud_dev_factory* pjmedia_agpm_factory(pj_pool_factory *pf)
++{
++    struct agpm_factory *f;
++    pj_pool_t *pool;
++
++    pool = pj_pool_create(pf, "agpm", 1000, 1000, NULL);
++    f = PJ_POOL_ZALLOC_T(pool, struct agpm_factory);
++    f->pf = pf;
++    f->pool = pool;
++    f->base.op = &factory_op;
++    return &f->base;
++}
++
++static pj_status_t agpm_factory_init(pjmedia_aud_dev_factory *f)
++{
++    struct agpm_factory *af = (struct agpm_factory*)f;
++
++    pj_bzero(&af->info, sizeof(af->info));
++    pj_ansi_strxcpy(af->info.name, PJMEDIA_AGPM_DEVICE_NAME, sizeof(af->info.name));
++    pj_ansi_strxcpy(af->info.driver, "agpm", sizeof(af->info.driver));
++    af->info.input_count = PJMEDIA_AGPM_CHANNELS;
++    af->info.output_count = PJMEDIA_AGPM_CHANNELS;
++    af->info.default_samples_per_sec = PJMEDIA_AGPM_RATE;
++    af->info.caps = 0;
++    af->dev_count = pjmedia_agpm_available() ? 1 : 0;
++    PJ_LOG(4, (THIS_FILE, "AG Podcast Mixer link in %s: %s", pjmedia_agpm_dir(),
++               af->dev_count ? "AG CuteMusic's mixer runs" : "AG CuteMusic's mixer is not running"));
++    return PJ_SUCCESS;
++}
++
++static pj_status_t agpm_factory_destroy(pjmedia_aud_dev_factory *f)
++{
++    struct agpm_factory *af = (struct agpm_factory*)f;
++    pj_pool_safe_release(&af->pool);
++    return PJ_SUCCESS;
++}
++
++static pj_status_t agpm_factory_refresh(pjmedia_aud_dev_factory *f)
++{
++    struct agpm_factory *af = (struct agpm_factory*)f;
++    unsigned count = pjmedia_agpm_available() ? 1 : 0;
++
++    if (count != af->dev_count)
++        PJ_LOG(4, (THIS_FILE, "AG Podcast Mixer %s", count ? "listed: AG CuteMusic's mixer runs" : "no longer listed"));
++    af->dev_count = count;
++    return PJ_SUCCESS;
++}
++
++/* No change events of its own: the application refreshes when AG CuteMusic starts or quits (mixer.lock). */
++static void agpm_factory_set_dev_change_cb(pjmedia_aud_dev_factory *f, pjmedia_aud_dev_change_callback cb)
++{
++    PJ_UNUSED_ARG(f);
++    PJ_UNUSED_ARG(cb);
++}
++
++/* Never the default device: it is chosen by name. */
++static int agpm_factory_get_default_rec_dev(pjmedia_aud_dev_factory *f)
++{
++    PJ_UNUSED_ARG(f);
++    return -1;
++}
++
++static int agpm_factory_get_default_play_dev(pjmedia_aud_dev_factory *f)
++{
++    PJ_UNUSED_ARG(f);
++    return -1;
++}
++
++static unsigned agpm_factory_get_dev_count(pjmedia_aud_dev_factory *f)
++{
++    return ((struct agpm_factory*)f)->dev_count;
++}
++
++static pj_status_t agpm_factory_get_dev_info(pjmedia_aud_dev_factory *f, unsigned index, pjmedia_aud_dev_info *info)
++{
++    struct agpm_factory *af = (struct agpm_factory*)f;
++
++    PJ_ASSERT_RETURN(index < af->dev_count, PJMEDIA_EAUD_INVDEV);
++    pj_memcpy(info, &af->info, sizeof(*info));
++    return PJ_SUCCESS;
++}
++
++static pj_status_t agpm_factory_default_param(pjmedia_aud_dev_factory *f, unsigned index, pjmedia_aud_param *param)
++{
++    struct agpm_factory *af = (struct agpm_factory*)f;
++
++    PJ_ASSERT_RETURN(index < af->dev_count, PJMEDIA_EAUD_INVDEV);
++    pj_bzero(param, sizeof(*param));
++    param->dir = PJMEDIA_DIR_CAPTURE_PLAYBACK;
++    param->rec_id = index;
++    param->play_id = index;
++    param->clock_rate = PJMEDIA_AGPM_RATE;
++    param->channel_count = PJMEDIA_AGPM_CHANNELS;
++    param->samples_per_frame = PJMEDIA_AGPM_RATE * 20 / 1000 * PJMEDIA_AGPM_CHANNELS;
++    param->bits_per_sample = 16;
++    param->flags = 0;
++    return PJ_SUCCESS;
++}
++
++/* 48 kHz stereo (frames48) -> the stream's frame */
++static void agpm_from_ring(struct agpm_stream *strm, const pj_int16_t *in, pj_int16_t *out)
++{
++    const pj_int16_t *stereo = in;
++    unsigned i;
++
++    if (strm->resample_in) {
++        pjmedia_resample_run(strm->resample_in, in, strm->stereo_buf);
++        stereo = strm->stereo_buf;
++    }
++    if (strm->param.channel_count == 2) {
++        if (stereo != out)
++            pj_memcpy(out, stereo, strm->frames * 2 * 2);
++    } else {
++        for (i = 0; i < strm->frames; i++)
++            out[i] = (pj_int16_t)(((int)stereo[2 * i] + (int)stereo[2 * i + 1]) / 2);
++    }
++}
++
++/* the stream's frame -> 48 kHz stereo (frames48) */
++static void agpm_to_ring(struct agpm_stream *strm, const pj_int16_t *in, pj_int16_t *out)
++{
++    pj_int16_t *stereo = strm->resample_out ? strm->stereo_buf : out;
++    unsigned i;
++
++    if (strm->param.channel_count == 2) {
++        pj_memcpy(stereo, in, strm->frames * 2 * 2);
++    } else {
++        for (i = 0; i < strm->frames; i++)
++            stereo[2 * i] = stereo[2 * i + 1] = in[i];
++    }
++    if (strm->resample_out)
++        pjmedia_resample_run(strm->resample_out, stereo, out);
++}
++
++/* One tick: a frame of capture to rec_cb, a frame of playback from play_cb. */
++static void agpm_clock_cb(const pj_timestamp *ts, void *user_data)
++{
++    struct agpm_stream *strm = (struct agpm_stream*)user_data;
++    pjmedia_frame frame;
++    unsigned drained = 0;
++
++    PJ_UNUSED_ARG(ts);
++
++    if (strm->param.dir & PJMEDIA_DIR_CAPTURE) {
++        /* what AG CuteMusic wrote since the last tick, into the delay buffer; one frame out of it */
++        while (drained < MAX_DRAIN && agpm_ring_available(&strm->to_call) >= strm->frames48) {
++            agpm_ring_read(&strm->to_call, strm->ring_buf, strm->frames48);
++            pjmedia_delay_buf_put(strm->delay_buf, strm->ring_buf);
++            drained++;
++        }
++        if (drained == 0)
++            strm->underruns++;
++        pjmedia_delay_buf_get(strm->delay_buf, strm->ring_buf);
++        agpm_from_ring(strm, strm->ring_buf, strm->frame_buf);
++
++        frame.type = PJMEDIA_FRAME_TYPE_AUDIO;
++        frame.buf = strm->frame_buf;
++        frame.size = strm->param.samples_per_frame * 2;
++        frame.timestamp.u64 = strm->rec_ts.u64;
++        frame.bit_info = 0;
++        if ((*strm->rec_cb)(strm->user_data, &frame) != PJ_SUCCESS)
++            return;
++        strm->rec_ts.u64 += strm->frames;
++    }
++
++    if (strm->param.dir & PJMEDIA_DIR_PLAYBACK) {
++        frame.type = PJMEDIA_FRAME_TYPE_AUDIO;
++        frame.buf = strm->frame_buf;
++        frame.size = strm->param.samples_per_frame * 2;
++        frame.timestamp.u64 = strm->play_ts.u64;
++        frame.bit_info = 0;
++        if ((*strm->play_cb)(strm->user_data, &frame) != PJ_SUCCESS)
++            return;
++        if (frame.type != PJMEDIA_FRAME_TYPE_AUDIO)
++            pj_bzero(strm->frame_buf, strm->param.samples_per_frame * 2);
++        agpm_to_ring(strm, strm->frame_buf, strm->ring_buf);
++        if (!agpm_ring_write(&strm->from_call, strm->ring_buf, strm->frames48))
++            strm->dropped++;
++        strm->play_ts.u64 += strm->frames;
++    }
++}
++
++static pj_status_t agpm_factory_create_stream(pjmedia_aud_dev_factory *f, const pjmedia_aud_param *param,
++                                              pjmedia_aud_rec_cb rec_cb, pjmedia_aud_play_cb play_cb,
++                                              void *user_data, pjmedia_aud_stream **p_aud_strm)
++{
++    struct agpm_factory *af = (struct agpm_factory*)f;
++    struct agpm_stream *strm;
++    pj_pool_t *pool;
++    pj_status_t status;
++    unsigned channels = param->channel_count;
++
++    PJ_ASSERT_RETURN(param->bits_per_sample == 16, PJMEDIA_EAUD_SAMPFORMAT);
++    PJ_ASSERT_RETURN(channels == 1 || channels == 2, PJMEDIA_EAUD_BADFORMAT);
++    PJ_ASSERT_RETURN(param->samples_per_frame % channels == 0, PJMEDIA_EAUD_BADFORMAT);
++    if ((pj_uint64_t)(param->samples_per_frame / channels) * PJMEDIA_AGPM_RATE % param->clock_rate != 0) {
++        PJ_LOG(3, (THIS_FILE, "AG Podcast Mixer: a %u-sample frame at %u Hz is no whole frame at 48 kHz",
++                   param->samples_per_frame / channels, param->clock_rate));
++        return PJMEDIA_EAUD_BADFORMAT;
++    }
++
++    pool = pj_pool_create(af->pf, "agpm-stream", 4096, 4096, NULL);
++    PJ_ASSERT_RETURN(pool != NULL, PJ_ENOMEM);
++    strm = PJ_POOL_ZALLOC_T(pool, struct agpm_stream);
++    pj_memcpy(&strm->param, param, sizeof(*param));
++    strm->pool = pool;
++    strm->rec_cb = rec_cb;
++    strm->play_cb = play_cb;
++    strm->user_data = user_data;
++    strm->to_call.fd = strm->from_call.fd = -1;
++    strm->frames = param->samples_per_frame / channels;
++    strm->frames48 = (unsigned)((pj_uint64_t)strm->frames * PJMEDIA_AGPM_RATE / param->clock_rate);
++
++    if (!agpm_mixer_running()) {
++        PJ_LOG(3, (THIS_FILE, "AG Podcast Mixer: AG CuteMusic's mixer is not running"));
++        status = PJMEDIA_EAUD_NODEFDEV;
++        goto failed;
++    }
++    if ((param->dir & PJMEDIA_DIR_CAPTURE) && (status = agpm_ring_open(&strm->to_call, "to-call.ring")) != PJ_SUCCESS)
++        goto failed;
++    if ((param->dir & PJMEDIA_DIR_PLAYBACK) && (status = agpm_ring_open(&strm->from_call, "from-call.ring")) != PJ_SUCCESS)
++        goto failed;
++
++    strm->ring_buf = (pj_int16_t*)pj_pool_calloc(pool, strm->frames48 * 2, sizeof(pj_int16_t));
++    strm->stereo_buf = (pj_int16_t*)pj_pool_calloc(pool, strm->frames * 2, sizeof(pj_int16_t));
++    strm->frame_buf = (pj_int16_t*)pj_pool_calloc(pool, param->samples_per_frame, sizeof(pj_int16_t));
++
++    if (param->clock_rate != PJMEDIA_AGPM_RATE) {
++        status = pjmedia_resample_create(pool, PJ_TRUE, PJ_FALSE, 2, PJMEDIA_AGPM_RATE, param->clock_rate,
++                                         strm->frames48 * 2, &strm->resample_in);
++        if (status == PJ_SUCCESS)
++            status = pjmedia_resample_create(pool, PJ_TRUE, PJ_FALSE, 2, param->clock_rate, PJMEDIA_AGPM_RATE,
++                                             strm->frames * 2, &strm->resample_out);
++        if (status != PJ_SUCCESS)
++            goto failed;
++    }
++    if (param->dir & PJMEDIA_DIR_CAPTURE) {
++        status = pjmedia_delay_buf_create(pool, "agpm", PJMEDIA_AGPM_RATE, strm->frames48 * 2, 2,
++                                          DELAY_BUF_MAX_MS, 0, &strm->delay_buf);
++        if (status != PJ_SUCCESS)
++            goto failed;
++    }
++    status = pjmedia_clock_create(pool, param->clock_rate, channels, param->samples_per_frame, 0,
++                                  &agpm_clock_cb, strm, &strm->clock);
++    if (status != PJ_SUCCESS)
++        goto failed;
++
++    strm->base.op = &stream_op;
++    *p_aud_strm = &strm->base;
++    PJ_LOG(4, (THIS_FILE, "AG Podcast Mixer stream: %u Hz, %u channel(s), %u ms frames%s",
++               param->clock_rate, channels, strm->frames * 1000 / param->clock_rate,
++               strm->resample_in ? ", resampled from and to 48 kHz" : ""));
++    return PJ_SUCCESS;
++
++failed:
++    agpm_ring_close(&strm->to_call);
++    agpm_ring_close(&strm->from_call);
++    pj_pool_release(pool);
++    return status;
++}
++
++static pj_status_t agpm_stream_get_param(pjmedia_aud_stream *s, pjmedia_aud_param *pi)
++{
++    struct agpm_stream *strm = (struct agpm_stream*)s;
++    PJ_ASSERT_RETURN(strm && pi, PJ_EINVAL);
++    pj_memcpy(pi, &strm->param, sizeof(*pi));
++    return PJ_SUCCESS;
++}
++
++static pj_status_t agpm_stream_get_cap(pjmedia_aud_stream *s, pjmedia_aud_dev_cap cap, void *pval)
++{
++    PJ_UNUSED_ARG(s);
++    PJ_UNUSED_ARG(cap);
++    PJ_UNUSED_ARG(pval);
++    return PJMEDIA_EAUD_INVCAP;
++}
++
++static pj_status_t agpm_stream_set_cap(pjmedia_aud_stream *s, pjmedia_aud_dev_cap cap, const void *pval)
++{
++    PJ_UNUSED_ARG(s);
++    PJ_UNUSED_ARG(cap);
++    PJ_UNUSED_ARG(pval);
++    return PJMEDIA_EAUD_INVCAP;
++}
++
++static pj_status_t agpm_stream_start(pjmedia_aud_stream *s)
++{
++    struct agpm_stream *strm = (struct agpm_stream*)s;
++
++    if (strm->to_call.header)
++        agpm_ring_reader_sync(&strm->to_call);      /* what AG CuteMusic sends from now on, nothing stale */
++    if (strm->from_call.header)
++        agpm_ring_writer_attach(&strm->from_call);
++    if (strm->delay_buf)
++        pjmedia_delay_buf_reset(strm->delay_buf);
++    PJ_LOG(4, (THIS_FILE, "Starting AG Podcast Mixer stream"));
++    return pjmedia_clock_start(strm->clock);
++}
++
++static pj_status_t agpm_stream_stop(pjmedia_aud_stream *s)
++{
++    struct agpm_stream *strm = (struct agpm_stream*)s;
++
++    PJ_LOG(4, (THIS_FILE, "Stopping AG Podcast Mixer stream (%u capture underruns, %u playback frames dropped)",
++               strm->underruns, strm->dropped));
++    return pjmedia_clock_stop(strm->clock);
++}
++
++static pj_status_t agpm_stream_destroy(pjmedia_aud_stream *s)
++{
++    struct agpm_stream *strm = (struct agpm_stream*)s;
++
++    PJ_ASSERT_RETURN(strm != NULL, PJ_EINVAL);
++    if (strm->clock) {
++        pjmedia_clock_stop(strm->clock);
++        pjmedia_clock_destroy(strm->clock);
++    }
++    if (strm->delay_buf)
++        pjmedia_delay_buf_destroy(strm->delay_buf);
++    if (strm->resample_in)
++        pjmedia_resample_destroy(strm->resample_in);
++    if (strm->resample_out)
++        pjmedia_resample_destroy(strm->resample_out);
++    agpm_ring_close(&strm->to_call);
++    agpm_ring_close(&strm->from_call);
++    pj_pool_release(strm->pool);
++    return PJ_SUCCESS;
++}
++
++#else   /* PJMEDIA_AUDIO_DEV_HAS_AGPM */
++
++PJ_DEF(const char*) pjmedia_agpm_dir(void)
++{
++    return "";
++}
++
++PJ_DEF(pj_bool_t) pjmedia_agpm_available(void)
++{
++    return PJ_FALSE;
++}
++
++#endif  /* PJMEDIA_AUDIO_DEV_HAS_AGPM */
+--- pjsip_orig/pjmedia/src/pjmedia-audiodev/audiodev.c
++++ pjsip/pjmedia/src/pjmedia-audiodev/audiodev.c
+@@ -79,6 +79,10 @@
+ pjmedia_aud_dev_factory* pjmedia_null_audio_factory(pj_pool_factory *pf);
+ #endif
+ 
++#if PJMEDIA_AUDIO_DEV_HAS_AGPM
++pjmedia_aud_dev_factory* pjmedia_agpm_factory(pj_pool_factory *pf);
++#endif
++
+ 
+ /* API: Initialize the audio subsystem. */
+ PJ_DEF(pj_status_t) pjmedia_aud_subsys_init(pj_pool_factory *pf)
+@@ -148,6 +152,10 @@
+ #if PJMEDIA_AUDIO_DEV_HAS_NULL_AUDIO
+     aud_subsys->drv[aud_subsys->drv_cnt++].create = &pjmedia_null_audio_factory;
+ #endif
++#if PJMEDIA_AUDIO_DEV_HAS_AGPM
++    /* AG CuteMusic's mixer (agpm_dev.c): listed while it runs, after the real devices */
++    aud_subsys->drv[aud_subsys->drv_cnt++].create = &pjmedia_agpm_factory;
++#endif
+ 
+     /* Initialize audio device observer objects */
+     pj_status_t st;
+--- pjsip_orig/pjmedia/include/pjmedia-audiodev/config.h
++++ pjsip/pjmedia/include/pjmedia-audiodev/config.h
+@@ -122,6 +122,19 @@
+ 
+ 
+ /**
++ * This setting controls whether the AG Podcast Mixer link (AG CuteMusic's mixer as an audio device, through
++ * shared-memory rings: agpm.h) should be included. POSIX only for now (mmap, flock).
++ */
++#ifndef PJMEDIA_AUDIO_DEV_HAS_AGPM
++#   if defined(PJ_WIN32) && PJ_WIN32 != 0
++#       define PJMEDIA_AUDIO_DEV_HAS_AGPM       0
++#   else
++#       define PJMEDIA_AUDIO_DEV_HAS_AGPM       1
++#   endif
++#endif
++
++
++/**
+  * This setting controls whether null audio support should be included.
+  */
+ #ifndef PJMEDIA_AUDIO_DEV_HAS_NULL_AUDIO
+--- pjsip_orig/pjmedia/include/pjmedia_audiodev.h
++++ pjsip/pjmedia/include/pjmedia_audiodev.h
+@@ -27,6 +27,7 @@
+ #include <pjmedia-audiodev/audiodev.h>
+ #include <pjmedia-audiodev/audiodev_imp.h>
+ #include <pjmedia-audiodev/audiotest.h>
++#include <pjmedia-audiodev/agpm.h>
+ 
+ #endif  /* __PJMEDIA_AUDIODEV_H__ */
+ 
+--- pjsip_orig/pjmedia/build/Makefile
++++ pjsip/pjmedia/build/Makefile
+@@ -93,7 +93,8 @@
+ export PJMEDIA_AUDIODEV_OBJS +=  audiodev.o audiotest.o errno.o \
+ 				 legacy_dev.o null_dev.o pa_dev.o wmme_dev.o \
+ 				 alsa_dev.o bb10_dev.o bdimad_dev.o \
+-				 android_jni_dev.o opensl_dev.o oboe_dev.o
++				 android_jni_dev.o opensl_dev.o oboe_dev.o \
++				 agpm_dev.o
+ export PJMEDIA_AUDIODEV_CFLAGS += $(_CFLAGS)
+ export PJMEDIA_AUDIODEV_CXXFLAGS += $(_CXXFLAGS)
+ export PJMEDIA_AUDIODEV_LDFLAGS += $(PJMEDIA_LDLIB) \
+--- pjsip_orig/pjmedia/CMakeLists.txt
++++ pjsip/pjmedia/CMakeLists.txt
+@@ -731,6 +731,7 @@
+   src/pjmedia-audiodev/android_jni_dev.c
+   src/pjmedia-audiodev/errno.c
+   src/pjmedia-audiodev/null_dev.c
++  src/pjmedia-audiodev/agpm_dev.c
+   src/pjmedia-audiodev/oboe_dev.cpp
+   src/pjmedia-audiodev/wasapi_dev.cpp
+   src/pjmedia-audiodev/wmme_dev.c
+--- pjsip_orig/pjmedia/build/pjmedia_audiodev.vcxproj
++++ pjsip/pjmedia/build/pjmedia_audiodev.vcxproj
+@@ -680,6 +680,7 @@
+     <ClCompile Include="..\src\pjmedia-audiodev\errno.c" />
+     <ClCompile Include="..\src\pjmedia-audiodev\legacy_dev.c" />
+     <ClCompile Include="..\src\pjmedia-audiodev\null_dev.c" />
++    <ClCompile Include="..\src\pjmedia-audiodev\agpm_dev.c" />
+     <ClCompile Include="..\src\pjmedia-audiodev\pa_dev.c" />
+     <ClCompile Include="..\src\pjmedia-audiodev\symb_aps_dev.cpp">
+       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug-Dynamic|Win32'">true</ExcludedFromBuild>

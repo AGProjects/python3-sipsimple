@@ -438,6 +438,28 @@ cdef class PJSIPUA:
         self._check_self()
         self._pjmedia_endpoint._set_opus_channels(channels)
 
+    property podcast_mixer_device:
+        """The name of AG CuteMusic's mixer as an audio device (docs/PodcastMixerLink.md)."""
+
+        def __get__(self):
+            return PJMEDIA_AGPM_DEVICE_NAME.decode()
+
+    property podcast_mixer_available:
+        """Whether AG CuteMusic's mixer runs (it holds mixer.lock and its rings are there): the device is listed
+        after the next refresh_sound_devices()."""
+
+        def __get__(self):
+            cdef int available
+            with nogil:
+                available = pjmedia_agpm_available()
+            return bool(available)
+
+    property podcast_mixer_dir:
+        """The link's directory: mixer.lock, blink.lock, to-call.ring, from-call.ring, calls.json."""
+
+        def __get__(self):
+            return pjmedia_agpm_dir().decode()
+
     def refresh_sound_devices(self):
         self._check_self()
         cdef int status

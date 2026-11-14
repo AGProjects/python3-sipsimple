@@ -29,14 +29,14 @@ nature; group 4 is.
    in pjproject.
 
 2. API extensions that exist for sipsimple's Cython bindings
-   03, 04, 05, 06, 08, 11, 32, 40, 42, 52, 53, 54, 57, 60 add callbacks,
+   03, 04, 05, 06, 08, 11, 32, 40, 42, 52, 53, 54, 57, 60, 63 add callbacks,
    accessors and device backends that sipsimple's Python API is built
    on: ICE state and stop callbacks, SIP header and subscription
    helpers, audio device change observers, the framebuffer video
    renderer, our own AVFoundation capture backend (which replaces
    upstream's darwin/metal backend on macOS), screen capture devices,
-   changing encoder size mid-call, V4L2 frame rate enumeration, and an
-   ARGB format.  They extend pjproject's public structs and function
+   changing encoder size mid-call, V4L2 frame rate enumeration, an
+   ARGB format, and the AG Podcast Mixer link device.  They extend pjproject's public structs and function
    tables, and some replace upstream design choices rather than adding
    to them.  Building sipsimple against an unpatched pjproject fails at
    compile time.
@@ -395,6 +395,21 @@ New 2.17-only support:
                                        destruction; sipsimple turns it
                                        into VideoCameraDidStop.
                                        Applies after 32 and 57.
+  63_agpm_audio_device.patch           2.17-only - the AG Podcast Mixer
+                                       link (docs/PodcastMixerLink.md):
+                                       a new audio device factory,
+                                       "AG Podcast Mixer", whose capture
+                                       is AG CuteMusic's mix and whose
+                                       playback goes to its BLINK strip,
+                                       through two shared-memory rings
+                                       (no sound device). Listed while
+                                       AG CuteMusic holds mixer.lock.
+                                       Own clock, WSOLA delay buffer for
+                                       drift, rate/channel conversion.
+                                       New files agpm.h, agpm_dev.c;
+                                       config.h, audiodev.c and build
+                                       lists. POSIX only (off on
+                                       Windows).
 
 
 Dropped permanently

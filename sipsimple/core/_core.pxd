@@ -1020,6 +1020,12 @@ cdef extern from "pjmedia_videodev.h":
     ctypedef void (*pjmedia_vid_dev_fb_frame_cb)(pjmedia_frame_ptr_const frame, pjmedia_rect_size size, void *user_data)
     int pjmedia_vid_dev_fb_set_callback(pjmedia_vid_dev_stream *strm, pjmedia_vid_dev_fb_frame_cb cb, void *user_data)
 
+cdef extern from "pjmedia-audiodev/agpm.h":
+    # AG CuteMusic's mixer as an audio device (docs/PodcastMixerLink.md)
+    const char *PJMEDIA_AGPM_DEVICE_NAME
+    const char *pjmedia_agpm_dir() nogil
+    int pjmedia_agpm_available() nogil
+
 cdef extern from "pjmedia-videodev/screen_dev.h":
     ctypedef enum pjmedia_screen_dev_state:
         PJMEDIA_SCREEN_DEV_UNAVAILABLE
