@@ -7,7 +7,8 @@ __all__ = ['IVideoProducer', 'VideoDevice', 'VideoError']
 
 import time
 
-from application.notification import NotificationCenter, NotificationData
+from application.notification import IObserver, NotificationCenter, NotificationData
+from application.python import Null
 from zope.interface import Attribute, Interface, implementer
 
 from sipsimple.core import SIPCoreError, VideoCamera
@@ -26,11 +27,12 @@ class VideoError(Exception):
     pass
 
 
-@implementer(IVideoProducer)
+@implementer(IVideoProducer, IObserver)
 class VideoDevice(object):
 
     def __init__(self, device_name, resolution, framerate):
         self._camera = self._open_camera(device_name, resolution, framerate)
+        NotificationCenter().add_observer(self, sender=self._camera)
         self._camera.start()
 
     def _open_camera(self, device_name, resolution, framerate, attempts=1):
@@ -49,13 +51,15 @@ class VideoDevice(object):
             return VideoCamera(None, resolution, framerate)
 
     def set_camera(self, device_name, resolution, framerate):
+        notification_center = NotificationCenter()
         old_camera = self._camera
+        notification_center.discard_observer(self, sender=old_camera)
         old_camera.close()
         new_camera = self._open_camera(device_name, resolution, framerate, attempts=1 if device_name is None else 8)
+        notification_center.add_observer(self, sender=new_camera)
         if not self.muted:
             new_camera.start()
         self._camera = new_camera
-        notification_center = NotificationCenter()
         notification_center.post_notification('VideoDeviceDidChangeCamera', sender=self, data=NotificationData(old_camera=old_camera, new_camera=new_camera))
 
     @property
@@ -85,3 +89,17 @@ class VideoDevice(object):
         else:
             self._camera.start()
         self.__dict__['muted'] = value
+
+    def handle_notification(self, notification):
+        handler = getattr(self, '_NH_%s' % notification.name, Null)
+        handler(notification)
+
+    def _NH_VideoCameraDidStop(self, notification):
+        # the capture ended by itself (a screen share stopped from the system's menu bar, a camera
+        # gone): no more frames come from this device, the application chooses another one
+        if notification.sender is not self._camera:
+            return
+        NotificationCenter().post_notification('VideoDeviceDidStop', sender=self, data=NotificationData(name=notification.data.name,
+                                                                                                           real_name=notification.data.real_name,
+                                                                                                           reason=notification.data.reason,
+                                                                                                           user_stopped=notification.data.user_stopped))

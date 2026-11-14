@@ -32,6 +32,7 @@ cdef extern from "pjlib.h":
         PJ_ERRNO_START_SYS
         PJ_EBUG
         PJ_ETOOMANY
+        PJ_ECANCELLED
     enum:
         PJ_MAX_OBJ_NAME
 
@@ -463,11 +464,17 @@ cdef extern from "pjmedia.h":
         PJMEDIA_EVENT_KEYFRAME_FOUND
         PJMEDIA_EVENT_KEYFRAME_MISSING
         PJMEDIA_EVENT_KEYFRAME_REQUESTED
+        PJMEDIA_EVENT_VID_DEV_ERROR
     struct pjmedia_event_fmt_changed_data:
         pjmedia_dir dir
         pjmedia_format new_fmt
+    struct pjmedia_event_vid_dev_err_data:
+        pjmedia_dir dir
+        int id
+        int status
     cdef union pjmedia_event_data_union:
         pjmedia_event_fmt_changed_data fmt_changed
+        pjmedia_event_vid_dev_err_data vid_dev_err
         void* ptr
     struct pjmedia_event:
         pjmedia_event_type type
@@ -2214,6 +2221,7 @@ cdef class RemoteVideoStream(VideoProducer):
 
 cdef LocalVideoStream_create(pjmedia_vid_stream *stream)
 cdef RemoteVideoStream_create(pjmedia_vid_stream *stream, format_change_handler=*)
+cdef int VideoCamera_on_event(pjmedia_event *event, void *user_data) noexcept nogil
 cdef int RemoteVideoStream_on_event(pjmedia_event *event, void *user_data) noexcept nogil
 cdef void _start_video_port(pjmedia_vid_port *port)
 cdef void _stop_video_port(pjmedia_vid_port *port)

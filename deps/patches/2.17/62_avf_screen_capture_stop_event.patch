@@ -1,0 +1,116 @@
+# 60_avf_screen_capture_stop_event.patch
+#
+# macOS: a screen share stopped from the system (the Stop of the menu bar's
+# screen sharing item, a display gone) went unnoticed: ScreenCaptureKit ended
+# the SCStream and called stream:didStopWithError:, which only logged it, so
+# the application kept the screen as its video device, sending nothing, and
+# never brought the camera back.
+#
+# avf_dev.m:
+#  - stream:didStopWithError: publishes a PJMEDIA_EVENT_VID_DEV_ERROR on the
+#    capture stream (vid_port forwards it to its subscribers), status
+#    PJ_ECANCELLED when the user stopped it (SCStreamErrorUserStopped),
+#    PJMEDIA_EVID_SYSERR otherwise. It is posted from the stream's own serial
+#    queue, where sck_destroy() clears the output's stream pointer, so a stop
+#    racing with the stream's destruction publishes nothing; AVFScreenOutput
+#    keeps that queue retained for it.
+#
+# sipsimple's VideoCamera subscribes to its vid_port's events and turns it into
+# the VideoCameraDidStop notification (VideoDevice: VideoDeviceDidStop).
+
+--- pjsip_orig/pjmedia/src/pjmedia-videodev/avf_dev.m
++++ pjsip/pjmedia/src/pjmedia-videodev/avf_dev.m
+@@ -20,6 +20,7 @@
+ #include <pj/assert.h>
+ #include <pj/log.h>
+ #include <pj/os.h>
++#include <pjmedia/event.h>
+ 
+ #if defined(PJMEDIA_HAS_VIDEO) && PJMEDIA_HAS_VIDEO != 0 && \
+     defined(PJMEDIA_VIDEO_DEV_HAS_AVF) && PJMEDIA_VIDEO_DEV_HAS_AVF != 0
+@@ -170,6 +171,8 @@
+     pj_bool_t                           sc_capturing;
+     CVPixelBufferRef                    sc_last_buf;
+     pj_uint8_t                         *sc_pack_buf;
++    pj_thread_desc                      sc_stop_thread_desc;  /* SCK's delegate queue */
++    pj_thread_t                        *sc_stop_thread;
+ };
+ 
+ 
+@@ -741,11 +744,19 @@
+ @interface AVFScreenOutput: NSObject <SCStreamOutput, SCStreamDelegate>
+ {
+ @public
+-    struct avf_stream *stream;
++    struct avf_stream *stream;      /* only touched on queue */
++    dispatch_queue_t   queue;       /* the stream's sc_queue, retained */
+ }
+ @end
+ 
+ @implementation AVFScreenOutput
++- (void)dealloc
++{
++    if (queue)
++        dispatch_release(queue);
++    [super dealloc];
++}
++
+ /* Runs on sc_queue */
+ - (void)stream:(SCStream *)sc didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
+         ofType:(SCStreamOutputType)type
+@@ -783,10 +794,45 @@
+     stream->sc_last_buf = img;
+ }
+ 
++/* SCK ended the capture on its own: the user's Stop in the menu bar's screen
++ * sharing item (SCStreamErrorUserStopped), the display gone, ... No frame
++ * comes any more, so the application is told with a PJMEDIA_EVENT_VID_DEV_ERROR
++ * (vid_port forwards it to its subscribers): PJ_ECANCELLED when the user
++ * stopped it, PJMEDIA_EVID_SYSERR otherwise. Runs on SCK's own queue. */
+ - (void)stream:(SCStream *)sc didStopWithError:(NSError *)error
+ {
++    pj_bool_t by_user;
++
+     PJ_UNUSED_ARG(sc);
+-    PJ_LOG(3, (THIS_FILE, "Screen capture stopped by the system: %s", avf_error_str(error)));
++
++    by_user = (error && [[error domain] isEqualToString:SCStreamErrorDomain] &&
++               [error code] == SCStreamErrorUserStopped);
++    PJ_LOG(3, (THIS_FILE, "Screen capture stopped %s: %s", by_user ? "by the user" : "by the system",
++               avf_error_str(error)));
++
++    if (!queue)
++        return;
++
++    /* On the stream's queue, where sck_destroy() clears stream: the block
++     * keeps self (and so the queue) alive until it has run. */
++    dispatch_async(queue, ^{
++        struct avf_stream *strm = self->stream;
++        pjmedia_event event;
++
++        if (!strm)
++            return;
++
++        if (!pj_thread_is_registered()) {
++            pj_bzero(strm->sc_stop_thread_desc, sizeof(pj_thread_desc));
++            pj_thread_register("avf_sck_stop", strm->sc_stop_thread_desc, &strm->sc_stop_thread);
++        }
++
++        pjmedia_event_init(&event, PJMEDIA_EVENT_VID_DEV_ERROR, &strm->cap_frame_ts, &strm->base);
++        event.data.vid_dev_err.dir = PJMEDIA_DIR_CAPTURE;
++        event.data.vid_dev_err.id = strm->param.cap_id;
++        event.data.vid_dev_err.status = by_user ? PJ_ECANCELLED : PJMEDIA_EVID_SYSERR;
++        pjmedia_event_publish(NULL, &strm->base, &event, PJMEDIA_EVENT_PUBLISH_POST_EVENT);
++    });
+ }
+ @end
+ 
+@@ -930,6 +976,8 @@
+     [display release];
+ 
+     strm->sc_queue = dispatch_queue_create("AVF Screen", DISPATCH_QUEUE_SERIAL);
++    output->queue = strm->sc_queue;
++    dispatch_retain(output->queue);
+     strm->sc_output = output;
+     strm->sc_stream = sc;
+ 

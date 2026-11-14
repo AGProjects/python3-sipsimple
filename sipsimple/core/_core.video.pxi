@@ -224,6 +224,7 @@ cdef class VideoCamera(VideoProducer):
         cdef int dev_count
         cdef int width
         cdef int height
+        cdef void *ptr
         cdef PJSIPUA ua
 
         super(VideoCamera, self).__init__()
@@ -313,6 +314,12 @@ cdef class VideoCamera(VideoProducer):
             if status != 0:
                 raise PJSIPError("Could not connect video capture and tee ports", status)
             self.producer_port = self._video_tee
+
+            # The device's own events (vid_port forwards them): a capture that ends by itself,
+            # e.g. a screen share stopped from the system's menu bar, becomes VideoCameraDidStop
+            ptr = <void*>self
+            with nogil:
+                pjmedia_event_subscribe(NULL, &VideoCamera_on_event, ptr, video_port)
         finally:
             with nogil:
                 pj_mutex_unlock(lock)
@@ -426,6 +433,7 @@ cdef class VideoCamera(VideoProducer):
         cdef int status
         cdef pj_mutex_t *lock
         cdef pj_mutex_t *global_lock
+        cdef void *ptr
         cdef PJSIPUA ua
 
         try:
@@ -453,7 +461,9 @@ cdef class VideoCamera(VideoProducer):
                 c.producer = None
             self._closed = 1
             if self._video_port != NULL:
+                ptr = <void*>self
                 with nogil:
+                    pjmedia_event_unsubscribe(NULL, &VideoCamera_on_event, ptr, self._video_port)
                     pjmedia_vid_port_stop(self._video_port)
                     pjmedia_vid_port_disconnect(self._video_port)
                     pjmedia_vid_port_destroy(self._video_port)
@@ -1100,6 +1110,32 @@ cdef void FrameBufferVideoRenderer_frame_handler_impl(pjmedia_frame_ptr_const fr
 cdef void FrameBufferVideoRenderer_frame_handler(pjmedia_frame_ptr_const frame, pjmedia_rect_size size, void *user_data) noexcept nogil:
     with gil:
         FrameBufferVideoRenderer_frame_handler_impl(frame, size, user_data)
+
+cdef int VideoCamera_on_event_impl(pjmedia_event *event, void *user_data) with gil:
+    cdef VideoCamera camera
+    cdef int status
+
+    if user_data == NULL:
+        return 0
+    try:
+        _get_ua()
+    except:
+        return 0
+    if event.type == PJMEDIA_EVENT_VID_DEV_ERROR:
+        camera = <object>user_data
+        status = event.data.vid_dev_err.status
+        if camera._closed:
+            return 0
+        reason = 'user stopped' if status == PJ_ECANCELLED else _pj_status_to_str(status)
+        _add_event("VideoCameraDidStop", dict(obj=camera, name=camera.name, real_name=camera.real_name,
+                                              reason=reason, user_stopped=status == PJ_ECANCELLED))
+    return 0
+
+cdef int VideoCamera_on_event(pjmedia_event *event, void *user_data) noexcept nogil:
+    cdef int result
+    with gil:
+        result = VideoCamera_on_event_impl(event, user_data)
+    return result
 
 cdef int RemoteVideoStream_on_event_impl(pjmedia_event *event, void *user_data) with gil:
     cdef PJSIPUA ua

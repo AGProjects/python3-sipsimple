@@ -29,7 +29,7 @@ nature; group 4 is.
    in pjproject.
 
 2. API extensions that exist for sipsimple's Cython bindings
-   03, 04, 05, 06, 08, 11, 32, 40, 42, 52, 53, 54, 57 add callbacks,
+   03, 04, 05, 06, 08, 11, 32, 40, 42, 52, 53, 54, 57, 60 add callbacks,
    accessors and device backends that sipsimple's Python API is built
    on: ICE state and stop callbacks, SIP header and subscription
    helpers, audio device change observers, the framebuffer video
@@ -382,6 +382,19 @@ New 2.17-only support:
                                        whose fmtp has no stereo=1 (RFC
                                        7587 6.1). Mono calls unchanged.
                                        Applies after 07.
+  62_avf_screen_capture_stop_event.patch
+                                       2.17-only - macOS: a screen share
+                                       stopped from the system (the menu
+                                       bar's Stop, a display gone) went
+                                       unnoticed. avf_dev's SCStream
+                                       delegate publishes a
+                                       PJMEDIA_EVENT_VID_DEV_ERROR
+                                       (PJ_ECANCELLED when the user
+                                       stopped it), from the stream's own
+                                       queue so it cannot race with its
+                                       destruction; sipsimple turns it
+                                       into VideoCameraDidStop.
+                                       Applies after 32 and 57.
 
 
 Dropped permanently
