@@ -24,6 +24,60 @@ cdef extern from *:
     int _sipsimple_snd_port_resync_ec(pjmedia_snd_port *snd_port) nogil
 
 
+# --- Stereo mixer, mono microphone ------------------------------------------
+#
+# A stereo AudioMixer opens its sound device with 2 channels both ways. A mono
+# input (a laptop's microphone, a headset's) opened so gives its channel on the
+# left only (Core Audio, ALSA): the peer of a stereo call heard the voice in one
+# ear. Between such a device and the bridge, this port copies the left channel
+# into the right on capture; playback goes through untouched (stereo).
+cdef extern from *:
+    """
+    typedef struct sipsimple_monodup_port {
+        pjmedia_port base;
+        pjmedia_port *dn;
+    } sipsimple_monodup_port;
+
+    static pj_status_t sipsimple_monodup_put_frame(pjmedia_port *this_port, pjmedia_frame *frame)
+    {
+        sipsimple_monodup_port *port = (sipsimple_monodup_port *)this_port;
+        if (frame->type == PJMEDIA_FRAME_TYPE_AUDIO && frame->size >= 4) {
+            pj_int16_t *samples = (pj_int16_t *)frame->buf;
+            pj_size_t i, frames = frame->size / 4;      /* 16 bit stereo */
+            for (i = 0; i < frames; ++i)
+                samples[2 * i + 1] = samples[2 * i];
+        }
+        return pjmedia_port_put_frame(port->dn, frame);
+    }
+
+    static pj_status_t sipsimple_monodup_get_frame(pjmedia_port *this_port, pjmedia_frame *frame)
+    {
+        sipsimple_monodup_port *port = (sipsimple_monodup_port *)this_port;
+        return pjmedia_port_get_frame(port->dn, frame);
+    }
+
+    static pj_status_t sipsimple_monodup_create(pj_pool_t *pool, pjmedia_port *dn, pjmedia_port **p_port)
+    {
+        sipsimple_monodup_port *port;
+        pj_str_t name = pj_str((char *)"monodup");
+        if (PJMEDIA_PIA_CCNT(&dn->info) != 2 || PJMEDIA_PIA_BITS(&dn->info) != 16)
+            return PJ_EINVAL;
+        port = PJ_POOL_ZALLOC_T(pool, sipsimple_monodup_port);
+        if (port == NULL)
+            return PJ_ENOMEM;
+        pjmedia_port_info_init(&port->base.info, &name, PJMEDIA_SIG_CLASS_PORT_AUD('M', 'D'),
+                               PJMEDIA_PIA_SRATE(&dn->info), PJMEDIA_PIA_CCNT(&dn->info),
+                               PJMEDIA_PIA_BITS(&dn->info), PJMEDIA_PIA_SPF(&dn->info));
+        port->base.put_frame = &sipsimple_monodup_put_frame;
+        port->base.get_frame = &sipsimple_monodup_get_frame;
+        port->dn = dn;
+        *p_port = &port->base;
+        return PJ_SUCCESS;
+    }
+    """
+    int sipsimple_monodup_create(pj_pool_t *pool, pjmedia_port *dn, pjmedia_port **p_port) nogil
+
+
 # --- Deferred conference-port teardown (pjsip 2.15+ async conf bridge) -------
 #
 # In pjsip 2.15+ pjmedia_conf_remove_port() only *queues* the removal; the
@@ -553,6 +607,8 @@ cdef class AudioMixer:
         cdef pjmedia_snd_port **snd_port_address
         cdef pjmedia_aud_param aud_param
         cdef pjmedia_snd_port_param port_param
+        cdef pjmedia_port *connect_port
+        cdef pjmedia_port *mono_port = NULL
 
         conf_bridge = self._obj
         conf_pool = self._conf_pool
@@ -637,8 +693,18 @@ cdef class AudioMixer:
                     return self._start_sound_device(ua, None, output_device, ec_tail_length)
                 elif status != 0:
                     raise PJSIPError("Could not create sound device", status)
+                connect_port = pjmedia_conf_get_master_port(conf_bridge)
+                if self.channel_count == 2 and input_device is not None:
+                    # a mono microphone on a stereo mixer: its channel copied to both (see sipsimple_monodup_create)
+                    with nogil:
+                        status = pjmedia_aud_dev_get_info(input_device_i, &dev_info)
+                    if status == 0 and dev_info.input_count == 1:
+                        with nogil:
+                            status = sipsimple_monodup_create(snd_pool, connect_port, &mono_port)
+                        if status == 0:
+                            connect_port = mono_port
                 with nogil:
-                    status = pjmedia_snd_port_connect(snd_port_address[0], pjmedia_conf_get_master_port(conf_bridge))
+                    status = pjmedia_snd_port_connect(snd_port_address[0], connect_port)
                 if status != 0:
                     self._stop_sound_device(ua)
                     raise PJSIPError("Could not connect sound device", status)
