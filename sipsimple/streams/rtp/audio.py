@@ -6,7 +6,7 @@ from zope.interface import implementer
 
 from sipsimple.audio import AudioBridge, AudioDevice, IAudioPort, WaveRecorder
 from sipsimple.configuration.settings import SIPSimpleSettings
-from sipsimple.core import AudioTransport, PJSIPError, SIPCoreError
+from sipsimple.core import AudioTransport, PJSIPError, SDPAttribute, SIPCoreError
 from sipsimple.streams.rtp import RTPStream
 
 
@@ -230,7 +230,16 @@ class AudioStream(RTPStream):
     def _NH_RTPAudioTransportDidTimeout(self, notification):
         notification.center.post_notification('RTPStreamDidTimeout', sender=self)
 
+    def get_local_media(self, remote_sdp=None, index=0):
+        local_media = super(AudioStream, self).get_local_media(remote_sdp, index)
+        if self._is_stereo():
+            _opus_stereo_fmtp(local_media)
+        return local_media
+
     # Private methods
+
+    def _is_stereo(self):
+        return SIPSimpleSettings().audio.stereo if self.stereo is None else self.stereo
     #
 
     def _create_transport(self, rtp_transport, remote_sdp=None, stream_index=None):
@@ -304,3 +313,25 @@ class AudioStream(RTPStream):
             self.bridge.add(self)
         except ValueError:
             pass
+
+
+def _opus_stereo_fmtp(media):
+    """A stereo call: "stereo=1; sprop-stereo=1" in the Opus fmtp of our SDP (RFC 7587): we take and send stereo.
+    pjmedia negotiates the stream's channels from both SDPs (stream_info.c: the peer's stereo and our sprop-stereo),
+    so this call alone is stereo, and only when the peer asks for stereo too."""
+    payload_types = []
+    for attribute in media.attributes:
+        if attribute.name == b'rtpmap':
+            payload_type, _, encoding = attribute.value.partition(b' ')
+            if encoding.strip().lower().startswith(b'opus/'):
+                payload_types.append(payload_type.strip())
+    for payload_type in payload_types:
+        fmtp = next((attribute for attribute in media.attributes
+                     if attribute.name == b'fmtp' and attribute.value.split(b' ', 1)[0] == payload_type), None)
+        if fmtp is None:
+            media.attributes.append(SDPAttribute(b'fmtp', payload_type + b' stereo=1; sprop-stereo=1'))
+            continue
+        parameters = fmtp.value.partition(b' ')[2]
+        kept = [parameter.strip() for parameter in parameters.split(b';')
+                if parameter.strip() and not parameter.strip().lower().startswith((b'stereo=', b'sprop-stereo='))]
+        fmtp.value = payload_type + b' ' + b'; '.join(kept + [b'stereo=1', b'sprop-stereo=1'])
