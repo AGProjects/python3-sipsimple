@@ -1,20 +1,8 @@
 python3-sipsimple (5.7.0) unstable; urgency=medium
 
-  * Stereo audio: audio.stereo setting, a stereo AudioMixer (channel_count),
-    Opus in stereo (stereo=1; sprop-stereo=1), no echo canceller in stereo
-  * pjsip patch 61: stereo Opus coded for music (OPUS_APPLICATION_AUDIO,
-    OPUS_SIGNAL_MUSIC), and as mono to a peer that did not ask for stereo
-  * A stereo AudioStream puts stereo=1; sprop-stereo=1 in its Opus fmtp:
-    each call is negotiated stereo or mono on its own (pjmedia takes the
-    channels from both SDPs), without changing Opus' default for others
-  * Stereo calls offer only the codecs that carry stereo (Opus):
-    AudioStream(stereo=True), or every outgoing call while audio.stereo
-    is on; an incoming offer is answered with any codec in common
-  * WaveFile.set_position() and WavePlayer(start_offset=...): playing a WAV
-    file from a position
-  * A stereo AudioMixer with a mono microphone (a laptop's, a headset's):
-    its channel copied to both on capture, it came on the left only
-  * Core build 23
+  * Added support for stereo audio
+  * Added support to play audio files from a given position
+  * Added a shared audio podcast mixer device
 
  -- Adrian Georgescu <ag@ag-projects.com>  Sat, 14 Nov 2026 11:55:00 -0300
 
