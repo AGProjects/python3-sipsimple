@@ -32,12 +32,34 @@ class AudioStream(RTPStream):
         # in Session.init_incoming), or the default voice mixer. Building the
         # bridge on the right mixer here avoids moving it later.
         mixer = getattr(stream_creation_context, 'mixer', None)
+        self._default_mixer = mixer is None     # on the application's voice mixer: follows it until the transport is made
         self.mixer = mixer if mixer is not None else SIPApplication.voice_audio_mixer
         self.bridge = AudioBridge(self.mixer)
         self.device = AudioDevice(self.mixer)
         self._audio_rec = None
 
         self.bridge.add(self.device)
+
+    @property
+    def offered_stereo(self):
+        """An incoming offer that asks for stereo Opus (stereo=1 in an Opus fmtp, RFC 7587). The application can
+        switch audio.stereo on before accepting: the stream then moves to the new (stereo) voice mixer."""
+        remote_sdp = getattr(self, '_incoming_remote_sdp', None)
+        if remote_sdp is None:
+            return False
+        return _opus_stereo_requested(remote_sdp.media[getattr(self, '_incoming_stream_index', 0) or 0])
+
+    @property
+    def stereo_active(self):
+        """Whether the call carries stereo: a stereo mixer, Opus, and the peer asking for stereo in its SDP (with our
+        sprop-stereo, pjmedia then makes the stream stereo)."""
+        if getattr(self.mixer, 'channel_count', 1) != 2 or (self.codec or '').lower() != 'opus':
+            return False
+        try:
+            remote_sdp = self.session._invitation.sdp.active_remote
+            return _opus_stereo_requested(remote_sdp.media[self.index])
+        except Exception:
+            return False
 
     @property
     def muted(self):
@@ -242,7 +264,24 @@ class AudioStream(RTPStream):
         return SIPSimpleSettings().audio.stereo if self.stereo is None else self.stereo
     #
 
+    def _follow_voice_mixer(self):
+        """A stream born on the application's voice mixer, which was made again since (audio.stereo or the sample
+        rate changed, e.g. switched to stereo to answer a stereo offer): moved to the current one, before its
+        transport is made."""
+        if not self._default_mixer:
+            return
+        from sipsimple.application import SIPApplication
+        mixer = SIPApplication.voice_audio_mixer
+        if mixer is None or mixer is self.mixer:
+            return
+        self.bridge.stop()
+        self.mixer = mixer
+        self.bridge = AudioBridge(mixer)
+        self.device = AudioDevice(mixer)
+        self.bridge.add(self.device)
+
     def _create_transport(self, rtp_transport, remote_sdp=None, stream_index=None):
+        self._follow_voice_mixer()
         settings = SIPSimpleSettings()
         available_codecs = list(self.session.account.rtp.audio_codec_list or settings.rtp.audio_codec_list)
         stereo = settings.audio.stereo if self.stereo is None else self.stereo
@@ -313,6 +352,22 @@ class AudioStream(RTPStream):
             self.bridge.add(self)
         except ValueError:
             pass
+
+
+def _opus_stereo_requested(media):
+    """Whether an SDP media (the peer's) asks for stereo Opus: stereo=1 in the fmtp of an Opus payload type."""
+    payload_types = set()
+    for attribute in media.attributes:
+        if attribute.name == b'rtpmap':
+            payload_type, _, encoding = attribute.value.partition(b' ')
+            if encoding.strip().lower().startswith(b'opus/'):
+                payload_types.add(payload_type.strip())
+    for attribute in media.attributes:
+        if attribute.name == b'fmtp' and attribute.value.split(b' ', 1)[0] in payload_types:
+            parameters = attribute.value.partition(b' ')[2]
+            if any(parameter.strip().lower() == b'stereo=1' for parameter in parameters.split(b';')):
+                return True
+    return False
 
 
 def _opus_stereo_fmtp(media):
