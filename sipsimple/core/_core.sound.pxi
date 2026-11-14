@@ -1505,6 +1505,33 @@ cdef class WaveFile:
             else:
                 return self._slot
 
+    def set_position(self, unsigned int offset):
+        """Play from offset, in bytes from the start of the audio data (a whole number of sample frames), once
+        started."""
+        cdef int status
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjmedia_port *port
+        cdef PJSIPUA ua
+
+        ua = self._check_ua()
+        if ua is None:
+            return
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            port = self._port
+            if port == NULL:
+                raise SIPCoreError("WaveFile is not started")
+            with nogil:
+                status = pjmedia_wav_player_port_set_pos(port, offset)
+            if status != 0:
+                raise PJSIPError("Could not set the WAV file position", status)
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
     property volume:
 
         def __get__(self):

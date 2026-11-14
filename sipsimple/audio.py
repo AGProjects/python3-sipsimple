@@ -397,9 +397,10 @@ class WavePlayer(object):
     """
 
 
-    def __init__(self, mixer, filename, volume=100, loop_count=1, pause_time=0, initial_delay=0):
+    def __init__(self, mixer, filename, volume=100, loop_count=1, pause_time=0, initial_delay=0, start_offset=0):
         self.mixer = mixer
         self.filename = filename
+        self.start_offset = start_offset        # bytes into the audio data where the first play starts (WaveFile.set_position)
         self.initial_delay = initial_delay
         self.loop_count = loop_count
         self.pause_time = pause_time
@@ -459,6 +460,11 @@ class WavePlayer(object):
                         notification_center.post_notification('WavePlayerDidFail', sender=self, data=NotificationData(error=e))
                         raise WavePlayerError(e)
                     else:
+                        if self._current_loop == 0 and self.start_offset:
+                            try:
+                                self._wave_file.set_position(self.start_offset)
+                            except SIPCoreError:
+                                pass        # from the start, then
                         if self._current_loop == 0:
                             notification_center.post_notification('WavePlayerDidStart', sender=self)
                         notification_center.post_notification('AudioPortDidChangeSlots', sender=self, data=NotificationData(consumer_slot_changed=False, producer_slot_changed=True,
