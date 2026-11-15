@@ -482,6 +482,39 @@ cdef class AudioMixer:
             with nogil:
                 pj_mutex_unlock(lock)
 
+    def get_signal_level_channels(self, int slot):
+        """Return ((tx_left, tx_right), (rx_left, rx_right)) for the given
+        conference bridge slot: get_signal_level() per channel of a stereo
+        mixer (channel_count 2), the same level twice on a mono one. Same
+        scale (0..255) and errors as get_signal_level()."""
+        cdef int status
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjmedia_conf *conf_bridge
+        cdef unsigned tx_level[2]
+        cdef unsigned rx_level[2]
+        cdef PJSIPUA ua
+
+        ua = _get_ua()
+
+        if slot < 0:
+            raise ValueError("slot argument cannot be negative")
+
+        tx_level[0] = tx_level[1] = rx_level[0] = rx_level[1] = 0
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            conf_bridge = self._obj
+            with nogil:
+                status = pjmedia_conf_get_signal_level_channels(conf_bridge, slot, tx_level, rx_level)
+            if status != 0:
+                raise PJSIPError("Could not get signal level for slot %d" % slot, status)
+            return ((int(tx_level[0]), int(tx_level[1])), (int(rx_level[0]), int(rx_level[1])))
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
     def reset_ec(self):
         """Reset the echo canceller: it forgets the learned echo path and has
         to converge again. Use when the acoustic path changed. The reset is

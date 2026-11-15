@@ -29,7 +29,7 @@ nature; group 4 is.
    in pjproject.
 
 2. API extensions that exist for sipsimple's Cython bindings
-   03, 04, 05, 06, 08, 11, 32, 40, 42, 52, 53, 54, 57, 60, 63 add callbacks,
+   03, 04, 05, 06, 08, 11, 32, 40, 42, 52, 53, 54, 57, 60, 63, 64 add callbacks,
    accessors and device backends that sipsimple's Python API is built
    on: ICE state and stop callbacks, SIP header and subscription
    helpers, audio device change observers, the framebuffer video
@@ -410,6 +410,17 @@ New 2.17-only support:
                                        config.h, audiodev.c and build
                                        lists. POSIX only (off on
                                        Windows).
+  64_conf_signal_level_channels.patch  2.17-only - the conference
+                                       bridge also keeps each port's tx
+                                       and rx level per channel (left,
+                                       right) on a stereo bridge, and
+                                       pjmedia_conf_get_signal_level_
+                                       channels() returns them (the
+                                       whole-frame level twice on a mono
+                                       bridge): VU meters per channel in
+                                       SylkServer's stereo rooms
+                                       (AudioMixer.get_signal_level_
+                                       channels()).
 
 
 Dropped permanently

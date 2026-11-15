@@ -104,6 +104,20 @@ class AudioStream(RTPStream):
         except Exception:
             return (0, 0)
 
+    @property
+    def signal_level_channels(self):
+        """Return ((tx_left, tx_right), (rx_left, rx_right)) for this stream:
+        signal_level per channel on a stereo mixer (the same level twice on a
+        mono one), or ((0, 0), (0, 0)) when the stream is not attached to a
+        conference bridge slot."""
+        transport = self._transport
+        if transport is None or transport.slot is None:
+            return ((0, 0), (0, 0))
+        try:
+            return self.mixer.get_signal_level_channels(transport.slot)
+        except Exception:
+            return ((0, 0), (0, 0))
+
     def start(self, local_sdp, remote_sdp, stream_index):
         with self._lock:
             if self.state != "INITIALIZED":

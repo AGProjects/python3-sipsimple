@@ -586,6 +586,7 @@ cdef extern from "pjmedia.h":
     int pjmedia_conf_adjust_rx_level(pjmedia_conf *conf, unsigned slot, int adj_level) nogil
     int pjmedia_conf_adjust_tx_level(pjmedia_conf *conf, unsigned slot, int adj_level) nogil
     int pjmedia_conf_get_signal_level(pjmedia_conf *conf, unsigned slot, unsigned *tx_level, unsigned *rx_level) nogil
+    int pjmedia_conf_get_signal_level_channels(pjmedia_conf *conf, unsigned slot, unsigned *tx_level, unsigned *rx_level) nogil
     # Async conference bridge (pjsip 2.15+): port add/remove are queued and
     # completed on the clock (audio I/O) thread. pjmedia_conf_set_op_cb()
     # registers a completion callback so the application can learn when a
