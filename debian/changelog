@@ -3,6 +3,7 @@ python3-sipsimple (5.7.0) unstable; urgency=medium
   * Added support for stereo audio
   * Added support to play audio files from a given position
   * Added a shared audio podcast mixer device
+  * Added RFC 6465 support for audio levels
 
  -- Adrian Georgescu <ag@ag-projects.com>  Sat, 14 Nov 2026 11:55:00 -0300
 
