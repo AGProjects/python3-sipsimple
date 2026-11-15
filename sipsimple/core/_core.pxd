@@ -36,6 +36,9 @@ cdef extern from "pjlib.h":
     enum:
         PJ_MAX_OBJ_NAME
 
+    # byte order
+    unsigned int pj_ntohl(unsigned int netlong) nogil
+
     # init / shutdown
     int pj_init() nogil
     void pj_shutdown() nogil
@@ -947,6 +950,29 @@ cdef extern from "pjmedia.h":
     int pjmedia_stream_pause(pjmedia_stream *stream, pjmedia_dir dir) nogil
     int pjmedia_stream_resume(pjmedia_stream *stream, pjmedia_dir dir) nogil
     int pjmedia_stream_get_stat(pjmedia_stream *stream, pjmedia_rtcp_stat *stat) nogil
+    # RTP sessions of a stream: the SSRC it sends with, the peer's it receives
+    struct pjmedia_rtp_hdr:
+        unsigned int ssrc
+    struct pjmedia_rtp_session:
+        pjmedia_rtp_hdr out_hdr
+        int has_peer_ssrc
+        unsigned int peer_ssrc
+    struct pjmedia_stream_rtp_sess_info:
+        const pjmedia_rtp_session *rx_rtp
+        const pjmedia_rtp_session *tx_rtp
+    int pjmedia_stream_get_rtp_session_info(pjmedia_stream *stream, pjmedia_stream_rtp_sess_info *session_info) nogil
+    # RFC 6465 mixer-to-client audio levels (deps/patches/2.17/65_stream_csrc_audio_level.patch)
+    enum:
+        PJMEDIA_STREAM_MAX_CSRC
+    struct pjmedia_stream_csrc_level:
+        unsigned int csrc
+        unsigned char level
+        unsigned char level_l
+        unsigned char level_r
+    int pjmedia_stream_set_csrc_level_ext(pjmedia_stream *stream, int level_ext_id, int lr_ext_id) nogil
+    int pjmedia_stream_set_csrc_levels(pjmedia_stream *stream, unsigned int count, pjmedia_stream_csrc_level *levels) nogil
+    int pjmedia_stream_set_rx_csrc_level_ext(pjmedia_stream *stream, int level_ext_id, int lr_ext_id) nogil
+    int pjmedia_stream_get_rx_csrc_levels(pjmedia_stream *stream, unsigned int *count, pjmedia_stream_csrc_level *levels, unsigned int *age_ms) nogil
 
     # wav player
     enum:
@@ -2835,6 +2861,7 @@ cdef class AudioTransport(object):
     # private methods
     cdef PJSIPUA _check_ua(self)
     cdef int _cb_check_rtp(self, MediaCheckTimer timer) except -1
+    cdef int _get_rtp_session_info(self, pjmedia_stream_rtp_sess_info *info)
 
 cdef class VideoTransport(object):
     # attributes

@@ -29,7 +29,7 @@ nature; group 4 is.
    in pjproject.
 
 2. API extensions that exist for sipsimple's Cython bindings
-   03, 04, 05, 06, 08, 11, 32, 40, 42, 52, 53, 54, 57, 60, 63, 64 add callbacks,
+   03, 04, 05, 06, 08, 11, 32, 40, 42, 52, 53, 54, 57, 60, 63, 64, 65, 66 add callbacks,
    accessors and device backends that sipsimple's Python API is built
    on: ICE state and stop callbacks, SIP header and subscription
    helpers, audio device change observers, the framebuffer video
@@ -421,6 +421,22 @@ New 2.17-only support:
                                        SylkServer's stereo rooms
                                        (AudioMixer.get_signal_level_
                                        channels()).
+  65_stream_csrc_audio_level.patch     2.17-only - an audio stream can
+                                       send, in its RTP packets, the
+                                       sources mixed into them and their
+                                       levels: the CSRC list and RFC 6465
+                                       csrc-audio-level (+ AG Projects'
+                                       csrc-audio-level-lr, left/right in
+                                       4 bits each), one-byte header
+                                       extensions (RFC 8285). Off until
+                                       pjmedia_stream_set_csrc_level_ext().
+  66_stream_rx_csrc_audio_level.patch  2.17-only - the receiving side of
+                                       65: an audio stream reads the CSRCs
+                                       and their levels a conference mixer
+                                       sends (one- or two-byte header
+                                       extensions), for the participants'
+                                       VU meters. Off until
+                                       pjmedia_stream_set_rx_csrc_level_ext().
 
 
 Dropped permanently

@@ -1,0 +1,254 @@
+# 66_stream_rx_csrc_audio_level.patch   (pjsip 2.17, after 65)
+#
+# The receiving side of 65: an audio stream reads, from the RTP packets it
+# gets from a conference mixer, the sources mixed into them and their audio
+# levels (RFC 6465 csrc-audio-level, + AG Projects' csrc-audio-level-lr),
+# for the participants' VU meters of a client in a conference.
+#
+#   * pjmedia_stream_set_rx_csrc_level_ext(stream, level_ext_id, lr_ext_id):
+#     the extmap IDs negotiated for the two extensions (0: not read).  Off
+#     by default.
+#
+#   * pjmedia_stream_get_rx_csrc_levels(stream, &count, levels, &age_ms):
+#     the CSRCs of the last audio packet that carried csrc-audio-level, their
+#     levels in -dBov (left/right ones from the -lr companion, its 4 bit
+#     steps of 4 dB; 15, -60 dBov or less, as 127), and how many ms ago it
+#     came.  Kept under jb_mutex.
+#
+# Both RFC 8285 header forms (one-byte 0xBEDE, two-byte 0x100X) are read.
+#
+# Group 2 in README (an extension for sipsimple's conference levels).
+#
+--- pjsip_orig/pjmedia/include/pjmedia/stream.h
++++ pjsip/pjmedia/include/pjmedia/stream.h
+@@ -579,6 +579,42 @@
+ pjmedia_stream_set_csrc_levels(pjmedia_stream *stream, unsigned count,
+                                const pjmedia_stream_csrc_level levels[]);
+ 
++/**
++ * Read the sources a mixer names in the RTP packets this stream receives,
++ * and their audio levels (RFC 6465, and AG Projects' left/right companion):
++ * the extmap IDs negotiated for urn:ietf:params:rtp-hdrext:csrc-audio-level
++ * and urn:ag-projects:rtp-hdrext:csrc-audio-level-lr (1 to 14, 0: not read).
++ *
++ * @param stream        The stream.
++ * @param level_ext_id  The extmap ID of csrc-audio-level, 0 to read none.
++ * @param lr_ext_id     The extmap ID of csrc-audio-level-lr, 0 not to read it.
++ *
++ * @return              PJ_SUCCESS on success.
++ */
++PJ_DECL(pj_status_t)
++pjmedia_stream_set_rx_csrc_level_ext(pjmedia_stream *stream,
++                                     int level_ext_id, int lr_ext_id);
++
++/**
++ * The sources named in the last audio packet received that carried
++ * csrc-audio-level, and their levels (the left and right ones the level
++ * itself without the left/right companion; 15 of its 4 bit steps, -60 dBov
++ * or less, as 127).
++ *
++ * @param stream        The stream.
++ * @param count         On input the room in levels, on output the number of
++ *                      sources.
++ * @param levels        The sources and their levels.
++ * @param age_ms        Optional: the milliseconds since that packet came
++ *                      (0xFFFFFFFF when none came).
++ *
++ * @return              PJ_SUCCESS on success.
++ */
++PJ_DECL(pj_status_t)
++pjmedia_stream_get_rx_csrc_levels(pjmedia_stream *stream, unsigned *count,
++                                  pjmedia_stream_csrc_level levels[],
++                                  pj_uint32_t *age_ms);
++
+ 
+ /**
+  * @}
+--- pjsip_orig/pjmedia/src/pjmedia/stream.c
++++ pjsip/pjmedia/src/pjmedia/stream.c
+@@ -143,6 +143,14 @@
+     unsigned                 csrc_cnt;      /**< Sources to name.           */
+     pjmedia_stream_csrc_level csrc_levels[PJMEDIA_STREAM_MAX_CSRC];
+ 
++    /* The same, as a mixer names them in what is received (jb_mutex). */
++    int                      rx_csrc_level_ext_id;/**< extmap ID, 0: off    */
++    int                      rx_csrc_lr_ext_id;/**< extmap ID, 0: off       */
++    pj_bool_t                rx_csrc_got;   /**< A packet named sources.    */
++    pj_uint32_t              rx_csrc_tick;  /**< When (pj_gettickcount ms). */
++    unsigned                 rx_csrc_cnt;   /**< Sources named.             */
++    pjmedia_stream_csrc_level rx_csrc_levels[PJMEDIA_STREAM_MAX_CSRC];
++
+     /* RFC 2833 DTMF transmission queue: */
+     unsigned                 dtmf_duration; /**< DTMF duration(in timestamp)*/
+     int                      tx_event_pt;   /**< Outgoing pt for dtmf.      */
+@@ -1668,6 +1676,108 @@
+  * packets in the RTP socket (i.e. called by on_rx_rtp() in
+  * stream_imp_common.c)
+  */
++/* Milliseconds of the monotonic clock, wrapping */
++static pj_uint32_t tick_ms(void)
++{
++    pj_time_val now;
++    pj_gettickcount(&now);
++    return (pj_uint32_t) PJ_TIME_VAL_MSEC(now);
++}
++
++
++/* The CSRC list and level header extensions (RFC 6465, RFC 8285 one-byte or
++ * two-byte headers) of a received audio packet, between its fixed RTP header
++ * and its payload: kept as the sources last named.
++ */
++static void get_rx_csrc_levels(pjmedia_stream *stream,
++                               const pjmedia_rtp_hdr *hdr,
++                               const void *payload)
++{
++    pjmedia_stream_common *c_strm = &stream->base;
++    const pj_uint8_t *p = (const pj_uint8_t*)hdr + sizeof(pjmedia_rtp_hdr);
++    const pj_uint8_t *end = (const pj_uint8_t*)payload;
++    const pj_uint8_t *csrcs = p, *levels = NULL, *lr = NULL;
++    unsigned cc = hdr->cc, n_levels = 0, n_lr = 0, i;
++    pjmedia_stream_csrc_level got[PJMEDIA_STREAM_MAX_CSRC];
++
++    if (!stream->rx_csrc_level_ext_id)
++        return;
++    if (p + cc * 4 > end)
++        return;
++    p += cc * 4;
++    if (hdr->x && p + 4 <= end) {
++        unsigned profile = ((unsigned)p[0] << 8) | p[1];
++        const pj_uint8_t *q = p + 4;
++        const pj_uint8_t *ext_end = q + 4 * (((unsigned)p[2] << 8) | p[3]);
++        pj_bool_t one_byte = (profile == 0xBEDE);
++
++        if (ext_end > end)
++            ext_end = end;
++        if (one_byte || (profile & 0xFFF0) == 0x1000) {
++            while (q < ext_end) {
++                unsigned id, len;
++                if (*q == 0) {                  /* padding */
++                    ++q;
++                    continue;
++                }
++                if (one_byte) {
++                    id = *q >> 4;
++                    len = (*q & 0x0f) + 1;
++                    if (id == 15)
++                        break;
++                    ++q;
++                } else {
++                    if (q + 2 > ext_end)
++                        break;
++                    id = q[0];
++                    len = q[1];
++                    q += 2;
++                }
++                if (q + len > ext_end)
++                    break;
++                if ((int)id == stream->rx_csrc_level_ext_id) {
++                    levels = q;
++                    n_levels = len;
++                } else if (stream->rx_csrc_lr_ext_id &&
++                           (int)id == stream->rx_csrc_lr_ext_id)
++                {
++                    lr = q;
++                    n_lr = len;
++                }
++                q += len;
++            }
++        }
++    }
++    if (cc > PJMEDIA_STREAM_MAX_CSRC)
++        cc = PJMEDIA_STREAM_MAX_CSRC;
++    if (levels == NULL)
++        cc = 0;             /* sources without levels: none named */
++    else if (n_levels < cc)
++        cc = n_levels;
++    for (i = 0; i < cc; ++i) {
++        pj_uint32_t csrc;
++        pj_memcpy(&csrc, csrcs + 4 * i, 4);
++        got[i].csrc = pj_ntohl(csrc);
++        got[i].level = (pj_uint8_t)(levels[i] & 0x7f);
++        if (lr && i < n_lr) {
++            unsigned l = lr[i] >> 4, r = lr[i] & 0x0f;
++            got[i].level_l = (pj_uint8_t)(l == 15 ? 127 : l * 4);
++            got[i].level_r = (pj_uint8_t)(r == 15 ? 127 : r * 4);
++        } else {
++            got[i].level_l = got[i].level_r = got[i].level;
++        }
++    }
++
++    pj_mutex_lock(c_strm->jb_mutex);
++    if (cc)
++        pj_memcpy(stream->rx_csrc_levels, got, cc * sizeof(got[0]));
++    stream->rx_csrc_cnt = cc;
++    stream->rx_csrc_got = PJ_TRUE;
++    stream->rx_csrc_tick = tick_ms();
++    pj_mutex_unlock(c_strm->jb_mutex);
++}
++
++
+ static pj_status_t on_stream_rx_rtp(pjmedia_stream_common *c_strm,
+                                     const pjmedia_rtp_hdr *hdr,
+                                     const void *payload,
+@@ -1695,6 +1805,9 @@
+         goto on_return;
+     }
+ 
++    /* The sources a mixer names in it, and their levels (RFC 6465) */
++    get_rx_csrc_levels(stream, hdr, payload);
++
+     /* Put "good" packet to jitter buffer, or reset the jitter buffer
+      * when RTP session is restarted.
+      */
+@@ -3173,3 +3286,51 @@
+     stream->csrc_cnt = count;
+     return PJ_SUCCESS;
+ }
++
++
++/*
++ * Read the sources a mixer names in what the stream receives (RFC 6465).
++ */
++PJ_DEF(pj_status_t)
++pjmedia_stream_set_rx_csrc_level_ext(pjmedia_stream *stream,
++                                     int level_ext_id, int lr_ext_id)
++{
++    PJ_ASSERT_RETURN(stream, PJ_EINVAL);
++    PJ_ASSERT_RETURN(level_ext_id >= 0 && level_ext_id <= 14, PJ_EINVAL);
++    PJ_ASSERT_RETURN(lr_ext_id >= 0 && lr_ext_id <= 14, PJ_EINVAL);
++
++    pj_mutex_lock(stream->base.jb_mutex);
++    stream->rx_csrc_level_ext_id = level_ext_id;
++    stream->rx_csrc_lr_ext_id = level_ext_id ? lr_ext_id : 0;
++    if (!level_ext_id) {
++        stream->rx_csrc_cnt = 0;
++        stream->rx_csrc_got = PJ_FALSE;
++    }
++    pj_mutex_unlock(stream->base.jb_mutex);
++    return PJ_SUCCESS;
++}
++
++
++/*
++ * The sources named in the last packet received that named them.
++ */
++PJ_DEF(pj_status_t)
++pjmedia_stream_get_rx_csrc_levels(pjmedia_stream *stream, unsigned *count,
++                                  pjmedia_stream_csrc_level levels[],
++                                  pj_uint32_t *age_ms)
++{
++    unsigned cnt;
++
++    PJ_ASSERT_RETURN(stream && count && (*count == 0 || levels), PJ_EINVAL);
++
++    pj_mutex_lock(stream->base.jb_mutex);
++    cnt = PJ_MIN(*count, stream->rx_csrc_cnt);
++    if (cnt)
++        pj_memcpy(levels, stream->rx_csrc_levels, cnt * sizeof(levels[0]));
++    *count = cnt;
++    if (age_ms)
++        *age_ms = stream->rx_csrc_got ?
++                  tick_ms() - stream->rx_csrc_tick : 0xFFFFFFFF;
++    pj_mutex_unlock(stream->base.jb_mutex);
++    return PJ_SUCCESS;
++}

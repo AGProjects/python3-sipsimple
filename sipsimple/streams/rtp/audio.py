@@ -1,5 +1,7 @@
 
-__all__ = ['AudioStream']
+__all__ = ['AudioStream', 'signal_level_to_dbov', 'CSRC_AUDIO_LEVEL_URI', 'CSRC_AUDIO_LEVEL_LR_URI']
+
+import math
 
 from application.notification import NotificationCenter, NotificationData
 from zope.interface import implementer
@@ -8,6 +10,24 @@ from sipsimple.audio import AudioBridge, AudioDevice, IAudioPort, WaveRecorder
 from sipsimple.configuration.settings import SIPSimpleSettings
 from sipsimple.core import AudioTransport, PJSIPError, SDPAttribute, SIPCoreError
 from sipsimple.streams.rtp import RTPStream
+
+
+# RFC 6465 mixer-to-client audio levels, and AG Projects' left/right companion (deps/patches/2.17/65_*)
+CSRC_AUDIO_LEVEL_URI = b'urn:ietf:params:rtp-hdrext:csrc-audio-level'
+CSRC_AUDIO_LEVEL_LR_URI = b'urn:ag-projects:rtp-hdrext:csrc-audio-level-lr'
+
+
+def signal_level_to_dbov(level):
+    """A conference bridge level (AudioMixer.get_signal_level: pjmedia's u-law scale, 0 silence to 127 full scale)
+    as an RFC 6465 level: -dBov, 0 the loudest to 127 silence."""
+    level = max(0, min(127, int(level)))
+    if level == 0:
+        return 127
+    # G.711 u-law decoding of the byte pjmedia inverted (linear2ulaw(x) ^ 0xff, a positive sample)
+    magnitude = ((((level & 0x0f) << 3) + 0x84) << ((level >> 4) & 0x07)) - 0x84
+    if magnitude <= 0:
+        return 127
+    return max(0, min(127, int(round(-20 * math.log10(magnitude / 32768.0)))))
 
 
 @implementer(IAudioPort)
@@ -37,6 +57,8 @@ class AudioStream(RTPStream):
         self.bridge = AudioBridge(self.mixer)
         self.device = AudioDevice(self.mixer)
         self._audio_rec = None
+        self._csrc_level_ext = (0, 0)       # the extmap IDs csrc-audio-level and -lr are sent with, 0: not sent
+        self._rx_csrc_level_ext = (0, 0)    # the same, read in what is received
 
         self.bridge.add(self.device)
 
@@ -125,6 +147,7 @@ class AudioStream(RTPStream):
             settings = SIPSimpleSettings()
             self._transport.start(local_sdp, remote_sdp, stream_index, timeout=settings.rtp.timeout)
             self._save_remote_sdp_rtp_info(remote_sdp, stream_index)
+            self._update_csrc_level_ext(local_sdp, remote_sdp, stream_index)
             self._check_hold(self._transport.direction.decode(), True)
             if self._try_ice and self._ice_state == "NULL":
                 self.state = 'WAIT_ICE'
@@ -197,6 +220,7 @@ class AudioStream(RTPStream):
                 self._check_hold(new_direction.decode(), False)
             self._save_remote_sdp_rtp_info(remote_sdp, stream_index)
             self._transport.update_sdp(local_sdp, remote_sdp, stream_index)
+            self._update_csrc_level_ext(local_sdp, remote_sdp, stream_index)
             self._hold_request = None
 
     def deactivate(self):
@@ -270,9 +294,77 @@ class AudioStream(RTPStream):
         local_media = super(AudioStream, self).get_local_media(remote_sdp, index)
         if self._is_stereo():
             _opus_stereo_fmtp(local_media)
+        _csrc_level_extmaps(local_media, None if remote_sdp is None else remote_sdp.media[index])
         return local_media
 
+    @property
+    def sends_csrc_levels(self):
+        """Whether the peer takes the levels of the sources mixed into what it gets (RFC 6465): set_csrc_levels()
+        sends them."""
+        return bool(self._csrc_level_ext[0]) and self._transport is not None
+
+    @property
+    def ssrc(self):
+        """The SSRC this stream sends with, None when it is not started."""
+        transport = self._transport
+        return transport.ssrc if transport is not None else None
+
+    @property
+    def remote_ssrc(self):
+        """The SSRC of what the peer sends, None until its first packet."""
+        transport = self._transport
+        return transport.remote_ssrc if transport is not None else None
+
+    @property
+    def receives_csrc_levels(self):
+        """Whether the peer (a conference mixer) sends the levels of the sources mixed into what we get (RFC 6465):
+        csrc_levels has them."""
+        return bool(self._rx_csrc_level_ext[0]) and self._transport is not None
+
+    @property
+    def csrc_levels(self):
+        """The sources a conference mixer names in what we receive and their levels (RFC 6465), from its last packet
+        that did, as ([(csrc, level, level_left, level_right), ...], age_ms): the levels in -dBov (0 the loudest, 127
+        silence), age_ms the milliseconds since that packet, None when none came (([], None) when not negotiated)."""
+        transport = self._transport
+        if transport is None or not self._rx_csrc_level_ext[0]:
+            return ([], None)
+        try:
+            return transport.get_rx_csrc_levels()
+        except (PJSIPError, SIPCoreError):
+            return ([], None)
+
+    def set_csrc_levels(self, levels):
+        """The sources a conference mixes into what this stream sends, and their levels (RFC 6465): a list of
+        (csrc, level, level_left, level_right), the levels in -dBov (see signal_level_to_dbov), the loudest first, at
+        most 15 used. Kept until set again; an empty list sends none. Does nothing when the peer did not take them."""
+        with self._lock:
+            if not self.sends_csrc_levels or self.state != 'ESTABLISHED':
+                return
+            try:
+                self._transport.set_csrc_levels(list(levels))
+            except (PJSIPError, SIPCoreError):
+                pass
+
     # Private methods
+
+    def _update_csrc_level_ext(self, local_sdp, remote_sdp, index):
+        """Send and read the CSRC levels with the extmap IDs both SDPs agree on, in the directions they agree on."""
+        local_media, remote_media = local_sdp.media[index], remote_sdp.media[index]
+        ids = _negotiated_csrc_level_ext(local_media, remote_media, sending=True)
+        if ids != self._csrc_level_ext:
+            try:
+                self._transport.set_csrc_level_ext(*ids)
+            except (PJSIPError, SIPCoreError, AttributeError):    # AttributeError: a core without patch 65
+                ids = (0, 0)
+            self._csrc_level_ext = ids
+        ids = _negotiated_csrc_level_ext(local_media, remote_media, sending=False)
+        if ids != self._rx_csrc_level_ext:
+            try:
+                self._transport.set_rx_csrc_level_ext(*ids)
+            except (PJSIPError, SIPCoreError, AttributeError):    # a core without patch 66
+                ids = (0, 0)
+            self._rx_csrc_level_ext = ids
 
     def _is_stereo(self):
         return SIPSimpleSettings().audio.stereo if self.stereo is None else self.stereo
@@ -404,3 +496,78 @@ def _opus_stereo_fmtp(media):
         kept = [parameter.strip() for parameter in parameters.split(b';')
                 if parameter.strip() and not parameter.strip().lower().startswith((b'stereo=', b'sprop-stereo='))]
         fmtp.value = payload_type + b' ' + b'; '.join(kept + [b'stereo=1', b'sprop-stereo=1'])
+
+
+def _extmaps(media):
+    """The header extensions an SDP media maps (RFC 8285): {uri: (id, direction)}, direction None for sendrecv."""
+    extmaps = {}
+    for attribute in media.attributes:
+        if attribute.name != b'extmap':
+            continue
+        fields = attribute.value.split()
+        if len(fields) < 2:
+            continue
+        ext_id, _, direction = fields[0].partition(b'/')
+        try:
+            ext_id = int(ext_id)
+        except ValueError:
+            continue
+        extmaps[fields[1]] = (ext_id, direction.lower() or None)
+    return extmaps
+
+
+_reverse_direction = {None: None, b'sendrecv': None, b'sendonly': b'recvonly', b'recvonly': b'sendonly'}
+
+
+def _csrc_level_extmaps(media, remote_media=None):
+    """The CSRC audio level extensions in our SDP media (RFC 8285): offered sendrecv with free IDs (a mixer sends
+    them, a client in a conference reads them), or, in an answer, those of the peer's offer, with its IDs and the
+    reverse of its direction (inactive ones left out)."""
+    if media.port == 0:
+        return
+    ours = _extmaps(media)
+    used = {ext_id for ext_id, direction in ours.values()}
+    if remote_media is None:
+        # the IDs a previous offer of ours used stay the same
+        for uri in (CSRC_AUDIO_LEVEL_URI, CSRC_AUDIO_LEVEL_LR_URI):
+            if uri in ours:
+                continue
+            ext_id = next((n for n in range(1, 15) if n not in used), None)
+            if ext_id is None:
+                return
+            used.add(ext_id)
+            media.attributes.append(SDPAttribute(b'extmap', b'%d %s' % (ext_id, uri)))
+    else:
+        theirs = _extmaps(remote_media)
+        for uri in (CSRC_AUDIO_LEVEL_URI, CSRC_AUDIO_LEVEL_LR_URI):
+            if uri in ours or uri not in theirs:
+                continue
+            ext_id, direction = theirs[uri]
+            if direction not in _reverse_direction or not 1 <= ext_id <= 14 or ext_id in used:
+                continue
+            if uri == CSRC_AUDIO_LEVEL_LR_URI and CSRC_AUDIO_LEVEL_URI not in _extmaps(media):
+                continue
+            used.add(ext_id)
+            direction = _reverse_direction[direction]
+            media.attributes.append(SDPAttribute(b'extmap', b'%d%s %s' % (ext_id, b'/' + direction if direction else b'', uri)))
+
+
+def _negotiated_csrc_level_ext(local_media, remote_media, sending=True):
+    """The extmap IDs (csrc-audio-level, csrc-audio-level-lr) to send with (sending) or to read in what is received:
+    in both SDP medias, in directions that agree; (0, 0) for none, the -lr one 0 without the first."""
+    if local_media.port == 0 or remote_media.port == 0:
+        return (0, 0)
+    ours = _extmaps(local_media)
+    theirs = _extmaps(remote_media)
+    local_off, remote_off = ((b'recvonly', b'inactive'), (b'sendonly', b'inactive')) if sending else ((b'sendonly', b'inactive'), (b'recvonly', b'inactive'))
+    ids = []
+    for uri in (CSRC_AUDIO_LEVEL_URI, CSRC_AUDIO_LEVEL_LR_URI):
+        if uri not in ours or uri not in theirs:
+            ids.append(0)
+            continue
+        ext_id, direction = ours[uri]
+        if direction in local_off or theirs[uri][1] in remote_off or not 1 <= ext_id <= 14:
+            ids.append(0)
+            continue
+        ids.append(ext_id)
+    return (ids[0], ids[1]) if ids[0] else (0, 0)

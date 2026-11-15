@@ -1887,6 +1887,163 @@ cdef class AudioTransport:
             with nogil:
                 pj_mutex_unlock(lock)
 
+    property ssrc:
+        """The SSRC this stream sends with, None when it is not started."""
+
+        def __get__(self):
+            cdef pjmedia_stream_rtp_sess_info info
+            if self._get_rtp_session_info(&info) != 0 or info.tx_rtp == NULL:
+                return None
+            return pj_ntohl(info.tx_rtp.out_hdr.ssrc)
+
+    property remote_ssrc:
+        """The SSRC of what the peer sends, None until it is known (from its first packet)."""
+
+        def __get__(self):
+            cdef pjmedia_stream_rtp_sess_info info
+            if self._get_rtp_session_info(&info) != 0 or info.rx_rtp == NULL or info.rx_rtp.peer_ssrc == 0:
+                return None
+            return info.rx_rtp.peer_ssrc
+
+    cdef int _get_rtp_session_info(self, pjmedia_stream_rtp_sess_info *info):
+        cdef int status
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjmedia_stream *stream
+
+        if self._check_ua() is None:
+            return -1
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            return -1
+        try:
+            stream = self._obj
+            if stream == NULL:
+                return -1
+            with nogil:
+                status = pjmedia_stream_get_rtp_session_info(stream, info)
+            return status
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
+    def set_csrc_level_ext(self, int level_ext_id, int lr_ext_id=0):
+        """Send the sources mixed into this stream and their levels (RFC 6465), with the extmap IDs negotiated for
+        urn:ietf:params:rtp-hdrext:csrc-audio-level and urn:ag-projects:rtp-hdrext:csrc-audio-level-lr (1-14, 0: not
+        sent). Nothing goes on the wire until set_csrc_levels() names some sources."""
+        cdef int status
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjmedia_stream *stream
+
+        _get_ua()
+        if not 0 <= level_ext_id <= 14 or not 0 <= lr_ext_id <= 14:
+            raise ValueError("extmap IDs must be between 0 and 14")
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            stream = self._obj
+            if stream == NULL:
+                raise SIPCoreError("Stream is not active")
+            with nogil:
+                status = pjmedia_stream_set_csrc_level_ext(stream, level_ext_id, lr_ext_id)
+            if status != 0:
+                raise PJSIPError("Could not set the CSRC audio level extensions", status)
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
+    def set_csrc_levels(self, list levels):
+        """The sources mixed into what this stream sends, as (csrc, level, level_left, level_right) with the levels in
+        -dBov (0 the loudest, 127 silence), the loudest first: at most 15 are sent. Kept until set again; an empty
+        list sends none."""
+        cdef int status
+        cdef unsigned int count, i
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjmedia_stream *stream
+        cdef pjmedia_stream_csrc_level c_levels[15]    # PJMEDIA_STREAM_MAX_CSRC
+
+        _get_ua()
+        count = min(len(levels), 15)
+        for i in range(count):
+            csrc, level, level_l, level_r = levels[i]
+            c_levels[i].csrc = <unsigned int> (int(csrc) & 0xffffffff)
+            c_levels[i].level = <unsigned char> max(0, min(127, int(level)))
+            c_levels[i].level_l = <unsigned char> max(0, min(127, int(level_l)))
+            c_levels[i].level_r = <unsigned char> max(0, min(127, int(level_r)))
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            stream = self._obj
+            if stream == NULL:
+                raise SIPCoreError("Stream is not active")
+            with nogil:
+                status = pjmedia_stream_set_csrc_levels(stream, count, c_levels)
+            if status != 0:
+                raise PJSIPError("Could not set the CSRC audio levels", status)
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
+    def set_rx_csrc_level_ext(self, int level_ext_id, int lr_ext_id=0):
+        """Read the sources a mixer names in what this stream receives, and their levels (RFC 6465), with the extmap
+        IDs negotiated for csrc-audio-level and csrc-audio-level-lr (1-14, 0: not read)."""
+        cdef int status
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjmedia_stream *stream
+
+        _get_ua()
+        if not 0 <= level_ext_id <= 14 or not 0 <= lr_ext_id <= 14:
+            raise ValueError("extmap IDs must be between 0 and 14")
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            stream = self._obj
+            if stream == NULL:
+                raise SIPCoreError("Stream is not active")
+            with nogil:
+                status = pjmedia_stream_set_rx_csrc_level_ext(stream, level_ext_id, lr_ext_id)
+            if status != 0:
+                raise PJSIPError("Could not set the received CSRC audio level extensions", status)
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+
+    def get_rx_csrc_levels(self):
+        """The sources named in the last packet received that carried csrc-audio-level and their levels, as
+        ([(csrc, level, level_left, level_right), ...], age_ms), the levels in -dBov (0 the loudest, 127 silence) and
+        age_ms the milliseconds since that packet (None when none came)."""
+        cdef int status
+        cdef unsigned int count = 15, age_ms = 0, i
+        cdef pj_mutex_t *lock = self._lock
+        cdef pjmedia_stream *stream
+        cdef pjmedia_stream_csrc_level c_levels[15]    # PJMEDIA_STREAM_MAX_CSRC
+
+        if self._check_ua() is None:
+            return ([], None)
+        with nogil:
+            status = pj_mutex_lock(lock)
+        if status != 0:
+            raise PJSIPError("failed to acquire lock", status)
+        try:
+            stream = self._obj
+            if stream == NULL:
+                return ([], None)
+            with nogil:
+                status = pjmedia_stream_get_rx_csrc_levels(stream, &count, c_levels, &age_ms)
+            if status != 0:
+                raise PJSIPError("Could not get the received CSRC audio levels", status)
+        finally:
+            with nogil:
+                pj_mutex_unlock(lock)
+        return ([(c_levels[i].csrc, c_levels[i].level, c_levels[i].level_l, c_levels[i].level_r) for i in range(count)],
+                None if age_ms == 0xffffffff else age_ms)
+
     cdef int _cb_check_rtp(self, MediaCheckTimer timer) except -1:
         cdef int status
         cdef pj_mutex_t *lock = self._lock

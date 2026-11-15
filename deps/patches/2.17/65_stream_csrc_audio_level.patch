@@ -1,0 +1,292 @@
+# 65_stream_csrc_audio_level.patch   (pjsip 2.17)
+#
+# An audio stream can name, in the RTP packets it sends, the sources mixed
+# into them and their audio levels: RFC 6465 (mixer-to-client audio level
+# indication), as a conference mixer does for its participants' VU meters.
+#
+#   * pjmedia_stream_set_csrc_level_ext(stream, level_ext_id, lr_ext_id):
+#     the extmap IDs negotiated for urn:ietf:params:rtp-hdrext:csrc-audio-level
+#     and AG Projects' companion urn:ag-projects:rtp-hdrext:csrc-audio-level-lr
+#     (0: not sent).  Off by default: nothing changes on the wire.
+#
+#   * pjmedia_stream_set_csrc_levels(stream, count, levels): the sources
+#     (at most 15) mixed into the next frames and their levels, set by the
+#     conference bridge before it puts the frames (same thread), kept until
+#     set again.
+#
+# The audio packets (not RFC 2833 events) then carry the CSRC list and a
+# one-byte header extension block (RFC 8285): csrc-audio-level, a byte per
+# CSRC (0, then the level in -dBov, 0 the loudest, 127 silence), and,
+# when negotiated, csrc-audio-level-lr: a byte per CSRC, its left channel's
+# level in the high 4 bits and its right one's in the low 4 bits, each in
+# steps of 4 dB (0 = 0 to -3 dBov ... 15 = -60 dBov or less), for stereo
+# conferences' VU meters (RFC 6465 has one level per source).  The codec
+# encodes into what is left of the buffer after room for them.
+#
+# Group 2 in README (an extension for sipsimple's conference levels).
+#
+--- pjsip_orig/pjmedia/include/pjmedia/stream.h
++++ pjsip/pjmedia/include/pjmedia/stream.h
+@@ -525,6 +525,62 @@
+ 
+ 
+ /**
++ * The most contributing sources an RTP packet names (its CSRC count is 4 bits).
++ */
++#define PJMEDIA_STREAM_MAX_CSRC     15
++
++/**
++ * A source mixed into what a stream sends (a conference mixer's), and its
++ * audio level: RFC 6465 (mixer-to-client audio level indication).
++ */
++typedef struct pjmedia_stream_csrc_level
++{
++    pj_uint32_t csrc;       /**< Its SSRC as the CSRC, host byte order.     */
++    pj_uint8_t  level;      /**< Its level in -dBov: 0 (loudest) to 127.    */
++    pj_uint8_t  level_l;    /**< Its left channel's level, -dBov.           */
++    pj_uint8_t  level_r;    /**< Its right channel's level, -dBov (both the
++                                 level on a mono mixer).                    */
++} pjmedia_stream_csrc_level;
++
++/**
++ * Send the sources mixed into what this stream sends, with their audio levels,
++ * in its RTP packets: the CSRC list, and the header extensions (RFC 8285,
++ * one-byte header) urn:ietf:params:rtp-hdrext:csrc-audio-level (RFC 6465: a
++ * level per CSRC, -dBov) and, optionally, AG Projects' companion
++ * urn:ag-projects:rtp-hdrext:csrc-audio-level-lr (a byte per CSRC: its left
++ * channel's level in the high 4 bits and its right one's in the low 4 bits,
++ * each in steps of 4 dB, 15 being -60 dBov or less).
++ *
++ * @param stream        The stream.
++ * @param level_ext_id  The extmap ID negotiated for csrc-audio-level (1 to
++ *                      14), 0 to send neither CSRCs nor levels.
++ * @param lr_ext_id     The extmap ID negotiated for csrc-audio-level-lr (1 to
++ *                      14), 0 not to send it.
++ *
++ * @return              PJ_SUCCESS on success.
++ */
++PJ_DECL(pj_status_t)
++pjmedia_stream_set_csrc_level_ext(pjmedia_stream *stream,
++                                  int level_ext_id, int lr_ext_id);
++
++/**
++ * The sources mixed into the next frames this stream sends, and their levels
++ * (the 15 loudest: at most PJMEDIA_STREAM_MAX_CSRC). Kept until set again;
++ * a count of 0 sends none. Call it from the thread that puts the frames
++ * (a conference bridge's, before it does).
++ *
++ * @param stream        The stream.
++ * @param count         The number of sources.
++ * @param levels        The sources and their levels.
++ *
++ * @return              PJ_SUCCESS on success.
++ */
++PJ_DECL(pj_status_t)
++pjmedia_stream_set_csrc_levels(pjmedia_stream *stream, unsigned count,
++                               const pjmedia_stream_csrc_level levels[]);
++
++
++/**
+  * @}
+  */
+ 
+--- pjsip_orig/pjmedia/src/pjmedia/stream.c
++++ pjsip/pjmedia/src/pjmedia/stream.c
+@@ -134,6 +134,15 @@
+ 
+     pj_int16_t              *zero_frame;    /**< Zero frame buffer.         */
+ 
++    /* RFC 6465 mixer-to-client audio levels (and AG Projects' left/right
++     * companion): the sources mixed into what is sent, and their levels,
++     * set by a conference bridge before it puts the frames.
++     */
++    int                      csrc_level_ext_id;/**< extmap ID, 0: off       */
++    int                      csrc_lr_ext_id;/**< extmap ID, 0: off          */
++    unsigned                 csrc_cnt;      /**< Sources to name.           */
++    pjmedia_stream_csrc_level csrc_levels[PJMEDIA_STREAM_MAX_CSRC];
++
+     /* RFC 2833 DTMF transmission queue: */
+     unsigned                 dtmf_duration; /**< DTMF duration(in timestamp)*/
+     int                      tx_event_pt;   /**< Outgoing pt for dtmf.      */
+@@ -1023,6 +1032,80 @@
+ /**
+  * put_frame_imp()
+  */
++/* Room kept in the packet buffer, between the RTP header and the payload,
++ * for the CSRC list and the level header extensions.
++ */
++#define CSRC_LEVELS_RESERVE (PJMEDIA_STREAM_MAX_CSRC * 4 + 4 + \
++                             2 * (1 + PJMEDIA_STREAM_MAX_CSRC) + 3)
++
++static unsigned csrc_levels_reserve(const pjmedia_stream *stream)
++{
++    return stream->csrc_level_ext_id ? CSRC_LEVELS_RESERVE : 0;
++}
++
++/* A level in -dBov as 4 bits of the left/right companion: steps of 4 dB. */
++static pj_uint8_t lr_nibble(pj_uint8_t level)
++{
++    unsigned nibble = (level & 0x7f) / 4;
++    return (pj_uint8_t)(nibble > 15 ? 15 : nibble);
++}
++
++/* Put the CSRC list and the level header extensions between the RTP header,
++ * at buf, and the payload of payload_len bytes right after it: the payload is
++ * moved. Returns the RTP header's length, the CSRCs and extension included
++ * (just the fixed header when there are none, or no room).
++ */
++static unsigned add_csrc_levels(pjmedia_stream *stream, pj_uint8_t *buf,
++                                unsigned payload_len, unsigned buf_size)
++{
++    pjmedia_rtp_hdr *hdr = (pjmedia_rtp_hdr*) buf;
++    unsigned cnt = stream->csrc_cnt, ext_len, words, extra, i;
++    pj_uint8_t ext[4 + 2 * (1 + PJMEDIA_STREAM_MAX_CSRC) + 3], *p;
++
++    if (!stream->csrc_level_ext_id || cnt == 0)
++        return sizeof(pjmedia_rtp_hdr);
++    if (cnt > PJMEDIA_STREAM_MAX_CSRC)
++        cnt = PJMEDIA_STREAM_MAX_CSRC;
++
++    /* One-byte header extensions (RFC 8285): ID, length - 1, data */
++    p = ext + 4;
++    *p++ = (pj_uint8_t)((stream->csrc_level_ext_id << 4) | (cnt - 1));
++    for (i = 0; i < cnt; ++i)
++        *p++ = (pj_uint8_t)(stream->csrc_levels[i].level & 0x7f);
++    if (stream->csrc_lr_ext_id) {
++        *p++ = (pj_uint8_t)((stream->csrc_lr_ext_id << 4) | (cnt - 1));
++        for (i = 0; i < cnt; ++i)
++            *p++ = (pj_uint8_t)((lr_nibble(stream->csrc_levels[i].level_l) << 4) |
++                                lr_nibble(stream->csrc_levels[i].level_r));
++    }
++    ext_len = (unsigned)(p - (ext + 4));
++    words = (ext_len + 3) / 4;
++    for (i = ext_len; i < words * 4; ++i)
++        *p++ = 0;                       /* padding */
++    ext[0] = 0xBE;
++    ext[1] = 0xDE;
++    ext[2] = (pj_uint8_t)(words >> 8);
++    ext[3] = (pj_uint8_t)(words & 0xff);
++
++    extra = cnt * 4 + 4 + words * 4;
++    if (sizeof(pjmedia_rtp_hdr) + extra + payload_len > buf_size)
++        return sizeof(pjmedia_rtp_hdr);
++
++    pj_memmove(buf + sizeof(pjmedia_rtp_hdr) + extra,
++               buf + sizeof(pjmedia_rtp_hdr), payload_len);
++    p = buf + sizeof(pjmedia_rtp_hdr);
++    for (i = 0; i < cnt; ++i) {
++        pj_uint32_t csrc = pj_htonl(stream->csrc_levels[i].csrc);
++        pj_memcpy(p, &csrc, 4);
++        p += 4;
++    }
++    pj_memcpy(p, ext, 4 + words * 4);
++    hdr->cc = (pj_uint16_t) cnt;
++    hdr->x = 1;
++    return sizeof(pjmedia_rtp_hdr) + extra;
++}
++
++
+ static pj_status_t put_frame_imp( pjmedia_port *port,
+                                   pjmedia_frame *frame )
+ {
+@@ -1035,6 +1118,8 @@
+     void *rtphdr;
+     int rtphdrlen;
+     int inc_timestamp = 0;
++    pj_bool_t is_dtmf = PJ_FALSE;
++    unsigned hdr_len;
+ 
+ 
+ #if defined(PJMEDIA_STREAM_ENABLE_KA) && PJMEDIA_STREAM_ENABLE_KA != 0
+@@ -1124,6 +1209,7 @@
+         int first=0, last=0;
+ 
+         create_dtmf_payload(stream, &frame_out, 0, &first, &last);
++        is_dtmf = PJ_TRUE;
+ 
+         /* Encapsulate into RTP packet. Note that:
+          *  - RTP marker should be set on the beginning of a new event
+@@ -1177,7 +1263,8 @@
+         /* Encode! */
+         status = pjmedia_codec_encode( stream->codec, &silence_frame,
+                                        channel->buf_size -
+-                                       sizeof(pjmedia_rtp_hdr),
++                                       sizeof(pjmedia_rtp_hdr) -
++                                       csrc_levels_reserve(stream),
+                                        &frame_out);
+         if (status != PJ_SUCCESS) {
+             LOGERR_((c_strm->port.info.name.ptr, status,
+@@ -1203,7 +1290,8 @@
+         /* Encode! */
+         status = pjmedia_codec_encode( stream->codec, frame,
+                                        channel->buf_size -
+-                                       sizeof(pjmedia_rtp_hdr),
++                                       sizeof(pjmedia_rtp_hdr) -
++                                       csrc_levels_reserve(stream),
+                                        &frame_out);
+         if (status != PJ_SUCCESS) {
+             LOGERR_((c_strm->port.info.name.ptr, status,
+@@ -1257,6 +1345,12 @@
+     /* Copy RTP header to the beginning of packet */
+     pj_memcpy(channel->buf, rtphdr, sizeof(pjmedia_rtp_hdr));
+ 
++    /* The sources mixed into it and their levels (RFC 6465), in audio */
++    hdr_len = is_dtmf ? sizeof(pjmedia_rtp_hdr) :
++              add_csrc_levels(stream, (pj_uint8_t*) channel->buf,
++                              (unsigned) frame_out.size,
++                              (unsigned) channel->buf_size);
++
+     /* Special case for DTMF: timestamp remains constant for
+      * the same event, and is only updated after a complete event
+      * has been transmitted.
+@@ -1278,8 +1372,7 @@
+ 
+     /* Send the RTP packet to the transport. */
+     status = pjmedia_transport_send_rtp(c_strm->transport, channel->buf,
+-                                        frame_out.size +
+-                                            sizeof(pjmedia_rtp_hdr));
++                                        frame_out.size + hdr_len);
+ 
+     if (status != PJ_SUCCESS) {
+         if (c_strm->rtp_tx_err_cnt++ == 0) {
+@@ -3043,3 +3136,40 @@
+     return pjmedia_stream_common_get_rtp_session_info(
+                (pjmedia_stream_common *)stream, session_info);
+ }
++
++
++/*
++ * Send the sources mixed into what the stream sends (RFC 6465).
++ */
++PJ_DEF(pj_status_t)
++pjmedia_stream_set_csrc_level_ext(pjmedia_stream *stream,
++                                  int level_ext_id, int lr_ext_id)
++{
++    PJ_ASSERT_RETURN(stream, PJ_EINVAL);
++    PJ_ASSERT_RETURN(level_ext_id >= 0 && level_ext_id <= 14, PJ_EINVAL);
++    PJ_ASSERT_RETURN(lr_ext_id >= 0 && lr_ext_id <= 14, PJ_EINVAL);
++
++    stream->csrc_level_ext_id = level_ext_id;
++    stream->csrc_lr_ext_id = level_ext_id ? lr_ext_id : 0;
++    if (!level_ext_id)
++        stream->csrc_cnt = 0;
++    return PJ_SUCCESS;
++}
++
++
++/*
++ * The sources mixed into the next frames, and their levels.
++ */
++PJ_DEF(pj_status_t)
++pjmedia_stream_set_csrc_levels(pjmedia_stream *stream, unsigned count,
++                               const pjmedia_stream_csrc_level levels[])
++{
++    PJ_ASSERT_RETURN(stream && (count == 0 || levels), PJ_EINVAL);
++
++    if (count > PJMEDIA_STREAM_MAX_CSRC)
++        count = PJMEDIA_STREAM_MAX_CSRC;
++    if (count)
++        pj_memcpy(stream->csrc_levels, levels, count * sizeof(levels[0]));
++    stream->csrc_cnt = count;
++    return PJ_SUCCESS;
++}
