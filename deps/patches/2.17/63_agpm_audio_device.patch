@@ -28,10 +28,9 @@
 #   3. audiodev.c: the factory registered after the real devices.
 #   4. pjmedia_audiodev.h includes agpm.h; agpm_dev.o in the Makefile,
 #      CMakeLists.txt and pjmedia_audiodev.vcxproj.
-#   5. alsa_dev.c: an ALSA PCM described as "AG Podcast Mixer" (AG
-#      CuteMusic's older device through the sound server, share.py) is
-#      left out: a device is chosen by name, the first listed winning,
-#      and ALSA's is listed first.
+#
+# (A part 5 left ALSA's "AG Podcast Mixer" PCM out; gone: on Linux the
+# PipeWire nodes reached through that PCM replace the rings, v2.)
 #
 # Group 2 in README (a device backend sipsimple's API is built on).
 #
@@ -841,30 +840,3 @@
      <ClCompile Include="..\src\pjmedia-audiodev\pa_dev.c" />
      <ClCompile Include="..\src\pjmedia-audiodev\symb_aps_dev.cpp">
        <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug-Dynamic|Win32'">true</ExcludedFromBuild>
---- pjsip_orig/pjmedia/src/pjmedia-audiodev/alsa_dev.c
-+++ pjsip/pjmedia/src/pjmedia-audiodev/alsa_dev.c
-@@ -25,6 +25,7 @@
- #include <pjmedia/errno.h>
- #include <pjmedia/event.h>
- #include <pjmedia-audiodev/alsa.h>
-+#include <pjmedia-audiodev/agpm.h>
- 
- #if defined(PJMEDIA_AUDIO_DEV_HAS_ALSA) && PJMEDIA_AUDIO_DEV_HAS_ALSA
- 
-@@ -542,6 +543,16 @@
-                  (strncmp("default", name, 7) == 0 && strstr(name, ":CARD=") != NULL)) {
-                  /* skip these devices, 'sysdefault' always contains the relevant information */
-                  ;
-+#if PJMEDIA_AUDIO_DEV_HAS_AGPM
-+            } else if (desc != NULL &&
-+                       strncmp(desc, PJMEDIA_AGPM_DEVICE_NAME, sizeof(PJMEDIA_AGPM_DEVICE_NAME) - 1) == 0 &&
-+                       (desc[sizeof(PJMEDIA_AGPM_DEVICE_NAME) - 1] == '\0' ||
-+                        desc[sizeof(PJMEDIA_AGPM_DEVICE_NAME) - 1] == '\n')) {
-+                 /* AG CuteMusic's older ALSA PCM of the same name (its share.py, through the sound server):
-+                  * the name is the AG Podcast Mixer link's (agpm_dev.c), and a device is chosen by name,
-+                  * the first one listed winning. Left out, so the link's device is the one. */
-+                 ;
-+#endif
-             } else {
-                 add_dev(af, name, desc);
-             }
