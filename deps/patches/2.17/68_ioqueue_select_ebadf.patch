@@ -1,0 +1,152 @@
+# 68_ioqueue_select_ebadf.patch
+#
+# SylkServer exited with "Error while handling events: Bad file descriptor"
+# from PJSIPUA.poll(): select() in the SIP ioqueue failed with EBADF, which
+# pjsip_endpt_handle_events() passes up and sipsimple treats as fatal on
+# Linux (on macOS it was already ignored, see _core.ua.pxi).
+#
+# select() fails with EBADF when a descriptor in the set is closed.  Two
+# ways this happens:
+#  - pj_ioqueue_poll() copies the sets under the ioqueue lock and runs
+#    select() after releasing it.  A key unregistered by another thread in
+#    that window (sipsimple calls into PJSIP from Python threads while the
+#    engine thread sits in select() without the GIL) has its fd closed while
+#    it is still in the copy.  Transient: unregister already took it out of
+#    the ioqueue's own sets, so the next poll is fine.
+#  - a descriptor is closed behind the ioqueue's back while its key is still
+#    registered.  It stays in the sets and every select() fails, and when
+#    the key is finally unregistered it closes whatever socket has been
+#    given that fd number since.
+#
+# ioqueue_select.c: on EBADF, check every fd in the ioqueue's sets, drop the
+# dead ones from the sets, log the key that owned each (fd, stream/dgram,
+# user_data, pending operations) and set its fd to PJ_INVALID_SOCKET so its
+# unregistration does not close a reused fd number; then return 0 instead of
+# the error.  ioqueue_add_to_set2() ignores keys whose fd was invalidated.
+--- pjsip_orig/pjlib/src/pj/ioqueue_select.c
++++ pjsip/pjlib/src/pj/ioqueue_select.c
+@@ -691,6 +691,12 @@
+ {
+     pj_lock_acquire(ioqueue->lock);
+ 
++    /* Key was dropped by purge_bad_fds(): its descriptor is gone. */
++    if (key->fd == PJ_INVALID_SOCKET) {
++        pj_lock_release(ioqueue->lock);
++        return;
++    }
++
+     if (event_types & READABLE_EVENT)
+         PJ_FD_SET((pj_sock_t)key->fd, &ioqueue->rfdset);
+     if (event_types & WRITEABLE_EVENT)
+@@ -936,6 +942,92 @@
+  *  - to guarantee preemptiveness etc, the poll function must strictly
+  *    work on fd_set copy of the ioqueue (not the original one).
+  */
++/*
++ * select() failed with EBADF.
++ *
++ * Two causes:
++ *  - a race: the sets are copied under the ioqueue lock, the lock is
++ *    released, then select() runs.  A key unregistered by another thread
++ *    in that window has its fd closed while it is still in our copy.
++ *    pj_ioqueue_unregister() clears the fd from the ioqueue's own sets
++ *    before closing it, so nothing is found below and the next poll
++ *    simply works.
++ *  - a bug elsewhere: a descriptor was closed behind the ioqueue's back
++ *    while its key is still registered.  It stays in the sets and every
++ *    select() fails.  Find it, log which key owned it, take it out of the
++ *    sets and invalidate key->fd, so the key's eventual unregistration
++ *    does not close whatever socket has been given that number since.
++ *
++ * Returns the number of descriptors purged.
++ */
++static unsigned purge_bad_fds(pj_ioqueue_t *ioqueue)
++{
++    pj_ioqueue_key_t *h;
++    unsigned purged = 0;
++    int fd;
++
++    pj_lock_acquire(ioqueue->lock);
++
++    for (fd = 0; fd <= ioqueue->nfds && fd < FD_SETSIZE; ++fd) {
++        int type = 0;
++        int len = sizeof(type);
++        char errmsg[PJ_ERR_MSG_SIZE];
++        pj_status_t status;
++
++        if (!PJ_FD_ISSET(fd, &ioqueue->rfdset) &&
++            !PJ_FD_ISSET(fd, &ioqueue->wfdset)
++#if defined(PJ_HAS_TCP) && PJ_HAS_TCP!=0
++            && !PJ_FD_ISSET(fd, &ioqueue->xfdset)
++#endif
++            )
++        {
++            continue;
++        }
++
++        status = pj_sock_getsockopt(fd, pj_SOL_SOCKET(), pj_SO_TYPE(),
++                                    &type, &len);
++        if (status == PJ_SUCCESS)
++            continue;
++
++        pj_strerror(status, errmsg, sizeof(errmsg));
++
++        PJ_FD_CLR(fd, &ioqueue->rfdset);
++        PJ_FD_CLR(fd, &ioqueue->wfdset);
++#if defined(PJ_HAS_TCP) && PJ_HAS_TCP!=0
++        PJ_FD_CLR(fd, &ioqueue->xfdset);
++#endif
++        ++purged;
++
++        for (h = ioqueue->active_list.next; h != &ioqueue->active_list;
++             h = h->next)
++        {
++            if (h->fd != fd)
++                continue;
++            PJ_LOG(1, (THIS_FILE,
++                       "Socket fd=%d was closed while still registered "
++                       "(%s): key=%p type=%s user_data=%p closing=%d "
++                       "connecting=%d read=%d write=%d accept=%d, "
++                       "dropping it from the ioqueue",
++                       fd, errmsg, h,
++                       h->fd_type == pj_SOCK_STREAM() ? "stream" :
++                       h->fd_type == pj_SOCK_DGRAM() ? "dgram" : "other",
++                       h->user_data, h->closing, h->connecting,
++                       !pj_list_empty(&h->read_list),
++                       !pj_list_empty(&h->write_list),
++                       !pj_list_empty(&h->accept_list)));
++            h->fd = PJ_INVALID_SOCKET;
++            break;
++        }
++        if (h == &ioqueue->active_list) {
++            PJ_LOG(1, (THIS_FILE, "Socket fd=%d in the ioqueue sets has "
++                       "no key (%s), dropping it", fd, errmsg));
++        }
++    }
++
++    pj_lock_release(ioqueue->lock);
++    return purged;
++}
++
+ PJ_DEF(int) pj_ioqueue_poll( pj_ioqueue_t *ioqueue, const pj_time_val *timeout)
+ {
+     pj_fd_set_t rfdset, wfdset, xfdset;
+@@ -1016,8 +1108,16 @@
+     
+     if (count == 0)
+         return 0;
+-    else if (count < 0)
+-        return -pj_get_netos_error();
++    else if (count < 0) {
++        pj_status_t err = pj_get_netos_error();
++#if defined(EBADF)
++        if (err == PJ_STATUS_FROM_OS(EBADF)) {
++            purge_bad_fds(ioqueue);
++            return 0;
++        }
++#endif
++        return -err;
++    }
+ 
+     /* Scan descriptor sets for event and add the events in the event
+      * array to be processed later in this function. We do this so that
