@@ -766,6 +766,8 @@ cdef class AudioMixer:
             self.input_device = input_device
             self.output_device = output_device
             self.ec_tail_length = ec_tail_length
+            # Removals queued while no clock ran are applied from now on.
+            self._schedule_reaper()
             return 0
         finally:
             with nogil:
@@ -788,11 +790,10 @@ cdef class AudioMixer:
                 pjmedia_master_port_destroy(master_port, 0)
             self._master_port = NULL
 
-        # The audio thread is gone now, so any ports queued for deferred
-        # teardown are safe to free immediately: the conf op callback that
-        # would otherwise signal completion can no longer run.
+        # The clock is gone: free what has been applied. Removals still queued
+        # are applied when a clock starts again, or by pjmedia_conf_destroy().
         if self._pending_free:
-            self._reap_pending(1)
+            self._reap_pending(0)
         if self._reap_timer is not None:
             self._reap_timer.cancel()
             self._reap_timer = None
@@ -856,7 +857,7 @@ cdef class AudioMixer:
         # Remove a port from the bridge and take ownership of freeing its media
         # port + pool. Because removal is asynchronous, the free is deferred
         # until the conf op callback reports the slot has actually been removed
-        # on the audio thread (or done immediately when no device is running).
+        # by the clock thread (or by pjmedia_conf_destroy()).
         cdef int status
         cdef pj_mutex_t *lock = self._lock
         cdef pjmedia_conf *conf_bridge
@@ -868,6 +869,12 @@ cdef class AudioMixer:
             raise PJSIPError("failed to acquire lock", status)
         try:
             conf_bridge = self._obj
+
+            # The bridge reuses a slot only after its REMOVE_PORT has been
+            # applied, so a previous occupant still listed here is done but not
+            # reaped yet: free it now, or overwriting its entry leaks it.
+            if slot in self._pending_free:
+                self._free_pending_entry(ua, slot)
 
             # Clear any stale completion flag before queuing, so a flag left
             # from a previous occupant of this slot can't free the new port.
@@ -889,19 +896,14 @@ cdef class AudioMixer:
             self._connected_slots = [connection for connection in self._connected_slots if slot not in connection]
             self.used_slot_count -= 1
 
-            if self._snd == NULL:
-                # No clock thread; the bridge cannot be touching the port.
-                if port != NULL:
-                    with nogil:
-                        pjmedia_port_destroy(port)
-                if pool != NULL:
-                    ua.release_memory_pool(pool)
-            else:
-                self._pending_free[slot] = (<size_t> port, <size_t> pool)
-                if self._reap_timer is None:
-                    timer = Timer()
-                    timer.schedule(0.020, <timer_callback>self._cb_reap_pending, self)
-                    self._reap_timer = timer
+            # Always defer: the bridge keeps its reference to the port until
+            # the REMOVE_PORT is applied by the clock, and only then may the
+            # port be destroyed and its pool released. The clock is the sound
+            # device or, with no devices (e.g. SylkServer), the master port;
+            # if neither runs yet, the op is applied once one starts (see
+            # _start_sound_device) or when the conference is destroyed.
+            self._pending_free[slot] = (<size_t> port, <size_t> pool)
+            self._schedule_reaper()
 
             if self.used_slot_count == 0 and not (self.input_device is None and self.output_device is None):
                 timer = Timer()
@@ -911,28 +913,54 @@ cdef class AudioMixer:
             with nogil:
                 pj_mutex_unlock(lock)
 
-    cdef int _reap_pending(self, int force) except -1:
-        # Free ports whose REMOVE_PORT has completed (or all of them when
-        # force is set, e.g. once the sound device has been stopped). Must be
-        # called with self._lock held, or from a context where no audio thread
-        # is running (force).
-        cdef PJSIPUA ua = _get_ua()
-        cdef list slots
+    cdef int _schedule_reaper(self) except -1:
+        cdef Timer timer
+        if self._pending_free and self._reap_timer is None and self._clock_running():
+            timer = Timer()
+            timer.schedule(0.020, <timer_callback>self._cb_reap_pending, self)
+            self._reap_timer = timer
+        return 0
+
+    cdef bint _clock_running(self):
+        # A clock thread drives the bridge (and applies queued ops) when there
+        # is a sound device port or, with no devices, the null master port.
+        return self._snd != NULL or self._master_port != NULL
+
+    cdef int _free_pending_entry(self, PJSIPUA ua, object slot) except -1:
+        cdef tuple entry
         cdef pjmedia_port *port
         cdef pj_pool_t *pool
-        cdef tuple entry
+
+        entry = self._pending_free.pop(slot)
+        port = <pjmedia_port *> (<size_t> entry[0])
+        pool = <pj_pool_t *> (<size_t> entry[1])
+        # Drops the app's reference; with the bridge's already gone this runs
+        # the port's on_destroy (closing e.g. a WAV file) before the pool that
+        # holds the port is released.
+        if port != NULL:
+            with nogil:
+                pjmedia_port_destroy(port)
+        if pool != NULL:
+            ua.release_memory_pool(pool)
+        return 0
+
+    cdef int _reap_pending(self, int force) except -1:
+        # Free ports whose REMOVE_PORT has been applied. With force set the
+        # conference bridge has been destroyed, so it holds no references any
+        # more and every pending port is freed. Must be called with self._lock
+        # held, or from a context where no audio thread is running.
+        #
+        # A port whose removal has not been applied is never freed early,
+        # even with the clock stopped: the bridge still references it and
+        # would run its on_destroy on freed memory when it drops that
+        # reference (see deps/patches/2.17/69_conf_bare_grp_lock_on_destroy.patch).
+        cdef PJSIPUA ua = _get_ua()
+        cdef list slots
 
         slots = list(self._pending_free.keys())
         for slot in slots:
-            if force or self._snd == NULL or (self._op_done != NULL and self._op_done[slot]):
-                entry = self._pending_free.pop(slot)
-                port = <pjmedia_port *> (<size_t> entry[0])
-                pool = <pj_pool_t *> (<size_t> entry[1])
-                if port != NULL:
-                    with nogil:
-                        pjmedia_port_destroy(port)
-                if pool != NULL:
-                    ua.release_memory_pool(pool)
+            if force or (self._op_done != NULL and self._op_done[slot]):
+                self._free_pending_entry(ua, slot)
         return 0
 
     cdef int _cb_reap_pending(self, timer) except -1:
@@ -947,7 +975,7 @@ cdef class AudioMixer:
         try:
             self._reap_timer = None
             self._reap_pending(0)
-            if self._pending_free:
+            if self._pending_free and self._clock_running():
                 # Some removals not yet applied; check again shortly.
                 new_timer = Timer()
                 new_timer.schedule(0.020, <timer_callback>self._cb_reap_pending, self)
@@ -993,8 +1021,6 @@ cdef class AudioMixer:
         if self._obj != NULL:
             _conf_op_unregister(self._obj)
         self._op_done = NULL
-        if self._pending_free:
-            self._reap_pending(1)
         if self._null_port != NULL:
             with nogil:
                 pjmedia_port_destroy(null_port)
@@ -1003,6 +1029,10 @@ cdef class AudioMixer:
             with nogil:
                 pjmedia_conf_destroy(conf_bridge)
             self._obj = NULL
+        # The bridge dropped its references to ports whose removal was still
+        # queued; now they can be freed.
+        if self._pending_free:
+            self._reap_pending(1)
         ua.release_memory_pool(self._conf_pool)
         self._conf_pool = NULL
         ua.release_memory_pool(self._snd_pool)

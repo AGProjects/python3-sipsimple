@@ -39,6 +39,11 @@
 # sound device is stopped and pending ports are force-freed before a queued
 # removal has been applied. Do NOT revert to pristine
 # pjmedia_port_init_grp_lock() without reworking that path.
+#
+# That force-free path is gone (the core now frees a pending port only after
+# its removal was applied or the bridge destroyed), and patch 69 gives the bare
+# grp_lock an on_destroy handler again: without one, ports that came without a
+# grp_lock were never destroyed and every played WAV file stayed open.
 --- pjsip_orig/pjmedia/src/pjmedia/conference.c
 +++ pjsip/pjmedia/src/pjmedia/conference.c
 @@ -115,2 +115,3 @@

@@ -2122,6 +2122,9 @@ cdef class AudioMixer(object):
     cdef int _add_port(self, PJSIPUA ua, pj_pool_t *pool, pjmedia_port *port) except -1
     cdef int _remove_port(self, PJSIPUA ua, unsigned int slot) except -1
     cdef int _remove_port_deferred(self, PJSIPUA ua, unsigned int slot, pjmedia_port *port, pj_pool_t *pool) except -1
+    cdef bint _clock_running(self)
+    cdef int _schedule_reaper(self) except -1
+    cdef int _free_pending_entry(self, PJSIPUA ua, object slot) except -1
     cdef int _reap_pending(self, int force) except -1
     cdef int _cb_reap_pending(self, timer) except -1
     cdef int _cb_postpoll_stop_sound(self, timer) except -1

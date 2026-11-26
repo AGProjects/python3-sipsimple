@@ -1,0 +1,73 @@
+# 69_conf_bare_grp_lock_on_destroy.patch
+#
+# Conference ports that arrive without a grp_lock (sipsimple's WAV player,
+# WAV recorder, tone generator) were never destroyed: SylkServer leaked an open
+# file descriptor (and the WAV player's pool) for every prompt or file played,
+# about 75 fds a day on a busy playback/conference server.
+#
+# Patch 30 gives such a port a bare grp_lock created with pj_grp_lock_create()
+# instead of pjmedia_port_init_grp_lock(), to skip the port_on_destroy handler
+# that used to run port->on_destroy() on a port the application had already
+# freed (crash B there).  But pjmedia_port_destroy() on a port with a grp_lock
+# only drops a reference, so with no handler nothing ever calls on_destroy():
+# file_on_destroy() never closes the WAV file, the writer never finalises its
+# header, and so on.
+#
+# The application side is fixed in sipsimple/core (_core.sound.pxi): AudioMixer
+# keeps a removed port and its pool alive until the REMOVE_PORT has been
+# applied (or the bridge destroyed), also with no sound device, where the
+# master port is the clock.  The bridge's reference is then gone before
+# sipsimple calls pjmedia_port_destroy(), so the last reference is dropped
+# while the port is still valid, and on_destroy can safely be called again:
+#
+# 1. Register a handler on the bare grp_lock that calls port->on_destroy(),
+#    ahead of conf_port_on_destroy.
+#
+# 2. pjmedia_conf_remove_port() on a port whose add has not been applied yet
+#    removes it synchronously, but reports the REMOVE_PORT to the op callback
+#    with op_info.conf left NULL, so a callback serving several bridges cannot
+#    tell which one it is for.  sipsimple's could not, and the port was never
+#    reaped.  Set op_info.conf, as every other op_info in conference.c does.
+#
+--- pjsip_orig/pjmedia/src/pjmedia/conference.c
++++ pjsip/pjmedia/src/pjmedia/conference.c
+@@ -402,6 +402,19 @@
+ }
+ 
+ 
++/* Group lock handler of the bare grp_lock given to a port that arrives
++ * without one: run the port's own destructor once the last reference is
++ * dropped, as pjmedia_port_init_grp_lock()'s handler would.  Without it the
++ * port is never destroyed (a WAV player keeps its file open and its pool).
++ */
++static void bare_port_on_destroy(void *arg)
++{
++    pjmedia_port *port = (pjmedia_port*)arg;
++    if (port->on_destroy)
++        port->on_destroy(port);
++}
++
++
+ /*
+  * Create port.
+  */
+@@ -443,6 +456,11 @@
+             pj_grp_lock_t *gl;
+             if (pj_grp_lock_create(pool, NULL, &gl) == PJ_SUCCESS) {
+                 pj_grp_lock_add_ref(gl);
++                /* Registered before conf_port_on_destroy below, so it runs
++                 * first.  The application must keep the port's memory valid
++                 * until it drops its own reference (pjmedia_port_destroy())
++                 * after the removal has been applied. */
++                pj_grp_lock_add_handler(gl, NULL, port, &bare_port_on_destroy);
+                 port->grp_lock = gl;
+             }
+         }
+@@ -1898,6 +1916,7 @@
+                 pjmedia_conf_op_info op_info = { 0 };
+ 
+                 pj_log_push_indent();
++                op_info.conf = conf;
+                 op_info.op_type = PJMEDIA_CONF_OP_REMOVE_PORT;
+                 op_info.status = status;
+                 op_info.op_param = prm;

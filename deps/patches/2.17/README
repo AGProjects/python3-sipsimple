@@ -57,7 +57,9 @@ nature; group 4 is.
    lifetime bugs), 55, 56 (vid_port frame buffer and capture size), 60
    (V4L2 devices beyond /dev/video3), 68 (select ioqueue survives a
    descriptor closed while registered instead of failing every poll with
-   EBADF), and 15 (currently a no-op, see its header).
+   EBADF), 69 (conference ports given a bare grp_lock by 30 are destroyed
+   again, so a WAV player closes its file), and 15 (currently a no-op,
+   see its header).
    Several of these only trigger under sipsimple's object lifetime model:
    media pools are released from Python, so teardown ordering differs
    from pjsua's.  Each could still be offered upstream.  Until a
