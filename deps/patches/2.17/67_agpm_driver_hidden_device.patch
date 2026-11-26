@@ -1,54 +1,22 @@
-# 67_agpm_driver_hidden_device.patch   (pjsip 2.17, after 63)
+# 67_agpm_driver_hidden_device.patch   (pjsip 2.17)
 #
-# macOS: the AG Podcast Mixer is AG CuteMusic's driver (macos/driver/AGPodcastMixer.cpp), not 63's shared-memory
-# rings. The driver hides its "AG Podcast Mixer" device from the system's device list (kAudioDevicePropertyIsHidden)
-# so that other apps never offer it; coreaudio_dev.m adds it to its own list by its UID
-# (kAudioHardwarePropertyTranslateUIDToDevice), after the listed devices, so Blink (classic and the sandboxed Blink
-# Pro) still does. 63's rings (agpm_dev.c) are left out on macOS: PJMEDIA_AUDIO_DEV_HAS_AGPM 0 there, its stubs
-# (pjmedia_agpm_dir "", pjmedia_agpm_available false) in their place; Linux keeps them.
+# macOS: the AG Podcast Mixer is AG CuteMusic's driver (macos/driver/AGPodcastMixer.cpp). The driver hides its "AG
+# Podcast Mixer" device from the system's device list (kAudioDevicePropertyIsHidden) so that other apps never offer
+# it; coreaudio_dev.m adds it to its own list by its UID (kAudioHardwarePropertyTranslateUIDToDevice), after the
+# listed devices, so Blink (classic and the sandboxed Blink Pro) still does.
 #
---- pjsip_orig/pjmedia/include/pjmedia-audiodev/config.h
-+++ pjsip/pjmedia/include/pjmedia-audiodev/config.h
-@@ -123,10 +123,12 @@
- 
- /**
-  * This setting controls whether the AG Podcast Mixer link (AG CuteMusic's mixer as an audio device, through
-- * shared-memory rings: agpm.h) should be included. POSIX only for now (mmap, flock).
-+ * shared-memory rings: agpm.h) should be included. POSIX only for now (mmap, flock). Not on macOS: there the
-+ * AG Podcast Mixer driver (AG CuteMusic's macos/driver) is the device, hidden from other apps and listed by
-+ * coreaudio_dev.m by its UID (PJMEDIA_AGPM_DRIVER_UID).
-  */
- #ifndef PJMEDIA_AUDIO_DEV_HAS_AGPM
--#   if defined(PJ_WIN32) && PJ_WIN32 != 0
-+#   if (defined(PJ_WIN32) && PJ_WIN32 != 0) || (defined(PJ_DARWINOS) && PJ_DARWINOS != 0)
- #       define PJMEDIA_AUDIO_DEV_HAS_AGPM       0
- #   else
- #       define PJMEDIA_AUDIO_DEV_HAS_AGPM       1
---- pjsip_orig/pjmedia/include/pjmedia-audiodev/agpm.h
-+++ pjsip/pjmedia/include/pjmedia-audiodev/agpm.h
-@@ -15,6 +15,7 @@
- PJ_BEGIN_DECL
- 
- #define PJMEDIA_AGPM_DEVICE_NAME    "AG Podcast Mixer"
-+#define PJMEDIA_AGPM_DRIVER_UID     "com.ag-projects.podcast-mixer.input"     /* macOS: the driver's device, hidden */
- #define PJMEDIA_AGPM_MAGIC          0x4d504741      /* "AGPM", little-endian */
- #define PJMEDIA_AGPM_VERSION        1
- #define PJMEDIA_AGPM_RATE           48000
+# (Linux needs nothing in the SDK: AG CuteMusic's PipeWire nodes are reached through an ALSA PCM. The shared-memory
+# ring device of the former patch 63 is gone.)
+#
 --- pjsip_orig/pjmedia/src/pjmedia-audiodev/coreaudio_dev.m
 +++ pjsip/pjmedia/src/pjmedia-audiodev/coreaudio_dev.m
-@@ -16,6 +16,7 @@
-  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
-  */
- #include <pjmedia-audiodev/audiodev_imp.h>
-+#include <pjmedia-audiodev/agpm.h>
- #include <pj/assert.h>
- #include <pj/log.h>
- #include <pj/os.h>
-@@ -438,6 +439,29 @@
+@@ -438,6 +438,31 @@
  }
  
  /* API: refresh the device list */
 +#if COREAUDIO_MAC
++#define PJMEDIA_AGPM_DRIVER_UID     "com.ag-projects.podcast-mixer.input"     /* the driver's device, hidden */
++
 +/* The AG Podcast Mixer driver's device (AG CuteMusic's macos/driver): hidden from the system's device list, so
 + * that only Blink offers it, found here by its UID; kAudioObjectUnknown when the driver is not installed. */
 +static AudioDeviceID ca_hidden_podcast_mixer(void)
@@ -74,7 +42,7 @@
  static pj_status_t ca_factory_refresh(pjmedia_aud_dev_factory *f)
  {
  #if !COREAUDIO_MAC
-@@ -450,6 +474,7 @@
+@@ -450,6 +475,7 @@
      unsigned dev_count;
      AudioObjectPropertyAddress addr;
      AudioDeviceID *dev_ids;
@@ -82,7 +50,7 @@
      UInt32 buf_size, dev_size, size = sizeof(AudioDeviceID);
      AudioBufferList *buf = NULL;
      OSStatus ostatus;
-@@ -472,9 +497,10 @@
+@@ -472,9 +498,10 @@
          dev_size = 0;
      }
  
@@ -95,7 +63,7 @@
          PJ_LOG(4,(THIS_FILE, "core audio found no sound devices"));
          /* Enabling this will cause pjsua-lib initialization to fail when
           * there is no sound device installed in the system, even when pjsua
-@@ -490,17 +516,32 @@
+@@ -490,17 +517,32 @@
                 dev_count));
  
      /* Get all the audio device IDs */

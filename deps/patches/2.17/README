@@ -29,15 +29,15 @@ nature; group 4 is.
    in pjproject.
 
 2. API extensions that exist for sipsimple's Cython bindings
-   03, 04, 05, 06, 08, 11, 32, 40, 42, 52, 53, 54, 57, 60, 63, 64, 65, 66, 67 add callbacks,
+   03, 04, 05, 06, 08, 11, 32, 40, 42, 52, 53, 54, 57, 60, 64, 65, 66, 67 add callbacks,
    accessors and device backends that sipsimple's Python API is built
    on: ICE state and stop callbacks, SIP header and subscription
    helpers, audio device change observers, the framebuffer video
    renderer, our own AVFoundation capture backend (which replaces
    upstream's darwin/metal backend on macOS), screen capture devices,
    changing encoder size mid-call, V4L2 frame rate enumeration, an
-   ARGB format, and the AG Podcast Mixer link device (on macOS, 67: the AG Podcast
-   Mixer driver's hidden device, listed by its UID, in place of the link).  They extend pjproject's public structs and function
+   ARGB format, and the AG Podcast Mixer driver's hidden device on macOS
+   (67, listed by its UID).  They extend pjproject's public structs and function
    tables, and some replace upstream design choices rather than adding
    to them.  Building sipsimple against an unpatched pjproject fails at
    compile time.
@@ -397,21 +397,6 @@ New 2.17-only support:
                                        destruction; sipsimple turns it
                                        into VideoCameraDidStop.
                                        Applies after 32 and 57.
-  63_agpm_audio_device.patch           2.17-only - the AG Podcast Mixer
-                                       link (docs/PodcastMixerLink.md):
-                                       a new audio device factory,
-                                       "AG Podcast Mixer", whose capture
-                                       is AG CuteMusic's mix and whose
-                                       playback goes to its BLINK strip,
-                                       through two shared-memory rings
-                                       (no sound device). Listed while
-                                       AG CuteMusic holds mixer.lock.
-                                       Own clock, WSOLA delay buffer for
-                                       drift, rate/channel conversion.
-                                       New files agpm.h, agpm_dev.c;
-                                       config.h, audiodev.c and build
-                                       lists. POSIX only (off on
-                                       Windows).
   64_conf_signal_level_channels.patch  2.17-only - the conference
                                        bridge also keeps each port's tx
                                        and rx level per channel (left,
@@ -439,6 +424,12 @@ New 2.17-only support:
                                        extensions), for the participants'
                                        VU meters. Off until
                                        pjmedia_stream_set_rx_csrc_level_ext().
+  67_agpm_driver_hidden_device.patch   2.17-only - macOS: AG CuteMusic's
+                                       AG Podcast Mixer driver hides its
+                                       device from other apps;
+                                       coreaudio_dev.m adds it to its list
+                                       by its UID, after the listed ones
+                                       (docs/PodcastMixerLink.md).
 
 
 Dropped permanently

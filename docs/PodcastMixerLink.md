@@ -4,62 +4,15 @@ How AG CuteMusic's mixer and Blink exchange audio and call data: the mixer's mix
 what the call plays is the mixer's BLINK strip, and each side knows what the other is doing (what plays, who is in
 the call).
 
-Two designs are described here: **v1**, the shared-memory ring link that works today on Linux and macOS, and **v2**,
-the design that replaces it: a real audio device for Blink's microphone, other programs' sound captured without a
-device, and the data exchanged through the device (macOS) or D-Bus (Linux). v2 is decided; v1 stays until v2 works
-end to end, then goes (see Removed in v2).
+A real audio device for Blink's microphone (a driver on macOS, PipeWire nodes on Linux), other programs' sound
+captured without a device, and the call data exchanged through the device (macOS) or D-Bus (Linux). (It replaced a
+shared-memory ring link, "v1", removed in Nov 2026 before any release: see Removed.)
 
-Device name in both: **AG Podcast Mixer**. Audio: 48 kHz, stereo. A headset is required: Blink's echo cancelling is
+Device name: **AG Podcast Mixer**. Audio: 48 kHz, stereo. A headset is required: Blink's echo cancelling is
 off while AG Podcast Mixer is the input device.
 
 
-## v1: the ring link (today)
-
-### Audio
-
-AG CuteMusic and Blink exchange 48 kHz stereo s16le PCM through two shared-memory rings in a per-user directory:
-`$AGPM_DIR`, else `$XDG_RUNTIME_DIR/ag-podcast-mixer` (Linux), `$TMPDIR/ag-podcast-mixer` (macOS).
-
-| File | Writer | Reader | Content |
-|---|---|---|---|
-| `to-call.ring` | AG CuteMusic | Blink | the mix: the mic, and the music while TO CALLS is on |
-| `from-call.ring` | Blink | AG CuteMusic | what the call plays: the BLINK strip |
-| `mixer.lock` | AG CuteMusic (flock) | Blink | the mixer runs: the device is listed |
-| `blink.lock` | Blink (flock) | AG CuteMusic | Blink runs: the BLINK strip is shown |
-| `calls.json` | Blink | AG CuteMusic | the calls and rooms in progress |
-| `show-mixer.request` | Blink | AG CuteMusic | Blink's notice icon: show the mixer (deleted when read) |
-
-Ring: a 64-byte header (`agpm.h`, `pjmedia_agpm_ring_header`: magic "AGPM", version 1, channels, rate, capacity
-in frames (a power of two), writer pid, writer generation, write index, read index), then capacity frames of
-2 x s16le. One writer, one reader; the writer never waits (drops what does not fit), the reader resyncs when the
-writer restarts (generation) or falls a whole ring behind. Writer quantum 5 ms (240 frames); capacity 4096 frames
-(85 ms).
-
-`calls.json`: `{"calls": [...]}`, each `{"kind": "call", "name", "address", "held"}` or
-`{"kind": "room", "name", "participants": [names]}`; once the audio stream is measured, also `"rtt"` (ms, the round
-trip: twice the one-way figure Blink's session info shows) and `"loss_rx"`, `"loss_tx"` (% of packets lost, received and sent, the last second), shown
-under the party in the mixer's BLINK strip.
-
-### Code
-
-- SDK: `deps/patches/2.17/63_agpm_audio_device.patch` (pjmedia-audiodev `agpm.h`, `agpm_dev.c`): an audio device
-  factory with the one device, 2 in / 2 out, listed while `mixer.lock` is held and both rings are valid; its own
-  pjmedia clock, a WSOLA delay buffer on the capture for the drift against AG CuteMusic's clock, conversion to the
-  stream's rate and channels. Engine: `podcast_mixer_available`, `podcast_mixer_dir`.
-- `tools/agpm.py`: the Python ends (canonical copy; AG CuteMusic and Blink Qt carry copies). `tools/agpm-test.py`.
-- AG CuteMusic: `cutemusic/agpm.py`, `cutemusic/link.py` (LinkDevices, LinkSender, LinkReceiver).
-- AG CuteMusic, Linux only, the older sound-server path still beside it: `cutemusic/share.py` (PulseAudio /
-  pipewire-pulse null sinks, the ALSA device `ag_cutemusic_mixer`, `alsa/60-ag-cute-music.conf`) and
-  `cutemusic/apps.py` (another program's streams moved onto a sink of CuteMusic's: the CALL strip).
-
-### Why it is replaced
-
-- A sandboxed Blink (Blink Pro, Mac App Store) cannot reach the rings or the files in `$TMPDIR` of another app.
-- Other programs (Spotify, a browser) cannot play into the mixer: the rings are Blink's only.
-- Two transports on Linux (rings and sound-server devices), each with its own failure modes.
-
-
-## v2: a device for Blink's microphone, the rest captured
+## Design: a device for Blink's microphone, the rest captured
 
 ### Principles
 
@@ -149,49 +102,55 @@ signed with the app by `sign-app.sh` and covered by its notarization); from a ch
 
 ### Linux (PipeWire)
 
-The macOS pieces as built, one by one, and what each becomes on Linux. Blink Qt (and Sylk Desktop) on the Blink side.
+The macOS pieces as built, one by one, and what each is on Linux (as built, Nov 2026, unless marked not yet). Blink
+Qt (and Sylk Desktop) on the Blink side.
 
 | macOS (as built) | Linux |
 |---|---|
-| AG Podcast Mixer + Feed (driver, hidden) | a PipeWire config fragment, installed by the package (AG CuteMusic's `pipewire/ag-podcast-mixer.conf`, in `/usr/share/pipewire/pipewire.conf.d/`), always there: `ag_podcast_mixer` "AG Podcast Mixer", a virtual source (`Audio/Source/Virtual`) AG CuteMusic plays the mix into (pipewiresink by node name, `link.py` NodeOutput) and Blink records; `ag_podcast_mixer_call` "AG Podcast Mixer Call", a sink Blink plays the call into, its monitor read by AG CuteMusic (the BLINK strip). No Feed node: a virtual source is written directly. Without the fragment loaded (PipeWire not restarted since the install, PulseAudio), share.py makes the same two names with pactl while the mixer is on (its modules only as that fallback) |
-| (Blink's SIP audio) | the SDK has only ALSA on Linux: Blink reaches the nodes through the ALSA PCM `ag_cutemusic_mixer` described "AG Podcast Mixer" (`/etc/alsa/conf.d/60-ag-cute-music.conf`, PipeWire's ALSA plugin, `playback_node` / `capture_node` by name). The ALSA drop-in stays in v2 (patch 63 no longer skips that hint in alsa_dev.c) |
+| AG Podcast Mixer + Feed (driver, hidden) | a PipeWire config fragment, installed by the package (AG CuteMusic's `pipewire/ag-podcast-mixer.conf`, in `/usr/share/pipewire/pipewire.conf.d/`), always there: `ag_podcast_mixer_feed` "AG Podcast Mixer Feed", a sink AG CuteMusic plays the mix into (pipewiresink by node name, `link.py` NodeOutput), looped back (libpipewire-module-loopback) as `ag_podcast_mixer` "AG Podcast Mixer", the source Blink records; `ag_podcast_mixer_call` "AG Podcast Mixer Call", a sink Blink plays the call into, its monitor read by AG CuteMusic (the BLINK strip). The Feed is needed: WirePlumber links a playback stream only to a sink (one targeting a virtual source went to the default sink). Required: without them (PipeWire not restarted since the install) there is no device; Blink's menu item says to log in again |
+| (Blink's SIP audio) | the SDK has only ALSA on Linux: Blink reaches the nodes through the ALSA PCM `ag_cutemusic_mixer` described "AG Podcast Mixer" (`/etc/alsa/conf.d/60-ag-cute-music.conf`, PipeWire's ALSA plugin, `playback_node` / `capture_node` by name). Blink Qt's WebRTC rooms use pipewiresrc / pipewiresink on the nodes by name (`blink/webrtc/videoroom.py`). Blink Qt lists the device while the nodes are there (`pactl`), in the Devices menu's combined section only |
 | hidden devices | none in PipeWire: node properties (`node.description`, a `media.class` other apps skip, or `priority.session` 0) keep them out of defaults; Blink Qt lists only the Mixer, AG CuteMusic only the Feeds, both by node name |
-| AG Podcast Streaming + Feed (`agst`) | a null sink "AG Podcast Streaming Feed", its monitor the source "AG Podcast Streaming"; loaded with `pw-cli`/`pactl load-module` while STREAMING is on, or always there and only fed then |
+| AG Podcast Streaming + Feed (`agst`) | a second loopback in the same fragment, always there (a streaming app set up once, before, and left so): `ag_podcast_streaming_feed` "AG Podcast Streaming Feed", a sink AG CuteMusic plays the recorder's mix into while STREAMING is on (`recorder.py` start_streaming, NodeOutput), looped back as `ag_podcast_streaming` "AG Podcast Streaming", the source a streaming app (OBS...) records; silent while STREAMING is off. No `agst`: nothing to add or remove |
 | `agvs` (Sylk Desktop) | not needed: Chromium lists PipeWire sources |
-| `agbc`, `agrq`, `agst` (properties) | D-Bus, session bus, `org.agprojects.PodcastMixer` at `/org/agprojects/PodcastMixer` (AG CuteMusic's `cutemusic/bus.py`, behind `control.py`'s `blinks()` / `request()`): owned by AG CuteMusic; method `SetCalls(i pid, s json)` (agbc's json as is; an empty json on quit), `GetCalls() -> s` (`{"<pid>": <json>}`), signal `Request(s json)` (agrq's json). An entry not set for 10 s, or whose process is gone, is left out. `Streaming` (agst) not yet. A Flatpak'd Blink needs `--talk-name=org.agprojects.PodcastMixer` |
-| `hal.py` C I/O, FeedReceiver | GStreamer `pipewiresrc`/`pipewiresink` (or `pulsesrc`/`pulsesink`) on the nodes by name: no C needed. LinkSender's pacing needs a "frames queued" figure: the sink's latency query, else the wall clock (its fallback) |
-| `taps.py` (process taps) | link the program's output node to an extra input of AG CuteMusic (a copy: it still plays where it was), or move its stream onto a sink of ours to hear it only through the fader (apps.py today) |
+| `agbc`, `agrq`, `agst` (properties) | D-Bus, session bus, `org.agprojects.PodcastMixer` at `/org/agprojects/PodcastMixer` (AG CuteMusic's `cutemusic/bus.py`, behind `control.py`'s `blinks()` / `request()`): owned by AG CuteMusic; method `SetCalls(i pid, s json)` (agbc's json as is; an empty json on quit), `GetCalls() -> s` (`{"<pid>": <json>}`), `ShowMixer()` (Blink's notice about the device), signal `Request(s json)` (agrq's json). Blink Qt (`blink/cutemusic.py` CallPublisher) sets its calls on every call event and every 2 s (a keep-alive); an entry not set for 10 s, or whose process is gone, is left out. `Streaming` (agst) not yet. A Flatpak'd Blink needs `--talk-name=org.agprojects.PodcastMixer` |
+| `hal.py` C I/O, FeedReceiver | GStreamer: `pipewiresink` into the Feed by node name (`link.py` NodeOutput), the BLINK strip `pulsesrc` on `ag_podcast_mixer_call.monitor`: no C needed. LinkSender paced by the clock (pipewiresink takes buffers in bursts of the graph's cycle: what waits in front of it cannot pace the sender) |
+| `taps.py` (process taps) | not yet: link the program's output node to an extra input of AG CuteMusic (a copy: it still plays where it was), or move its stream onto a sink of ours to hear it only through the fader (apps.py today) |
 | Spotify/Music over AppleScript | MPRIS (Spotify on Linux has it): play/pause, next, previous, now playing, volume |
 | Recorder, mixing, mixer UI | shared code: unchanged |
 
 **Work plan for Linux** (on the Ubuntu machine):
 
-1. The PipeWire fragment: `ag_podcast_mixer` and `ag_podcast_mixer_call` (streaming later); checked with
-   `pw-cli ls Node`, `pactl list short sources`, `pactl list short sinks`.
-2. AG CuteMusic: the link on the Feed and Call nodes in place of the rings (`link.py`'s LinkDevices, a Linux
-   FeedOutput / FeedReceiver over GStreamer), streaming switching the Streaming Feed.
-3. The D-Bus service in AG CuteMusic (`QtDBus`, already used for MPRIS): `SetCalls`, `Request`, `Streaming`;
-   `control.py`'s functions on top of it, so `window.py` stays as it is.
-4. Blink Qt: the Mixer as its device (listed by node name; the Call sink as its output), `SetCalls` every 2 s and on
-   a change of call state with the same json as Blink Cocoa, End and Redial from `Request`.
+1. Done: the PipeWire fragment (Feed, its loopback the Mixer, Call); checked with `pw-cli ls Node`,
+   `pactl list short sources`, `pactl list short sinks`. The streaming pair (Streaming Feed, its loopback AG Podcast Streaming) too.
+2. Done: AG CuteMusic's link on the Feed and Call nodes (`link.py` LinkDevices / NodeOutput); STREAMING playing the
+   recorder's mix into the Streaming Feed.
+3. Done: the D-Bus service in AG CuteMusic (`bus.py`): `SetCalls`, `GetCalls`, `ShowMixer`, `Request`; `control.py`'s
+   functions on top of it. (No `Streaming`: the streaming nodes are always there.)
+4. Done: Blink Qt, the Mixer as its device, `SetCalls` on every call event (and every 2 s) with the same json as
+   Blink Cocoa, End and Redial from `Request`; WebRTC rooms on the nodes.
 5. Audio Apps: linking a program's node (pw-link) beside apps.py's move; MPRIS for the player's remote.
 6. Sylk Desktop: the Mixer as a source (Chromium lists it); later `SetCalls` through D-Bus from Electron's main process.
-7. Then v1's removal (below) on Linux too.
+7. Done: v1's removal (below).
 
 ### Windows
 
 Not in v2's first steps. The same split later: a virtual input device (a driver: the hard part on Windows) and
 process loopback capture (`ActivateAudioInterfaceAsync`, process loopback, Windows 10 2004+) for programs.
 
-### Removed in v2
+### Removed (v1, Nov 2026)
 
-Once v2 works end to end on both systems:
+The shared-memory ring link (two rings, `to-call.ring` and `from-call.ring`, in a per-user directory, made an audio
+device by an SDK patch) and its files (`mixer.lock`, `blink.lock`, `calls.json`, `blink.request`,
+`show-mixer.request`). Nothing of it was released:
 
-- SDK: `63_agpm_audio_device.patch`, Engine's `podcast_mixer_available` / `podcast_mixer_dir`, `tools/agpm.py`,
-  `tools/agpm-test.py`.
-- AG CuteMusic: `agpm.py`, the rings in `link.py`, share.py's module loading (the fallback), `blink_calls()`'s
-  files. Not `alsa/60-ag-cute-music.conf`: on Linux Blink's SIP audio reaches the nodes only through it.
-- Blink Qt, Blink Cocoa: their `agpm.py` copies, `calls.json`, `blink.lock`, `show-mixer.request`.
+- SDK: `63_agpm_audio_device.patch` (patch 67 now stands alone, macOS only), Engine's `podcast_mixer_device` /
+  `podcast_mixer_available` / `podcast_mixer_dir`, `tools/agpm.py`, `tools/agpm-test.py`.
+- AG CuteMusic: `agpm.py`, the rings in `link.py` (LinkReceiver), share.py's PulseAudio modules (a fallback without
+  the PipeWire nodes) and the mic's and player's sink "share", the file channel. Not `alsa/60-ag-cute-music.conf`:
+  on Linux Blink's SIP audio reaches the nodes only through it.
+- Blink Qt: `blink/agpm.py`, `blink/webrtc/podcast_mixer.py`, the file channel.
+- Blink Cocoa: `CuteMusic.py`'s link-directory code (`blink.lock`, `calls.json`, `blink.request`,
+  `show-mixer.request`) is dead (no link directory without patch 63): still to be removed.
 
 
 ## Work plan (macOS first)
@@ -208,7 +167,7 @@ Once v2 works end to end on both systems:
 4. **Packaging**: the signed, notarized .pkg; AG CuteMusic offering the install when the driver is missing; Blink's
    Devices menu showing why AG Podcast Mixer is not usable.
 5. **Linux**: see Linux (PipeWire) above, its work plan.
-6. **Removal**: everything under Removed in v2.
+6. **Removal**: done (Removed, above).
 
 ### Status: macOS, as built (driver 1.3.0, AG CuteMusic 1.1.6)
 
@@ -245,7 +204,7 @@ A Blink's json (Blink Cocoa `CuteMusic.py`, `_calls()` and `_redial()`): `{"call
 "name", "address", "held", "state"?, "started"?, "rtt"?, "loss_rx"?, "loss_tx"?}], "redial": {"address",
 "name"}}`. `state` while not connected (dialing, calling, ringing, incoming, adding audio, hanging up), `started`
 (epoch seconds) once connected, the quality figures once measured. `address` is always user@domain, never with
-`sip:`; `name` only a real display name. Blink classic also keeps v1's `calls.json` and `blink.lock`.
+`sip:`; `name` only a real display name. (Its v1 `calls.json` / `blink.lock` code is dead: see Removed.)
 
 **AG CuteMusic**:
 
