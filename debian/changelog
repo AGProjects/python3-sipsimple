@@ -1,3 +1,10 @@
+python3-sipsimple (5.7.1) unstable; urgency=medium
+
+  * Refactored shared podcast device
+  * Fix for core crash
+
+ -- Adrian Georgescu <ag@ag-projects.com>  Thu, 26 Nov 2026 06:37:59 -0300
+
 python3-sipsimple (5.7.0) unstable; urgency=medium
 
   * Added support for stereo audio
